@@ -1,0 +1,308 @@
+@import '@/lib/brand/tokens.css';
+@import './chat.css';
+@import './page.css';
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  /* ★ 투명 배경 금지 — 반드시 토큰에서 칠한다 */
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+  border: 0;
+  background: none;
+  color: inherit;
+}
+
+input,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ── 앱 셸 ─────────────────────────────────────────────── */
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--header-bg);
+  background: var(--header-bg);
+  color: var(--header-fg);
+  flex: none;
+}
+
+.app-header .brand {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.app-header .wordmark {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  white-space: nowrap;
+}
+
+/*
+ * 워드마크 규칙: AI 두 글자만 색·굵기로 강조. 강조점은 언제나 하나.
+ * ★ --accent가 아니라 --wordmark-ai다. 브랜드 시트가 배경별로 다른 색을
+ *   지정한다 — 밝은 배경은 바이올렛, 어두운 배경은 앰버.
+ */
+.app-header .wordmark b {
+  font-weight: 800;
+  color: #9bc2ff;
+}
+
+.app-header .product-prefix {
+  font-weight: 700;
+}
+
+.app-header .spacer {
+  flex: 1;
+}
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  color: var(--header-muted);
+  transition: background 0.12s, color 0.12s;
+}
+
+.icon-btn:hover {
+  background: rgb(255 255 255 / 12%);
+  color: var(--header-fg);
+}
+
+.app-main {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+/* ── 헬스 배너 ─────────────────────────────────────────── */
+
+.banner {
+  display: flex;
+  gap: 10px;
+  padding: 11px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  align-items: flex-start;
+  flex: none;
+}
+
+.banner-down,
+.banner-cors {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.banner-model-missing {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+.banner-cold {
+  background: var(--surface-2);
+  color: var(--fg-muted);
+}
+
+.banner .body {
+  flex: 1;
+  min-width: 0;
+}
+
+.banner .title {
+  font-weight: 700;
+  color: inherit;
+}
+
+.banner .hint {
+  color: var(--fg-muted);
+  margin-top: 2px;
+  line-height: 1.5;
+}
+
+.banner-down .hint,
+.banner-cors .hint,
+.banner-model-missing .hint {
+  color: inherit;
+  opacity: 0.85;
+}
+
+.banner .cmd {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.banner code {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--fg);
+  padding: 4px 7px;
+  border-radius: 6px;
+  overflow-x: auto;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.btn-sm {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 7px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  color: var(--fg);
+  white-space: nowrap;
+  flex: none;
+}
+
+.btn-sm:hover {
+  background: var(--surface-2);
+}
+
+/* ── 진행 표시 ─────────────────────────────────────────── */
+
+/*
+ * 계획서 §6: 5초 이상 걸리는 모든 작업은 진행 상태와 예상 시간을 표시한다.
+ * CPU 추론에서 무반응 스피너는 고장으로 오인된다.
+ */
+.progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  font-size: 12.5px;
+  color: var(--fg-muted);
+  border-bottom: 1px solid var(--border);
+  flex: none;
+}
+
+.progress .track {
+  flex: 1;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.progress .fill {
+  height: 100%;
+  border-radius: 2px;
+  /* 생성 중 표시 — 앰버의 허용된 세 용처 중 하나 */
+  background: var(--rail);
+  transition: width 0.3s linear;
+}
+
+.progress .eta {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 11.5px;
+  flex: none;
+}
+
+/* ── 빈 상태 ───────────────────────────────────────────── */
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  height: 100%;
+  padding: 32px 24px;
+  text-align: center;
+  color: var(--fg-muted);
+}
+
+.empty h2 {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--fg);
+  margin: 0;
+  letter-spacing: -0.02em;
+}
+
+.empty p {
+  margin: 0;
+  font-size: 13px;
+  max-width: 34ch;
+  line-height: 1.6;
+}
+
+.empty .meta {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--fg-muted);
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+  margin-top: 4px;
+}
+
+/*
+ * 배너의 버튼 묶음 (Phase 7-2).
+ * 해결 버튼과 닫기 버튼이 함께 서므로 세로로 쌓아 좁은 폭에서도 눌리게 한다.
+ */
+.banner-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: none;
+}

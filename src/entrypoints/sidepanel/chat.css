@@ -1,0 +1,557 @@
+/* 채팅 UI — Phase 2. 토큰은 tokens.css에서만 정의한다. */
+
+.conv-chip {
+  font-size: 11.5px;
+  color: var(--fg-muted);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 9px;
+  max-width: 130px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: none;
+}
+
+.msgs {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 16px 12px 8px;
+  height: 100%;
+  overflow-y: auto;
+}
+
+.msg {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.msg-user {
+  align-items: flex-end;
+}
+
+.msg-user .bubble {
+  background: var(--accent);
+  color: var(--accent-fg);
+  padding: 8px 12px;
+  border-radius: 14px 14px 4px 14px;
+  max-width: 86%;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 13.5px;
+  line-height: 1.6;
+}
+
+.msg-assistant {
+  align-items: stretch;
+}
+
+/* ── 마크다운 본문 ── */
+
+.md {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  font-size: 13.5px;
+}
+
+.md-body > *:first-child {
+  margin-top: 0;
+}
+
+.md-body > *:last-child {
+  margin-bottom: 0;
+}
+
+.md-body p,
+.md-body ul,
+.md-body ol,
+.md-body blockquote,
+.md-body table {
+  margin: 0 0 10px;
+}
+
+.md-body ul,
+.md-body ol {
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.md-body li::marker {
+  color: var(--fg-muted);
+}
+
+.md-body h1,
+.md-body h2,
+.md-body h3,
+.md-body h4 {
+  font-size: 14.5px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin: 14px 0 6px;
+}
+
+.md-body a {
+  color: var(--accent);
+  text-underline-offset: 2px;
+}
+
+.md-body blockquote {
+  border-left: 3px solid var(--border-strong);
+  padding-left: 10px;
+  color: var(--fg-muted);
+}
+
+.md-body :not(pre) > code {
+  font-family: var(--font-mono);
+  font-size: 0.87em;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.08em 0.32em;
+  word-break: break-all;
+}
+
+.md-body table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+  display: block;
+  overflow-x: auto;
+}
+
+.md-body th,
+.md-body td {
+  border: 1px solid var(--border);
+  padding: 5px 8px;
+  text-align: left;
+}
+
+.md-body th {
+  background: var(--surface-2);
+  font-weight: 600;
+}
+
+.md-body hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 12px 0;
+}
+
+/* ── 코드블록 ── */
+
+.code {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin: 4px 0 10px;
+  background: var(--surface);
+}
+
+.code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 6px 4px 10px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+}
+
+.code-lang {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+
+.code-copy {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--fg-muted);
+  padding: 2px 7px;
+  border-radius: 5px;
+}
+
+.code-copy:hover {
+  background: var(--surface);
+  color: var(--fg);
+}
+
+.code-body {
+  margin: 0;
+  padding: 10px 12px;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+
+.code-body pre,
+.code-body .shiki {
+  margin: 0;
+  background: transparent !important;
+}
+
+.code-body code {
+  font-family: inherit;
+  white-space: pre;
+}
+
+/* ── 생각 과정 (Phase 2-8) ── */
+
+.thinking {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  overflow: hidden;
+  margin-bottom: 2px;
+}
+
+.thinking-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--fg-muted);
+  text-align: left;
+}
+
+.thinking-head:hover {
+  color: var(--fg);
+}
+
+.caret {
+  display: inline-block;
+  transition: transform 0.15s;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.caret.open {
+  transform: rotate(90deg);
+}
+
+.thinking-len {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+}
+
+.thinking-body {
+  padding: 0 10px 10px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--fg-muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+/* ── 상태 표시 ── */
+
+.notice {
+  font-size: 11.5px;
+  color: var(--warn);
+  background: var(--warn-soft);
+  border-radius: 6px;
+  padding: 4px 8px;
+  align-self: flex-start;
+}
+
+.aborted {
+  font-size: 11.5px;
+  color: var(--fg-muted);
+  font-style: italic;
+}
+
+.perf {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.typing {
+  display: flex;
+  gap: 4px;
+  padding: 6px 2px;
+}
+
+.typing span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  /* 생성 중 표시 — 앰버의 허용된 세 용처 중 하나 */
+  background: var(--rail);
+  animation: blink 1.2s infinite ease-in-out;
+}
+
+.typing span:nth-child(2) {
+  animation-delay: 0.18s;
+}
+
+.typing span:nth-child(3) {
+  animation-delay: 0.36s;
+}
+
+@keyframes blink {
+  0%,
+  80%,
+  100% {
+    opacity: 0.25;
+  }
+
+  40% {
+    opacity: 1;
+  }
+}
+
+.fill.indeterminate {
+  width: 40%;
+  animation: slide 1.4s infinite ease-in-out;
+}
+
+@keyframes slide {
+  0% {
+    margin-left: -40%;
+  }
+
+  100% {
+    margin-left: 100%;
+  }
+}
+
+/* ── 입력 영역 ── */
+
+.footer-bar {
+  flex: none;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  padding: 6px 10px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/*
+ * 보조 동작 한 줄.
+ * 세로로 쌓으면 좁은 사이드패널에서 입력창이 밀려 올라가 대화 영역을 깎아먹는다.
+ */
+.footer-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.minibtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.4;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--fg-muted);
+  white-space: nowrap;
+  transition: color 0.12s, border-color 0.12s, background 0.12s;
+}
+
+.minibtn:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.minibtn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.minibtn svg {
+  flex: none;
+  opacity: 0.8;
+}
+
+/* 비용은 계속 보여주되 라벨보다 약하게 — 계획서 §5 Phase 3-2 */
+/*
+ * 비용은 계속 보여주되 라벨보다 약하게 — 계획서 §5 Phase 3-2.
+ * ★ opacity로 흐리게 만들지 않는다. 11.5px에 opacity .7이면 실효 대비가
+ *   3.48:1로 AA에 못 미친다. 위계는 굵기로만 준다(600 → 500).
+ */
+.minibtn .cost {
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.minibtn .cost::before {
+  content: '·';
+  margin-right: 4px;
+}
+
+.composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  padding: 6px 6px 6px 10px;
+}
+
+.composer:focus-within {
+  border-color: var(--accent);
+}
+
+.composer textarea {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  resize: none;
+  background: transparent;
+  font-size: 13.5px;
+  line-height: 1.6;
+  max-height: 140px;
+  padding: 3px 0;
+}
+
+.composer textarea::placeholder {
+  color: var(--fg-muted);
+}
+
+.send {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: var(--accent);
+  color: var(--accent-fg);
+  transition: opacity 0.12s;
+}
+
+.send:disabled {
+  opacity: 0.32;
+  cursor: default;
+}
+
+.send.stop {
+  background: var(--danger);
+  color: var(--danger-fg);
+}
+
+/* ── 대화 목록 시트 ── */
+
+.sheet-scrim {
+  position: fixed;
+  inset: 0;
+  background: var(--scrim);
+  z-index: 10;
+}
+
+.sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 11;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+.sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 700;
+  background: var(--surface);
+  flex: none;
+}
+
+.sheet-empty {
+  padding: 32px 16px;
+  text-align: center;
+  color: var(--fg-muted);
+  font-size: 13px;
+}
+
+.conv-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.conv-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.conv-list li:hover {
+  background: var(--surface-2);
+}
+
+.conv-list li.current {
+  background: var(--accent-soft);
+}
+
+.conv-main {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  color: inherit;
+}
+
+.conv-title {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conv-meta {
+  display: block;
+  font-size: 11px;
+  color: var(--fg-muted);
+  margin-top: 1px;
+}
+
+.conv-del {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  font-size: 17px;
+  line-height: 1;
+  color: var(--fg-muted);
+}
+
+.conv-del:hover {
+  background: var(--danger-soft);
+  color: var(--danger);
+}

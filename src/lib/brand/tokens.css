@@ -1,0 +1,95 @@
+/**
+ * 온나라 sAIde 역할 토큰 — 행정 블루.
+ * 텍스트 조합은 scripts/check-contrast.mjs가 WCAG AA 대비를 검사한다.
+ */
+
+:root {
+  --navy-900: #0b2545;
+  --blue-700: #1a4fa0;
+  --bg: #f5f8fc;
+  --surface: #ffffff;
+  --surface-2: #edf2f8;
+  --fg: #0f1b2d;
+  --fg-muted: #526079;
+  --border: #dce3ee;
+  --border-strong: #aebbd0;
+  --accent: var(--blue-700);
+  --accent-fg: #ffffff;
+  --accent-soft: #e6eefa;
+  --wordmark-ai: var(--blue-700);
+  --rail: var(--blue-700);
+  --local: #0b7a75;
+  --ok: #12704a;
+  --ok-soft: #e5f3ec;
+  --warn: #9a5b00;
+  --warn-soft: #fbf0dd;
+  --danger: #b42318;
+  --danger-soft: #fbe9e7;
+  --danger-fg: #ffffff;
+  --header-bg: var(--navy-900);
+  --header-fg: #ffffff;
+  --header-muted: #c3d0e2;
+  --scrim: rgb(11 37 69 / 38%);
+  --radius: 10px;
+  --radius-lg: 14px;
+  --shadow: 0 8px 24px -16px rgb(11 37 69 / 28%);
+  --font-sans: 'Pretendard', 'Malgun Gothic', 'Noto Sans KR', system-ui,
+    -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, sfmono-regular, menlo, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --bg: #0e1726;
+    --surface: #152238;
+    --surface-2: #1c2c45;
+    --fg: #e6edf7;
+    --fg-muted: #93a3bb;
+    --border: #2c3d57;
+    --border-strong: #526784;
+    --accent: #6aa2f5;
+    --accent-fg: #0e1726;
+    --accent-soft: #1a3354;
+    --wordmark-ai: #9bc2ff;
+    --rail: #6aa2f5;
+    --local: #64c7c0;
+    --ok: #59d19a;
+    --ok-soft: #15372b;
+    --warn: #f4b860;
+    --warn-soft: #3b2b14;
+    --danger: #ff8a80;
+    --danger-soft: #442321;
+    --danger-fg: #0e1726;
+    --header-bg: #091a30;
+    --header-muted: #c3d0e2;
+    --scrim: rgb(0 0 0 / 58%);
+    --shadow: 0 8px 24px -16px rgb(0 0 0 / 70%);
+  }
+}
+
+:root[data-theme='dark'] {
+  --bg: #0e1726;
+  --surface: #152238;
+  --surface-2: #1c2c45;
+  --fg: #e6edf7;
+  --fg-muted: #93a3bb;
+  --border: #2c3d57;
+  --border-strong: #526784;
+  --accent: #6aa2f5;
+  --accent-fg: #0e1726;
+  --accent-soft: #1a3354;
+  --wordmark-ai: #9bc2ff;
+  --rail: #6aa2f5;
+  --local: #64c7c0;
+  --ok: #59d19a;
+  --ok-soft: #15372b;
+  --warn: #f4b860;
+  --warn-soft: #3b2b14;
+  --danger: #ff8a80;
+  --danger-soft: #442321;
+  --danger-fg: #0e1726;
+  --header-bg: #091a30;
+  --header-muted: #c3d0e2;
+  --scrim: rgb(0 0 0 / 58%);
+  --shadow: 0 8px 24px -16px rgb(0 0 0 / 70%);
+}

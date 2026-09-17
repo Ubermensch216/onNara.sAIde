@@ -1,0 +1,10 @@
+{
+  "extName":        { "message": "OnNara sAIde", "description": "Extension name" },
+  "extDescription": { "message": "An Edge AI side panel that assists with documents and administrative work in OnNara.", "description": "Store and extensions page description" },
+  "actionTitle":    { "message": "Open OnNara sAIde", "description": "Toolbar icon tooltip" },
+  "commandOpen":    { "message": "Open the OnNara sAIde side panel", "description": "Keyboard shortcut description" },
+  "menuTranslate":  { "message": "Translate this", "description": "Context menu" },
+  "menuExplain":    { "message": "Explain simply", "description": "Context menu" },
+  "menuPolish":     { "message": "Polish this text", "description": "Context menu" },
+  "menuSend":       { "message": "Send to OnNara sAIde", "description": "Context menu" }
+}

@@ -1,0 +1,10 @@
+{
+  "extName":        { "message": "온나라 sAIde", "description": "확장 프로그램 이름" },
+  "extDescription": { "message": "온나라 업무 화면 옆에서 문서 처리와 행정 업무를 돕는 Edge AI 사이드패널입니다.", "description": "스토어·확장 관리 화면 설명" },
+  "actionTitle":    { "message": "온나라 sAIde 열기", "description": "툴바 아이콘 툴팁" },
+  "commandOpen":    { "message": "온나라 sAIde 사이드패널 열기", "description": "단축키 설명" },
+  "menuTranslate":  { "message": "이 문장 번역", "description": "컨텍스트 메뉴" },
+  "menuExplain":    { "message": "쉽게 설명", "description": "컨텍스트 메뉴" },
+  "menuPolish":     { "message": "문장 다듬기", "description": "컨텍스트 메뉴" },
+  "menuSend":       { "message": "온나라 sAIde로 보내기", "description": "컨텍스트 메뉴" }
+}

@@ -1,0 +1,407 @@
+/* 페이지 컨텍스트 UI — Phase 3. 토큰은 tokens.css에서만 정의한다. */
+
+/* ── 빠른 작업 ── */
+
+.pageactions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  max-width: 320px;
+}
+
+.pageactions-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: center;
+}
+
+.chipbtn {
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--fg);
+  white-space: nowrap;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.chipbtn:hover:not(:disabled) {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.chipbtn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.chipbtn.attach {
+  align-self: center;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--fg-muted);
+}
+
+.pageactions-hint {
+  font-size: 11.5px;
+  color: var(--fg-muted);
+  text-align: center;
+  line-height: 1.5;
+}
+
+.pageactions-hint.restricted {
+  max-width: 30ch;
+}
+
+/* ── 붙어 있는 페이지 칩 ── */
+
+.pagechip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px 7px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  /* 사이드패널 기둥 모티프 — 앰버의 허용된 세 용처 중 ① 그래픽 */
+  border-left: 3px solid var(--rail);
+}
+
+.pagechip.truncated {
+  background: var(--warn-soft);
+  border-color: color-mix(in srgb, var(--warn) 25%, transparent);
+  border-left-color: var(--warn);
+}
+
+.pagechip-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.pagechip-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pagechip-meta {
+  font-size: 11px;
+  color: var(--fg-muted);
+  margin-top: 1px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 절단 고지는 자리를 아끼려고 줄이지 않는다 — 계획서 §6 완료 기준 */
+.pagechip-warn {
+  color: var(--warn);
+  font-weight: 600;
+}
+
+.pagechip-x {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--fg-muted);
+}
+
+.pagechip-x:hover {
+  background: var(--surface);
+  color: var(--fg);
+}
+
+/* ── 화면 캡처 칩 (Phase 4-1) ── */
+
+.pagechip.screenshot {
+  border-left-color: var(--accent);
+}
+
+.shot-thumb {
+  flex: none;
+  width: 44px;
+  height: 30px;
+  object-fit: cover;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+/* ── 슬래시 자동완성 (Phase 4-3) ── */
+
+.composer-wrap {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.slashmenu {
+  list-style: none;
+  margin: 0 0 6px;
+  padding: 4px;
+  max-height: 210px;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.slashmenu li {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 6px 9px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 12.5px;
+  min-width: 0;
+}
+
+.slashmenu li.active {
+  background: var(--accent-soft);
+}
+
+.slash-cmd {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--accent);
+  flex: none;
+}
+
+.slash-label {
+  font-weight: 600;
+  flex: none;
+}
+
+.slash-hint {
+  color: var(--fg-muted);
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.slash-badge {
+  flex: none;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--fg-muted);
+}
+
+.pageactions-hint.kind {
+  color: var(--accent);
+}
+
+/* ── 에이전트 (Phase 5) ─────────────────────────────────── */
+
+/*
+ * 에이전트 토글은 켜졌을 때 확실히 달라 보여야 한다.
+ * 켠 줄 모르고 보낸 메시지가 페이지를 조작하게 두면 안 된다.
+ */
+.minibtn.agent-toggle.on {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/*
+ * 승인 카드 — 계획서 §7 ③.
+ * 위험 색(danger)이 아니라 강조 색을 쓴다. 매번 빨간 경고를 띄우면
+ * 사용자가 경고에 둔감해져 습관적으로 승인하게 된다.
+ */
+.approval {
+  border: 1.5px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.approval-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.approval-what {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.approval-detail {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 3px 10px;
+  font-size: 11.5px;
+  color: var(--fg-muted);
+  margin: 0;
+}
+
+.approval-detail dt {
+  font-weight: 600;
+}
+
+.approval-detail dd {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.approval-url {
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.approval-url .path {
+  font-weight: 400;
+  color: var(--fg-muted);
+}
+
+.approval-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.approval-actions button {
+  flex: 1;
+  font-size: 12.5px;
+  font-weight: 700;
+  padding: 7px 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--fg);
+}
+
+/* 거부가 기본 포커스다. 포커스 링을 뚜렷하게 남긴다. */
+.btn-deny:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.btn-allow {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
+}
+
+/* ── 실행 기록 ─────────────────────────────────────────── */
+
+.steps {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.step {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--fg-muted);
+}
+
+.step .dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ok);
+  transform: translateY(-1px);
+}
+
+.step.fail .dot {
+  background: var(--warn);
+}
+
+.step.denied .dot {
+  background: var(--danger);
+}
+
+.step.running .dot {
+  background: var(--rail);
+  animation: step-pulse 1.1s ease-in-out infinite;
+}
+
+@keyframes step-pulse {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+
+.step-label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  text-align: left;
+  color: inherit;
+  min-width: 0;
+}
+
+.step-label:hover {
+  color: var(--accent);
+}
+
+.step .badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 0 5px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.step .badge.deny {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.step .ms {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.9;
+}
+
+.step-detail {
+  margin: 2px 0 4px 12px;
+  padding: 6px 8px;
+  border-left: 2px solid var(--border-strong);
+  background: var(--surface-2);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  font-size: 11.5px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 180px;
+  overflow: auto;
+}

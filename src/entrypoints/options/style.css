@@ -1,0 +1,384 @@
+@import '@/lib/brand/tokens.css';
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+input,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.wrap {
+  max-width: 680px;
+  margin: 0 auto;
+  padding: 40px 24px 80px;
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
+
+.opt-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.opt-header .wordmark {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+}
+
+/* 밝은 배경은 바이올렛, 어두운 배경은 앰버 — 브랜드 시트 규정 */
+.opt-header .wordmark b {
+  font-weight: 800;
+  color: var(--wordmark-ai);
+}
+
+.opt-header .product-prefix {
+  font-weight: 700;
+  color: var(--fg);
+}
+
+.opt-header .sub {
+  font-size: 12.5px;
+  color: var(--fg-muted);
+  margin-left: auto;
+}
+
+section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+section > h2 {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+  margin: 0 0 8px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.field:last-child {
+  border-bottom: 0;
+}
+
+.field .row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.field label {
+  font-weight: 600;
+  flex: 1;
+  min-width: 0;
+}
+
+.field .desc {
+  font-size: 12.5px;
+  color: var(--fg-muted);
+  line-height: 1.55;
+  margin: 0;
+}
+
+/* 실측에 근거한 경고. 사용자가 비용을 알고 값을 올리게 한다. */
+.field .warn {
+  font-size: 12.5px;
+  color: var(--warn);
+  line-height: 1.55;
+  margin: 0;
+}
+
+.field input[type='text'],
+.field input[type='number'],
+.field select {
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  padding: 7px 10px;
+  min-width: 190px;
+}
+
+.field input[type='range'] {
+  flex: 1;
+  accent-color: var(--accent);
+}
+
+.field .val {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  min-width: 84px;
+  text-align: right;
+  flex: none;
+}
+
+.btn {
+  align-self: flex-start;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 16px;
+  border-radius: 9px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+}
+
+.btn:hover {
+  background: var(--surface-2);
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-color: transparent;
+}
+
+.btn-primary:hover {
+  background: var(--accent);
+  opacity: 0.9;
+}
+
+.status {
+  font-size: 12.5px;
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+}
+
+.status.ok {
+  color: var(--ok);
+}
+
+.status.bad {
+  color: var(--danger);
+}
+
+.origin-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.origin-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.origin-list code {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.btn-sm {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 7px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  color: var(--fg);
+  white-space: nowrap;
+  flex: none;
+}
+
+.btn-sm:hover {
+  background: var(--bg);
+}
+
+.field textarea {
+  flex: 1;
+  min-width: 240px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.6;
+  resize: vertical;
+}
+
+.preset-list {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.preset-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.preset-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.preset-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.preset-head code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.preset-needs {
+  font-size: 11px;
+  color: var(--fg-muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+
+.preset-body {
+  margin-top: 5px;
+  font-size: 12.5px;
+  color: var(--fg-muted);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ── 성능 기록 (Phase 7-1) ─────────────────────────────── */
+
+.perf-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  margin: 12px 0;
+}
+
+.perf-table th,
+.perf-table td {
+  text-align: left;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.perf-table th {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--fg-muted);
+  text-transform: none;
+}
+
+.perf-table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * 달성/미달을 색으로만 구분하지 않는다 — 글자로도 적는다.
+ * 색각 이상 사용자에게 색은 정보가 되지 못한다.
+ */
+.perf-table .miss {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+.perf-table .meet {
+  color: var(--ok);
+  font-weight: 700;
+}
+
+.perf-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+  margin: 0 0 14px;
+}
+
+.perf-grid > div {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  background: var(--surface-2);
+}
+
+.perf-grid dt {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--fg-muted);
+}
+
+.perf-grid dd {
+  margin: 2px 0 0;
+  font-size: 15px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.perf-grid .base {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--fg-muted);
+}
+
+.desc.ok-note {
+  color: var(--ok);
+  font-weight: 600;
+}
