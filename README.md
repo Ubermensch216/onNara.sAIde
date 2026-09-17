@@ -30,8 +30,8 @@ npm run verify
 
 ## 문서
 
-- 최종 구축 계획: [`../plan/onnara-saide-final-workplan.md`](../plan/onnara-saide-final-workplan.md)
-- 참조 프로젝트 분석: [`../docs/reference-analysis-and-ideas.md`](../docs/reference-analysis-and-ideas.md)
+- 최종 구축 계획: [`plan/onnara-saide-final-workplan.md`](plan/onnara-saide-final-workplan.md)
+- 참조 프로젝트 분석: [`docs/reference-analysis-and-ideas.md`](docs/reference-analysis-and-ideas.md)
 - 구현 현황: [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md)
 
 ## 검증 명령
