@@ -185,16 +185,53 @@ it.each(['success', 'missing', 'cancelled'] as const)('복제 목록 복원(%s):
     expect(await pending).toMatchObject({ type: 'DOCUMENT_READ', requestedTitle: title });
     expect(sendMessage).toHaveBeenCalledWith(20, expect.objectContaining({ type: 'OPEN_DOCUMENT' }), { frameId: 2 });
   } else if (outcome === 'missing') {
-    expect(await pending).toMatchObject({ type: 'ERROR', error: { code: 'UNKNOWN', hint: expect.stringContaining('복원 시도 3회') } });
-    expect(sendMessage.mock.calls.some(([, msg]) => msg.type === 'OPEN_DOCUMENT')).toBe(false);
+    // 복제 탭(20) 복원이 실패하면 원본 탭(1) 화면의 문서를 통해 계속 진행한다.
+    expect(await pending).toMatchObject({ type: 'DOCUMENT_READ', requestedTitle: title });
+    expect(sendMessage).toHaveBeenCalledWith(1, expect.objectContaining({ type: 'OPEN_DOCUMENT' }), { frameId: 2 });
   } else {
     expect(await pending).toMatchObject({ type: 'ERROR', error: { code: 'ABORTED' } });
     expect(sendMessage.mock.calls.some(([, msg]) => msg.type === 'OPEN_DOCUMENT')).toBe(false);
   }
   // 복원 요청은 모든 프레임에 동시에 묻고(부모 경로가 맞는 프레임만 실제 전송), 목록이 없으면 최대 3회 반복한다.
   expect(sendMessage.mock.calls.filter(([, msg]) => msg.type === 'RESTORE_DOCUMENT_LIST')).toHaveLength({ cancelled: 0, success: 2, missing: 6 }[outcome]);
-  expect(sendMessage.mock.calls.filter(([id, msg]) => id === 1).every(([, msg]) => ['EXTRACT', 'LOCATE_DOCUMENT'].includes(msg.type))).toBe(true);
+  expect(sendMessage.mock.calls.filter(([id, msg]) => id === 1).every(([, msg]) => ['EXTRACT', 'LOCATE_DOCUMENT', 'OPEN_DOCUMENT', 'CHECK_DIALOG'].includes(msg.type))).toBe(true);
   expect(update).not.toHaveBeenCalled();
+  expect(remove).toHaveBeenCalledWith([20]);
+});
+
+it('복제 탭 복원에 실패하고 원본 탭에서도 더 이상 문서를 찾을 수 없으면 오류를 알린다', async () => {
+  vi.useFakeTimers();
+  const title = '사라진 문서';
+  const common = { url: 'https://onnara.test/main', title: '온나라', text: '메뉴', charCount: 2, method: 'innerText' as const, truncated: false, keptRatio: 1, estimatedTokens: 20, extractedAt: Date.now() };
+  const location = { url: 'https://onnara.test/list', framePath: [0], form: { method: 'post' as const, fields: [] } };
+  let originalCalls = 0;
+  const sendMessage = vi.fn(async (id: number, msg: { type: string }, options: { frameId: number }) => {
+    if (msg.type === 'LOCATE_DOCUMENT') return { type: 'DOCUMENT_LOCATED', location };
+    if (msg.type === 'RESTORE_DOCUMENT_LIST') return { type: 'DOCUMENT_LIST_RESTORED', restored: false };
+    if (id === 1 && options.frameId === 2) {
+      originalCalls++;
+      // 첫 확인 때는 문서가 있었으나, 폴백 재확인 시점에는 문서가 사라진 상황
+      if (originalCalls === 1) {
+        return { type: 'EXTRACTED', payload: {
+          ...common, structuredData: { kind: 'onnara-document-list', listName: '받은문서', columns: [], rows: [{ title }] },
+        } };
+      }
+    }
+    return { type: 'EXTRACTED', payload: common };
+  });
+  const remove = vi.fn(async () => undefined);
+  vi.stubGlobal('chrome', {
+    tabs: {
+      get: vi.fn(async (id: number) => ({ id, url: common.url, active: id === 1 })),
+      query: vi.fn(async () => [{ id: 1 }]), duplicate: vi.fn(async () => ({ id: 20 })),
+      sendMessage, remove, update: vi.fn(),
+    },
+    scripting: { executeScript: vi.fn(async () => []) },
+    webNavigation: { getAllFrames: vi.fn(async () => [{ frameId: 0, url: common.url }, { frameId: 2, url: location.url }]) },
+  });
+  const pending = readDocumentInBackground(1, title, 2000, { id: crypto.randomUUID(), deadline: Date.now() + 120_000, expectedUrl: common.url });
+  await vi.advanceTimersByTimeAsync(41_000);
+  expect(await pending).toMatchObject({ type: 'ERROR', error: { code: 'UNKNOWN', hint: expect.stringContaining('복원 시도 3회') } });
   expect(remove).toHaveBeenCalledWith([20]);
 });
 
@@ -470,4 +507,77 @@ it('여러 문서를 이어서 읽으면 복제한 목록 탭 하나를 재사�
   await releaseKeptWorkTab(1);
   expect(fixture.open.has(20)).toBe(false);
   expect(workTabs.size).toBe(0);
+});
+
+it('문서 열기 시 alert 대화상자(과제 미지정 등)가 감지되면 대기시간 없이 즉시 실패 처리한다', async () => {
+  vi.useFakeTimers();
+  const fixture = popupFixture(() => {
+    // 팝업이 열리지 않고 alert만 발생함
+  });
+  const sendMessage = (globalThis.chrome as any).tabs.sendMessage;
+  sendMessage.mockImplementation(async (id: number, msg: { type: string }, options: { frameId: number }) => {
+    if (msg.type === 'LOCATE_DOCUMENT') return { type: 'DOCUMENT_LOCATED', location: { url: 'https://onnara.test/list', framePath: [0] } };
+    if (msg.type === 'OPEN_DOCUMENT') return { type: 'OPENING_DOCUMENT', title: fixture.title };
+    if (msg.type === 'CHECK_DIALOG') return { type: 'DIALOG_CHECKED', message: '과제 미지정상태이므로 문서를 열람하실 수 없습니다.' };
+    return { type: 'EXTRACTED', payload: { url: 'https://onnara.test/main', title: '온나라', text: '메뉴', charCount: 2, method: 'innerText', truncated: false, keptRatio: 1, estimatedTokens: 20, extractedAt: Date.now(), structuredData: { kind: 'onnara-document-list', listName: '받은문서', columns: [], rows: [{ title: fixture.title }] } } };
+  });
+
+  const pending = readDocumentInBackground(1, fixture.title, 2000, {
+    id: crypto.randomUUID(),
+    deadline: Date.now() + 60_000,
+    expectedUrl: 'https://onnara.test/main',
+  });
+  await vi.advanceTimersByTimeAsync(500);
+  const result = await pending;
+  expect(result).toMatchObject({
+    type: 'ERROR',
+    error: {
+      code: 'UNKNOWN',
+      message: expect.stringContaining('과제 미지정상태이므로 문서를 열람하실 수 없습니다.'),
+    },
+  });
+  vi.useRealTimers();
+});
+
+it('상세 본문 추출 결과가 권한 불가 안내 문구이면 60초 대기 없이 즉시 실패 처리한다', async () => {
+  vi.useFakeTimers();
+  const fixture = popupFixture(() => undefined);
+  const sendMessage = (globalThis.chrome as any).tabs.sendMessage;
+  sendMessage.mockImplementation(async (id: number, msg: { type: string; purpose?: string }, options: { frameId: number }) => {
+    if (msg.type === 'LOCATE_DOCUMENT') return { type: 'DOCUMENT_LOCATED', location: { url: 'https://onnara.test/list', framePath: [0] } };
+    if (msg.type === 'OPEN_DOCUMENT') return { type: 'OPENING_DOCUMENT', title: fixture.title };
+    if (msg.purpose === 'document-detail') {
+      return {
+        type: 'EXTRACTED',
+        payload: {
+          url: 'https://onnara.test/error',
+          title: '오류',
+          text: '해당 문서에 대한 열람 권한이 없습니다.',
+          charCount: 30,
+          method: 'innerText',
+          truncated: false,
+          keptRatio: 1,
+          estimatedTokens: 10,
+          extractedAt: Date.now(),
+        },
+      };
+    }
+    return { type: 'EXTRACTED', payload: { url: 'https://onnara.test/main', title: '온나라', text: '메뉴', charCount: 2, method: 'innerText', truncated: false, keptRatio: 1, estimatedTokens: 20, extractedAt: Date.now(), structuredData: { kind: 'onnara-document-list', listName: '받은문서', columns: [], rows: [{ title: fixture.title }] } } };
+  });
+
+  const pending = readDocumentInBackground(1, fixture.title, 2000, {
+    id: crypto.randomUUID(),
+    deadline: Date.now() + 60_000,
+    expectedUrl: 'https://onnara.test/main',
+  });
+  await vi.advanceTimersByTimeAsync(500);
+  const result = await pending;
+  expect(result).toMatchObject({
+    type: 'ERROR',
+    error: {
+      code: 'UNKNOWN',
+      message: expect.stringContaining('열람 권한이 없습니다'),
+    },
+  });
+  vi.useRealTimers();
 });

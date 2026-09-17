@@ -8,6 +8,7 @@ import {
   isDocumentSummaryRequest,
   matchDocumentTitle,
   requestedDocumentTitles,
+  sameDocumentTitle,
   openDocumentTarget,
   serializeDocumentList,
 } from './document-list';
@@ -109,4 +110,18 @@ it('제목 칸에 누를 링크가 없으면 행에 걸린 열기 동작을 누�
     <tr ondblclick="openDoc()"><td><input type="checkbox"></td><td><span>[auto]</span>감사원 감사자료 제출 요구</td><td>접수</td></tr>
   </table>`;
   expect(findDocumentOpenTarget('[auto]감사원 감사자료 제출 요구')?.tagName).toBe('TR');
+});
+
+it('sameDocumentTitle은 공백, 괄호/인용부호 및 접두사 차이가 있어도 올바르게 일치로 판별한다', () => {
+  const title1 = '(조달청)「건설자재 조달관리시스템 이용약관」제정안 의견 조회';
+  const title1WithSpace = '(조달청) 「건설자재 조달관리시스템 이용약관」제정안 의견 조회';
+  const title1Fullwidth = '（조달청） "건설자재 조달관리시스템 이용약관" 제정안 의견 조회';
+  expect(sameDocumentTitle(title1, title1WithSpace)).toBe(true);
+  expect(sameDocumentTitle(title1, title1Fullwidth)).toBe(true);
+
+  const title2 = '(조달청) 물품 공급입찰 무분별입찰 방지를 위한 수요기관 협조 요청';
+  const title2WithPrefix = '[붙임] (조달청) 물품 공급입찰 무분별입찰 방지를 위한 수요기관 협조 요청';
+  expect(sameDocumentTitle(title2, title2WithPrefix)).toBe(true);
+
+  expect(sameDocumentTitle(title1, title2)).toBe(false);
 });

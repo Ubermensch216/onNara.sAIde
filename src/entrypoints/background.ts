@@ -547,14 +547,36 @@ export async function readDocumentInBackground(
       chosenTabId = duplicate.id;
       temporary.add(chosenTabId);
       await keepBackground(chosenTabId, source);
-      chosenList = await waitForDocumentList(chosenTabId, title, budgetTokens, taskControl, located.location);
+      try {
+        chosenList = await waitForDocumentList(chosenTabId, title, budgetTokens, taskControl, located.location);
+      } catch (listError) {
+        if (cancelled.has(control.id)) throw listError;
+        // 복제 탭에서 검색 조건이나 세션 상태를 복원하지 못했더라도,
+        // 원본 탭 화면에는 요청한 문서가 이미 표시되어 있다.
+        // 복제 탭을 닫고 원본 탭에서 직접 열기를 시도한다 (온나라는 새 창 팝업으로 열리므로 원본 목록이 유지된다).
+        await chrome.tabs.remove([chosenTabId]).catch(() => undefined);
+        temporary.delete(chosenTabId);
+        forgetWorkTab(chosenTabId);
+
+        const recheck = await dispatchContent(sourceTabId, { type: 'EXTRACT', budgetTokens, purpose: 'page', targetTitle: title, control: taskControl });
+        if (recheck.type === 'EXTRACTED' && recheck.payload.structuredData?.rows.some(row => row.title && sameDocumentTitle(row.title, title))) {
+          chosenTabId = sourceTabId;
+          chosenList = recheck.payload;
+        } else {
+          throw listError;
+        }
+      }
     }
-    // 목록을 확보한 작업 탭만 다음 문서에 넘긴다.
+    // 목록을 확보한 작업 탭만 다음 문서에 넘긴다 (원본 탭은 재사용 보관 대상에서 제외).
     const workTabId: number = chosenTabId;
     const list: ExtractedPage = chosenList;
-    if (options.keepWorkTab) keptWorkTabId = workTabId;
+    if (options.keepWorkTab && workTabId !== sourceTabId) keptWorkTabId = workTabId;
     const openFrameId = list.sourceFrameId ?? 0;
     stage = 'open';
+    await injectDialogInterceptor(workTabId, openFrameId);
+    if (workTabId !== sourceTabId) {
+      await injectDialogInterceptor(sourceTabId, openFrameId);
+    }
     const framesBefore = await frameUrls(workTabId);
     const openedAt = Date.now();
     const opened = await sendToFrame(workTabId, openFrameId, {
@@ -587,8 +609,12 @@ export async function readDocumentInBackground(
       await delay(300);
       const tabs = new Map((await chrome.tabs.query({})).flatMap(tab => typeof tab.id === 'number' ? [[tab.id, tab] as const] : []));
       // 새 창(popup window) 팝업은 openerTabId가 비어 있으므로 window.open 이벤트로 기록한 체인을 먼저 본다.
-      const children = [...tabsSpawnedBy(workTabId), ...[...tabs.values()]
-        .filter(tab => !before.has(tab.id!) && tab.openerTabId === workTabId).map(tab => tab.id!)];
+      const children = [
+        ...tabsSpawnedBy(workTabId),
+        ...[...tabs.values()]
+          .filter(tab => !before.has(tab.id!) && (tab.openerTabId === workTabId || (workTabId === sourceTabId && sameOrigin(tab.url, source.url))))
+          .map(tab => tab.id!),
+      ];
       for (const id of children) {
         if (id === workTabId || temporary.has(id)) continue;
         temporary.add(id);
@@ -604,6 +630,21 @@ export async function readDocumentInBackground(
       const popup = created ?? reused;
       observed.popup = popup !== undefined;
       if (!observed.popup && !observed.frameChanged) observed.frameChanged = (await frameUrls(workTabId)) !== framesBefore;
+
+      // 온나라 alert/confirm 팝업(과제 미지정 등)이 뜬 경우 대기시간을 소모하지 않고 즉시 실패 처리한다.
+      const dialogMsg = (await checkDialogMessage(workTabId, openFrameId, taskControl)) ??
+        (workTabId !== sourceTabId ? await checkDialogMessage(sourceTabId, openFrameId, taskControl) : undefined) ??
+        (popup ? await checkDialogMessage(popup, 0, taskControl) : undefined);
+      if (dialogMsg) {
+        return {
+          type: 'ERROR',
+          error: {
+            code: 'UNKNOWN',
+            message: `문서 열람 불가: ${dialogMsg.trim()}`,
+          },
+        };
+      }
+
       // 팝업 차단 등으로 클릭에 아무 반응이 없으면 2분을 기다리지 않는다.
       if (!observed.popup && !observed.frameChanged && Date.now() - detailStarted >= NO_REACTION_MS) break;
       const targetTabId = popup ?? workTabId;
@@ -628,6 +669,18 @@ export async function readDocumentInBackground(
       blockedStreak = blocked.length ? blockedStreak + 1 : 0;
       if (blockedStreak >= 2) return { type: 'ERROR', error: blockedFramesError(blocked) };
       if (result.payload.structuredData) { Object.assign(observed, { state: 'list', chars: result.payload.charCount }); continue; }
+
+      // 상세 화면에 접근 불가/권한 안내 문구 등이 뜬 경우 즉시 실패 처리한다.
+      if (result.payload.charCount < 300 && ACCESS_DENIED_PATTERN.test(result.payload.text)) {
+        return {
+          type: 'ERROR',
+          error: {
+            code: 'UNKNOWN',
+            message: `문서 열람 불가: ${result.payload.text.trim().replace(/\s+/g, ' ')}`,
+          },
+        };
+      }
+
       if (result.payload.charCount < 120) { Object.assign(observed, { state: 'short', chars: result.payload.charCount }); continue; }
       // 재사용된 창은 이전 문서가 남아 있을 수 있어 제목이 보일 때만 받아들인다.
       const preferred = popup === undefined ? result.payload.sourceFrameId === openFrameId : popup === created;
@@ -645,8 +698,10 @@ export async function readDocumentInBackground(
 
     if (readable) return await finish(readable.payload, readable.tabId);
 
+    keptWorkTabId = undefined;
     return { type: 'ERROR', error: readTimeoutError(stage, observed) };
   } catch (error) {
+    keptWorkTabId = undefined;
     if (cancelled.has(control.id)) return { type: 'ERROR', error: { code: 'ABORTED', message: '문서 읽기를 중단했습니다.' } };
     if (error instanceof ReadFailure) return { type: 'ERROR', error: error.appError };
     // 마감이 루프 조건 검사와 프레임 추출 사이에 지나면 assertCurrent가 던진다.
@@ -654,10 +709,12 @@ export async function readDocumentInBackground(
     if (Date.now() >= taskControl.deadline) return { type: 'ERROR', error: readTimeoutError(stage, observed) };
     return { type: 'ERROR', error: { code: 'UNKNOWN', message: `문서 화면 읽기에 실패했습니다 (${STAGE_LABEL[stage]}). ${String(error)}`, hint: '복제한 탭에서 문서 목록과 상세 본문이 표시되는지 확인하세요.' } };
   } finally {
-    // 마지막 확인 뒤에 뜬 팝업도 함께 닫는다. 이미 닫힌 ID가 섞여 일괄 삭제가 실패하면 하나씩 닫는다.
+    // 원본 탭은 절대 닫히지 않도록 temporary에서 제외한다.
+    temporary.delete(sourceTabId);
     for (const root of [...temporary]) for (const id of tabsSpawnedBy(root)) temporary.add(id);
+    temporary.delete(sourceTabId);
     // 다음 문서에 재사용할 작업 탭은 남기고, 이 문서의 팝업만 닫는다.
-    if (keptWorkTabId !== undefined && !cancelled.has(control.id) && await chrome.tabs.get(keptWorkTabId).then(() => true, () => false)) {
+    if (keptWorkTabId !== undefined && keptWorkTabId !== sourceTabId && !cancelled.has(control.id) && await chrome.tabs.get(keptWorkTabId).then(() => true, () => false)) {
       temporary.delete(keptWorkTabId);
       await saveKeptWorkTab(sourceTabId, keptWorkTabId, source.url);
     } else {
@@ -734,9 +791,113 @@ type DetailObservation = {
 };
 
 const DETAIL_WAIT_MS = 60_000;
-const NO_REACTION_MS = 15_000;
+const NO_REACTION_MS = 4_000;
 const DETAIL_STABLE_MS = 1000;
 const DETAIL_SETTLE_LIMIT_MS = 10_000;
+
+const ACCESS_DENIED_PATTERN = /과제\s*미지정|열람\s*권한|열람하실\s*수\s*없습니다|접근\s*권한|권한이\s*없습니다|존재하지\s*않는\s*문서|삭제된\s*문서|처리\s*권한|오류가\s*발생/i;
+
+async function injectDialogInterceptor(tabId: number, openFrameId = 0): Promise<void> {
+  const frameIds = new Set<number>([0, openFrameId]);
+  try {
+    const all = await chrome.webNavigation.getAllFrames({ tabId });
+    for (const f of all ?? []) {
+      if (f.url && !f.url.startsWith('about:') && !f.url.startsWith('chrome:') && !f.url.startsWith('javascript:')) {
+        frameIds.add(f.frameId);
+      }
+    }
+  } catch {}
+
+  for (const frameId of frameIds) {
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId, frameIds: [frameId] },
+        world: 'MAIN',
+        injectImmediately: true,
+        func: () => {
+          const saveDialog = (msg: unknown) => {
+            try {
+              const text = String(msg ?? '').trim();
+              if (!text) return;
+              document.documentElement.setAttribute('data-saide-dialog', text);
+              (window as unknown as { __saide_dialog_message?: string }).__saide_dialog_message = text;
+              if (window.top && window.top !== window) {
+                try {
+                  window.top.document.documentElement.setAttribute('data-saide-dialog', text);
+                  (window.top as unknown as { __saide_dialog_message?: string }).__saide_dialog_message = text;
+                } catch {}
+              }
+              if (window.parent && window.parent !== window) {
+                try {
+                  window.parent.document.documentElement.setAttribute('data-saide-dialog', text);
+                  (window.parent as unknown as { __saide_dialog_message?: string }).__saide_dialog_message = text;
+                } catch {}
+              }
+            } catch {}
+            console.warn('[sAIde] Intercepted alert in MAIN world:', msg);
+          };
+
+          const hook = (w: Window | null | undefined) => {
+            try {
+              if (!w) return;
+              try { w.document.documentElement.removeAttribute('data-saide-dialog'); } catch {}
+              (w as unknown as { __saide_dialog_message?: string | null }).__saide_dialog_message = null;
+              if ((w as unknown as { __saide_dialog_hooked?: boolean }).__saide_dialog_hooked) return;
+              (w as unknown as { __saide_dialog_hooked?: boolean }).__saide_dialog_hooked = true;
+
+              w.alert = function (msg) { saveDialog(msg); };
+              w.confirm = function (msg) { saveDialog(msg); return false; };
+              w.prompt = function (msg) { saveDialog(msg); return null; };
+            } catch {}
+          };
+
+          hook(window);
+          try { hook(window.parent); } catch {}
+          try { hook(window.top); } catch {}
+          try {
+            if (window.top) {
+              for (let i = 0; i < window.top.frames.length; i++) {
+                hook(window.top.frames[i]);
+              }
+            }
+          } catch {}
+        },
+      });
+    } catch {}
+  }
+}
+
+async function checkDialogMessage(tabId: number, frameId: number, control: RequestControl): Promise<string | undefined> {
+  for (const fId of new Set([frameId, 0])) {
+    try {
+      const res = await sendToFrame(tabId, fId, { type: 'CHECK_DIALOG', control });
+      if (res.type === 'DIALOG_CHECKED' && res.message) return res.message;
+    } catch {}
+  }
+  for (const fId of new Set([frameId, 0])) {
+    try {
+      const results = await chrome.scripting.executeScript({
+        target: { tabId, frameIds: [fId] },
+        world: 'MAIN',
+        func: () => {
+          const domAttr = document.documentElement.getAttribute('data-saide-dialog');
+          const winMsg = (window as unknown as { __saide_dialog_message?: string }).__saide_dialog_message;
+          const topAttr = (() => {
+            try { return window.top?.document.documentElement.getAttribute('data-saide-dialog'); } catch { return null; }
+          })();
+          const topMsg = (() => {
+            try { return (window.top as unknown as { __saide_dialog_message?: string })?.__saide_dialog_message; } catch { return null; }
+          })();
+          return domAttr || winMsg || topAttr || topMsg || null;
+        },
+      });
+      for (const r of results ?? []) {
+        if (r?.result) return String(r.result);
+      }
+    } catch {}
+  }
+  return undefined;
+}
 
 /** 권한 없는 본문 프레임 주소를 사용자가 허용할 수 있는 형태로 알린다. */
 export function blockedFramesError(urls: string[]): AppError {
@@ -824,12 +985,8 @@ export async function downloadAttachmentsInTab(tabId: number, control: RequestCo
   } while (Date.now() < scanUntil && !cancelled.has(control.id));
   if (!found.length) {
     return {
-      type: 'ERROR',
-      error: {
-        code: 'UNKNOWN',
-        message: '문서 화면에서 첨부 파일을 찾지 못했습니다.',
-        hint: '첨부가 없는 문서이거나, 첨부 목록이 파일 이름 없이 아이콘으로만 표시되는지 확인하세요.',
-      },
+      type: 'ATTACHMENTS_DOWNLOADED',
+      results: [],
     };
   }
 
@@ -955,6 +1112,10 @@ async function waitForDocumentList(
           sendToFrame(tabId, frame.frameId, { type: 'RESTORE_DOCUMENT_LIST', location, control })));
         if (replies.some(reply => reply.type === 'DOCUMENT_LIST_RESTORED' && reply.restored)) accepted = true;
       }
+    }
+    // 최대 복원 횟수를 채우고 탭이 충분히 안정되었는데도 목록이 없으면 대기를 길게 끌지 않고 즉시 중단한다.
+    if (restores >= MAX_RESTORES && since >= RESTORE_RETRY_MS) {
+      break;
     }
     await delay(250);
   }

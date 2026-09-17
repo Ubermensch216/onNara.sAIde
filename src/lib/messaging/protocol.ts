@@ -219,6 +219,7 @@ export type SWToContent = (
   | { type: 'RESTORE_DOCUMENT_LIST'; location: DocumentListLocation }
   | { type: 'SCAN_ATTACHMENTS' }
   | { type: 'CLICK_ATTACHMENT'; index: number; name: string }
+  | { type: 'CHECK_DIALOG' }
   | { type: 'ACT'; action: PageAction }
   | { type: 'PREPARE'; action: PageAction }
 ) & { control: RequestControl };
@@ -233,6 +234,7 @@ export type ContentToSW =
   | { type: 'DOCUMENT_LIST_RESTORED'; restored: boolean }
   | { type: 'ATTACHMENTS_FOUND'; items: AttachmentItem[] }
   | { type: 'ATTACHMENT_CLICKED'; clicked: boolean }
+  | { type: 'DIALOG_CHECKED'; message?: string | null }
   | { type: 'ACTED'; result: ActionResult }
   | { type: 'FAILED'; error: AppError };
 

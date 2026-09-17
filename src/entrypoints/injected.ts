@@ -99,7 +99,20 @@ export default defineUnlistedScript(() => {
           }, 0);
         } else if (msg.type === 'RESTORE_DOCUMENT_LIST') {
           sendResponse({ type: 'DOCUMENT_LIST_RESTORED', restored: restoreDocumentListLocation(msg.location) } satisfies ContentToSW);
+        } else if (msg.type === 'CHECK_DIALOG') {
+          let message = document.documentElement?.getAttribute('data-saide-dialog')
+            || (window as unknown as { __saide_dialog_message?: string }).__saide_dialog_message
+            || null;
+          if (!message && window.top && window.top !== window) {
+            try {
+              message = window.top.document.documentElement?.getAttribute('data-saide-dialog')
+                || (window.top as unknown as { __saide_dialog_message?: string }).__saide_dialog_message
+                || null;
+            } catch {}
+          }
+          sendResponse({ type: 'DIALOG_CHECKED', message: message || null } satisfies ContentToSW);
         } else if (msg.type === 'OPEN_DOCUMENT') {
+          installDialogInterceptor();
           const target = findDocumentOpenTarget(msg.title);
           if (!target) {
             sendResponse({
@@ -339,4 +352,87 @@ function describe(el: HTMLElement): string {
   ).trim();
   const tag = el.tagName.toLowerCase();
   return label ? `<${tag}> "${label.slice(0, 60)}"` : `<${tag}>`;
+}
+
+/** 온나라 스크립트의 alert/confirm/prompt 팝업을 가로채 브라우저 멈춤을 방지하고 메시지를 기록한다. */
+function installDialogInterceptor(): void {
+  if (typeof document === 'undefined') return;
+  try {
+    document.documentElement.removeAttribute('data-saide-dialog');
+    (window as unknown as { __saide_dialog_message?: string | null }).__saide_dialog_message = null;
+    if (window.top && window.top !== window) {
+      try {
+        window.top.document.documentElement.removeAttribute('data-saide-dialog');
+        (window.top as unknown as { __saide_dialog_message?: string | null }).__saide_dialog_message = null;
+      } catch {}
+    }
+  } catch {}
+
+  const hookTarget = (w: Window | null | undefined) => {
+    try {
+      if (!w) return;
+      w.alert = function (msg: unknown) {
+        try {
+          const text = String(msg ?? '').trim();
+          document.documentElement.setAttribute('data-saide-dialog', text);
+          (window as unknown as { __saide_dialog_message?: string }).__saide_dialog_message = text;
+        } catch {}
+        console.warn('[sAIde] Intercepted alert:', msg);
+      };
+      w.confirm = function (msg: unknown) {
+        try {
+          const text = String(msg ?? '').trim();
+          document.documentElement.setAttribute('data-saide-dialog', text);
+          (window as unknown as { __saide_dialog_message?: string }).__saide_dialog_message = text;
+        } catch {}
+        return false;
+      };
+      w.prompt = function (msg: unknown) {
+        try {
+          const text = String(msg ?? '').trim();
+          document.documentElement.setAttribute('data-saide-dialog', text);
+          (window as unknown as { __saide_dialog_message?: string }).__saide_dialog_message = text;
+        } catch {}
+        return null;
+      };
+    } catch {}
+  };
+
+  hookTarget(window);
+  try { hookTarget(window.parent); } catch {}
+  try { hookTarget(window.top); } catch {}
+
+  if (document.getElementById('__saide_dialog_interceptor__')) return;
+  try {
+    const script = document.createElement('script');
+    script.id = '__saide_dialog_interceptor__';
+    script.textContent = `(() => {
+      const record = (msg) => {
+        try {
+          const text = String(msg ?? '').trim();
+          if (!text) return;
+          document.documentElement.setAttribute('data-saide-dialog', text);
+          window.__saide_dialog_message = text;
+          if (window.top && window.top !== window) {
+            try { window.top.document.documentElement.setAttribute('data-saide-dialog', text); window.top.__saide_dialog_message = text; } catch {}
+          }
+          if (window.parent && window.parent !== window) {
+            try { window.parent.document.documentElement.setAttribute('data-saide-dialog', text); window.parent.__saide_dialog_message = text; } catch {}
+          }
+        } catch {}
+      };
+      const hook = (w) => {
+        try {
+          if (!w) return;
+          w.alert = function (msg) { record(msg); };
+          w.confirm = function (msg) { record(msg); return false; };
+          w.prompt = function (msg) { record(msg); return null; };
+        } catch {}
+      };
+      hook(window);
+      try { hook(window.parent); } catch {}
+      try { hook(window.top); } catch {}
+    })();`;
+    (document.head || document.documentElement).appendChild(script);
+  } catch {}
 }

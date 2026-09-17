@@ -196,7 +196,17 @@ function searchable(value: string): string {
 }
 
 export function sameDocumentTitle(left: string, right: string): boolean {
-  return cleanText(left).normalize('NFC') === cleanText(right).normalize('NFC');
+  const normLeft = cleanText(left).normalize('NFC');
+  const normRight = cleanText(right).normalize('NFC');
+  if (normLeft === normRight) return true;
+  const sLeft = searchable(normLeft);
+  const sRight = searchable(normRight);
+  if (!sLeft || !sRight) return false;
+  if (sLeft === sRight) return true;
+  if (sLeft.length >= 6 && sRight.length >= 6 && (sLeft.includes(sRight) || sRight.includes(sLeft))) {
+    return true;
+  }
+  return false;
 }
 
 /** 모델에게 고르게 하지 않고 현재 표의 제목과 사용자 문장을 결정적으로 대조한다. */

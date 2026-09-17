@@ -23,11 +23,13 @@ it('목록 화면에서는 선택 문서마다 백그라운드 첨부 다운로�
   expect(report).toHaveBeenCalledWith(expect.stringContaining('나 문서.xlsx: 다운로드 완료'));
 });
 
-it('상세 화면에서는 제목 없이 현재 화면의 첨부를 받고 실패 사유를 보여준다', async () => {
-  const sendMessage = vi.fn(async (_message: object) => ({ type: 'ERROR', error: { code: 'UNKNOWN', message: '문서 화면에서 첨부 파일을 찾지 못했습니다.', hint: '확인하세요' } }));
+it('첨부 파일이 없는 문서인 경우 첨부 파일 없음을 명시하고 정상 보고한다', async () => {
+  const sendMessage = vi.fn(async () => ({
+    type: 'ATTACHMENTS_DOWNLOADED',
+    results: [],
+  }));
   vi.stubGlobal('chrome', { runtime: { sendMessage } });
   const report = vi.fn(async () => undefined);
   await downloadDocumentAttachments({ tabId: 1, page: base, prompt: '첨부 다운로드', signal: new AbortController().signal, progress: vi.fn(), report });
-  expect(sendMessage.mock.calls[0]![0]).not.toHaveProperty('title');
-  expect(report).toHaveBeenCalledWith(expect.stringContaining('첨부 파일을 찾지 못했습니다'));
+  expect(report).toHaveBeenCalledWith(expect.stringContaining('첨부 파일이 없습니다.'));
 });

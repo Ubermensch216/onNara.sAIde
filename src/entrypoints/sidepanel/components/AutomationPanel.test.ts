@@ -97,3 +97,35 @@ it('기억한 탭이 닫혀 읽기에 실패해도 "다시 읽기"를 누르면 
   expect(document.querySelector('.auto-error')).toBeNull();
   expect(cards().map(card => card.disabled)).toEqual([false]);
 });
+
+it('문서 열기에 실패하거나 첨부파일이 없어도 멈추지 않고 다음 문서로 계속 진행한다', async () => {
+  const selection = ['문서 A', '문서 B', '문서 C'];
+  const sendMessage = vi.fn(async (message: { type: string; title?: string }) => {
+    if (message.type === 'EXTRACT_PAGE') return list(selection);
+    if (message.type === 'DOWNLOAD_ATTACHMENTS') {
+      if (message.title === '문서 A') {
+        return { type: 'ERROR', error: { code: 'UNKNOWN', message: '문서 열기 실패' } };
+      }
+      if (message.title === '문서 B') {
+        return { type: 'ATTACHMENTS_DOWNLOADED', results: [] };
+      }
+      return { type: 'ATTACHMENTS_DOWNLOADED', results: [{ name: '문서 C.hwpx', status: 'complete', downloadId: 13, path: 'C:\\Downloads\\문서 C.hwpx' }] };
+    }
+    return { type: 'ACTIVE_TAB', tab: null };
+  });
+  vi.stubGlobal('chrome', { runtime: { sendMessage }, storage: { local: { get: vi.fn(async () => ({})), set: vi.fn(async () => undefined) } } });
+  const onDownloadLink = vi.fn();
+  await act(() => root.render(createElement(AutomationPanel, { tab, onDownloadLink })));
+  await settle();
+
+  await act(async () => document.querySelector<HTMLButtonElement>('.auto-card')!.click());
+  await settle();
+
+  const downloads = sendMessage.mock.calls.map(([message]) => message).filter(message => message.type === 'DOWNLOAD_ATTACHMENTS');
+  expect(downloads.map(message => message.title)).toEqual(['문서 A', '문서 B', '문서 C']);
+
+  const rows = [...document.querySelectorAll('.auto-job')];
+  expect(rows.map(row => row.querySelector('.auto-status')!.textContent)).toEqual(['완료', '완료', '실패']);
+  expect(rows.map(row => row.querySelector('.auto-job-title')!.textContent)).toEqual(['문서 C', '문서 B', '문서 A']);
+  expect(rows[1]!.querySelector('.auto-job-summary')!.textContent).toBe('첨부 파일이 없습니다.');
+});

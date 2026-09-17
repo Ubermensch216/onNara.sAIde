@@ -91,3 +91,17 @@ it('확장을 다시 불러와 이전 런타임이 무효가 되면 열린 페�
   injected.main();
   expect(addListener).toHaveBeenCalledTimes(1);
 });
+
+it('CHECK_DIALOG 요청 시 data-saide-dialog 속성에 기록된 대화상자 메시지를 반환한다', async () => {
+  expect(await send({ type: 'CHECK_DIALOG', control: control() })).toMatchObject({
+    type: 'DIALOG_CHECKED',
+    message: null,
+  });
+
+  document.documentElement.setAttribute('data-saide-dialog', '과제 미지정상태이므로 문서를 열람하실 수 없습니다.');
+  expect(await send({ type: 'CHECK_DIALOG', control: control() })).toMatchObject({
+    type: 'DIALOG_CHECKED',
+    message: '과제 미지정상태이므로 문서를 열람하실 수 없습니다.',
+  });
+});
+

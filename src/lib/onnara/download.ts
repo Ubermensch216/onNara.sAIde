@@ -58,7 +58,10 @@ export async function queueAttachmentDownloads(options: {
       if (response.type === 'ERROR') return { error: response.error };
       if (response.type !== 'ATTACHMENTS_DOWNLOADED') return { error: { code: 'UNKNOWN', message: '첨부 다운로드 결과를 받지 못했습니다.' } };
       if (response.results.some(result => result.status === 'in_progress')) stalled = true;
-      return { files: response.results };
+      return {
+        files: response.results,
+        ...(response.results.length === 0 ? { summary: '첨부 파일이 없습니다.' } : {}),
+      };
     },
   }));
   const cancel = () => { for (const { id } of pending) cancelAutomation(id); };
@@ -86,6 +89,7 @@ export async function releaseWorkTab(tabId: number): Promise<void> {
 export function formatAttachmentReport(label: string, outcome: { results?: AttachmentDownloadResult[]; error?: AppError }): string {
   if (outcome.error) return `${label}\n첨부 다운로드 실패: ${outcome.error.message}${outcome.error.hint ? `\n${outcome.error.hint}` : ''}`;
   const results = outcome.results ?? [];
+  if (results.length === 0) return `${label}\n첨부 파일이 없습니다.`;
   const done = results.filter(result => result.status === 'complete').length;
   const guide = done ? ' 경로를 누르면 파일이 열리고, "폴더 열기"를 누르면 저장 위치가 탐색기로 열립니다.' : '';
   return `${label}\n첨부 ${results.length}건 중 ${done}건을 내려받았습니다.${guide}\n${results.map(describeResult).join('\n')}`;

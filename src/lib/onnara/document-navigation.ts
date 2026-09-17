@@ -22,20 +22,7 @@ function framePath(view: Window): number[] {
   return path;
 }
 
-export function captureDocumentListLocation(title: string, doc = document): DocumentListLocation | null {
-  const target = findDocumentOpenTarget(title, doc);
-  const view = doc.defaultView;
-  if (!target || !view) return null;
-  const location: DocumentListLocation = { url: view.location.href, framePath: framePath(view) };
-  if (location.framePath.length && view.name) location.frameName = view.name;
-  const form = target.closest('form');
-  if (!form) return location;
-  const action = new URL(form.getAttribute('action') || location.url, doc.baseURI);
-  const current = new URL(location.url);
-  // 목록 자신에게 보내는 조회 폼만 복원한다. 결재·접수 등 다른 endpoint는 재생하지 않는다.
-  if (action.origin !== current.origin || action.pathname !== current.pathname) return location;
-  const method = (form.getAttribute('method') || 'get').toLowerCase();
-  if (method !== 'get' && method !== 'post') return location;
+function collectFields(form: HTMLFormElement): Array<[string, string]> {
   const fields: Array<[string, string]> = [];
   for (const input of form.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>('input, select, textarea')) {
     if (!input.name || input.matches(':disabled') || input.closest('tr, [role="row"]')?.querySelector('input[name="chkDocTitle"], input[name="chkDocId"]')) continue;
@@ -47,7 +34,54 @@ export function captureDocumentListLocation(title: string, doc = document): Docu
       for (const option of input.selectedOptions) if (!option.disabled) fields.push([input.name, option.value]);
     } else fields.push([input.name, input.value]);
   }
-  location.form = { method, fields };
+  return fields;
+}
+
+export function captureDocumentListLocation(title: string, doc = document): DocumentListLocation | null {
+  const target = findDocumentOpenTarget(title, doc);
+  const view = doc.defaultView;
+  if (!target || !view) return null;
+  const location: DocumentListLocation = { url: view.location.href, framePath: framePath(view) };
+  if (location.framePath.length && view.name) location.frameName = view.name;
+
+  const current = new URL(location.url);
+  const targetForm = target.closest('form');
+  let selectedForm: HTMLFormElement | null = null;
+
+  if (targetForm) {
+    const rawAction = targetForm.getAttribute('action');
+    const action = new URL(rawAction || location.url, location.url);
+    if (action.origin === current.origin && action.pathname === current.pathname) {
+      selectedForm = targetForm;
+    }
+  }
+
+  if (!selectedForm) {
+    for (const f of doc.forms) {
+      const rawAction = f.getAttribute('action');
+      const action = new URL(rawAction || location.url, location.url);
+      if (action.origin === current.origin && action.pathname === current.pathname) {
+        selectedForm = f;
+        break;
+      }
+    }
+  }
+
+  if (!selectedForm) return location;
+  const method = (selectedForm.getAttribute('method') || 'get').toLowerCase();
+  if (method !== 'get' && method !== 'post') return location;
+
+  const fieldsMap = new Map<string, string>();
+  const searchForm = doc.querySelector<HTMLFormElement>('form[name*="search" i], form[id*="search" i]');
+  if (searchForm && searchForm !== selectedForm) {
+    const sAction = new URL(searchForm.getAttribute('action') || location.url, location.url);
+    if (sAction.origin === current.origin && sAction.pathname === current.pathname) {
+      for (const [k, v] of collectFields(searchForm)) fieldsMap.set(k, v);
+    }
+  }
+  for (const [k, v] of collectFields(selectedForm)) fieldsMap.set(k, v);
+
+  location.form = { method, fields: [...fieldsMap.entries()] };
   return location;
 }
 

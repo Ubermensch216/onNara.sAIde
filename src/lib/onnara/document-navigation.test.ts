@@ -41,6 +41,22 @@ it('다른 처리 endpoint를 가리키는 폼은 조회 조건 재전송에 사
   expect(captureDocumentListLocation('감사자료 제출 요청 전체 제목')?.form).toBeUndefined();
 });
 
+it('검색 폼이 문서 목록 표 폼과 분리되어 있어도 검색 조건을 보존한다', () => {
+  document.body.innerHTML = `
+    <form name="searchFrm" action="${location.pathname}" method="post">
+      <input name="searchWord" value="조달청">
+      <input name="searchType" value="title">
+    </form>
+    <form name="mainFrm" action="/bms/dctenf/BmsDctEnfMultiAccept.do" method="post">
+      <table><tr><th>제목</th></tr>
+        <tr><td><input type="hidden" name="chkDocTitle" value="조달청 문서 제목">
+          <a href="javascript:void(0)">조달청 문서 제목</a></td></tr>
+      </table>
+    </form>`;
+  const captured = captureDocumentListLocation('조달청 문서 제목');
+  expect(captured?.form?.fields).toEqual(expect.arrayContaining([['searchWord', '조달청'], ['searchType', 'title']]));
+});
+
 it('복제한 목록 iframe에 조회 조건을 POST하고 임시 폼을 제거한다', () => {
   document.body.innerHTML = '<iframe name="_MAIN"></iframe>';
   const submitted: Array<{ action: string; target: string; method: string; fields: unknown[] }> = [];
