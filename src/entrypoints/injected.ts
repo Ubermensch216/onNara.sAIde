@@ -20,6 +20,7 @@ import { clickAttachment, listAttachments, scanAttachments } from '@/lib/onnara/
 import { captureDocumentListLocation, restoreDocumentListLocation } from '@/lib/onnara/document-navigation';
 import { fitToBudget } from '@/lib/extract/budget';
 import { collectDocumentText } from '@/lib/extract/document-text';
+import { findPdfUrls, readPdfSources } from '@/lib/extract/pdf-source';
 import {
   extractStructuredDocumentList,
   describeOpenTarget,
@@ -77,10 +78,11 @@ export default defineUnlistedScript(() => {
         if (msg.type === 'PREPARE' && validAction(msg.action)) {
           sendResponse({ type: 'PREPARED', ...approvals.prepare(msg.action, msg.control) } satisfies ContentToSW);
         } else if (msg.type === 'EXTRACT') {
-          sendResponse({
-            type: 'EXTRACTED',
-            payload: await extractPage(msg.budgetTokens, msg.purpose),
-          } satisfies ContentToSW);
+          const payload = await extractPage(msg.budgetTokens, msg.purpose);
+          // 본문이 PDF 뷰어로 떠 있으면 DOM에는 글자가 없다. 원본을 받아 서비스 워커가 글자로 바꾸게 한다.
+          const pdfUrls = payload.structuredData ? [] : findPdfUrls();
+          const pdf = pdfUrls.length ? await readPdfSources(pdfUrls) : [];
+          sendResponse({ type: 'EXTRACTED', payload, ...(pdf.length ? { pdf } : {}) } satisfies ContentToSW);
         } else if (msg.type === 'LOCATE_DOCUMENT') {
           const location = captureDocumentListLocation(msg.title);
           sendResponse(location

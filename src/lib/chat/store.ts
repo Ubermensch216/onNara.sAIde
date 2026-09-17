@@ -1,10 +1,8 @@
 import { abortable } from '@/lib/async';
 import { isAttachmentDownloadRequest } from '@/lib/onnara/attachments';
 import { downloadDocumentAttachments, formatAttachmentReport, releaseWorkTab } from '@/lib/onnara/download';
-import { enqueueAutomation, recordAutomation, workTabLock, type AutomationJob } from '@/lib/automation/jobs';
-import { exportDocumentList, isListExportRequest } from '@/lib/automation/export-list';
+import { recordAutomation, workTabLock } from '@/lib/automation/jobs';
 import { ACTION_CARD_SCHEMA, actionCardInstruction, isActionCardRequest, parseActionCard, renderActionCard } from '@/lib/ai/action-card';
-import { describeResult } from '@/lib/onnara/download';
 /**
  * 채팅 상태. 계획서 §5 Phase 2–3
  *
@@ -405,18 +403,6 @@ async function submit(set: Set, get: Get, text: string, settings: Settings, epoc
       const reportId = await addMessage(message);
       ownSet(s => ({ messages: [...s.messages, { ...message, id: reportId }] }));
     };
-    // "목록을 엑셀로 내보내줘"는 AI 생성 없이 자동화 작업으로 처리한다.
-    if (isListExportRequest(trimmed)) {
-      if (pageTabId === null) { ownSet({ error: TAB_MISSING_ERROR }); return; }
-      const page = await get().attachPage(pageTabId, settings, true);
-      if (!page || !owns()) return;
-      ownSet({ documentProgress: '문서 목록을 파일로 저장하는 중 (도구 탭에서도 볼 수 있습니다)' });
-      const { finished } = enqueueAutomation({ kind: 'export-list', label: page.structuredData?.listName ?? page.title, origin: 'chat',
-        run: signal => exportDocumentList(page, signal) });
-      const job = await finished;
-      await report(formatExportReport(job));
-      return;
-    }
     // "요약하고 첨부도 받아줘"처럼 둘 다 요청하면 다운로드만 하고 끝내지 않는다. 요약 경로에서 문서마다 함께 처리한다.
     const wantsDownload = isAttachmentDownloadRequest(trimmed);
     const withAttachments = wantsDownload && isDocumentSummaryRequest(trimmed);
@@ -636,12 +622,6 @@ async function prepareDocumentSummary(
  *   문서마다 "명시되어 있지 않습니다"만 늘어놓는다. 형식은 사용자 요청과 문서
  *   자체의 구성을 따르게 한다.
  */
-/** 목록 내보내기 결과를 답변 문구로 만든다. */
-export function formatExportReport(job: AutomationJob): string {
-  if (job.error) return `${job.label}\n목록 내보내기 실패: ${job.error.message}`;
-  return `${job.label}\n${job.summary ?? '목록을 저장했습니다.'} 경로를 누르면 파일이 열리고, "폴더 열기"를 누르면 저장 위치가 탐색기로 열립니다.\n${(job.files ?? []).map(describeResult).join('\n')}`;
-}
-
 export function documentBatchInstruction(title: string, request: string, attachmentsHandled = false): string {
   return [
     `첨부된 페이지 내용은 문서 '${title}'의 상세 화면이다. 이 문서 한 건의 본문을 직접 읽고 사용자 요청에 답하라.`,

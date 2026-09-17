@@ -2,6 +2,7 @@ import { abortable, deadlineSignal } from '@/lib/async';
 import type { StructuredDocumentList } from '@/lib/onnara/document-list';
 import type { AttachmentItem, AttachmentScan } from '@/lib/onnara/attachments';
 import type { DocumentListLocation } from '@/lib/onnara/document-navigation';
+import type { PdfSource } from '@/lib/extract/pdf-text';
 
 /**
  * 계약 ② — Side Panel ↔ Service Worker ↔ Content Script 3자 통신 규약.
@@ -52,7 +53,7 @@ export interface AppError {
 
 /* ── 페이지 추출 결과 ──────────────────────────────────── */
 
-export type ExtractMethod = 'readability' | 'innerText' | 'youtube-caption' | 'onnara-document-list';
+export type ExtractMethod = 'readability' | 'innerText' | 'youtube-caption' | 'onnara-document-list' | 'pdf';
 
 export interface ExtractedPage {
   attachments?: AttachmentScan;
@@ -224,7 +225,8 @@ export type SWToContent = (
 
 export type ContentToSW =
   | { type: 'PREPARED'; token: string; label?: string }
-  | { type: 'EXTRACTED'; payload: ExtractedPage }
+  /** pdf: 이 프레임이 PDF 뷰어로 보여 준 본문 원본. 서비스 워커가 글자로 바꿔 payload에 합치고 패널에는 넘기지 않는다. */
+  | { type: 'EXTRACTED'; payload: ExtractedPage; pdf?: PdfSource[] }
   /** target: 실제로 누른 요소 설명. 열기에 반응이 없을 때 원인을 알리는 데 쓴다. */
   | { type: 'OPENING_DOCUMENT'; title: string; target?: string }
   | { type: 'DOCUMENT_LOCATED'; location: DocumentListLocation }

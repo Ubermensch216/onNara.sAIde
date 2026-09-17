@@ -11,7 +11,8 @@
 import { create } from 'zustand';
 import type { AppError, AttachmentDownloadResult } from '@/lib/messaging/protocol';
 
-export type AutomationKind = 'download-attachments' | 'export-list';
+export type AutomationKind = 'download-attachments';
+const KINDS: readonly string[] = ['download-attachments'] satisfies AutomationKind[];
 export type AutomationStatus = 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
 
 export interface AutomationJob {
@@ -69,7 +70,9 @@ export async function loadAutomationHistory(): Promise<void> {
     const stored = (await chrome.storage.local.get(HISTORY_KEY))[HISTORY_KEY] as AutomationJob[] | undefined;
     const live = useAutomation.getState().jobs;
     const ids = new Set(live.map(job => job.id));
-    useAutomation.setState({ jobs: [...live, ...(stored ?? []).filter(job => !ids.has(job.id))], loaded: true });
+    // 없앤 작업 종류(예: 목록 내보내기)의 옛 기록은 표시할 이름이 없으므로 버린다.
+    const known = (stored ?? []).filter(job => KINDS.includes(job.kind) && !ids.has(job.id));
+    useAutomation.setState({ jobs: [...live, ...known], loaded: true });
   } catch {
     useAutomation.setState({ loaded: true });
   }

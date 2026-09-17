@@ -3,6 +3,7 @@ import { committedSince, duplicateWorkTab, forgetWorkTab, panelTab, registerWork
 import type { AppError, AttachmentDownloadResult, ExtractedPage, RequestControl, SWToContent } from '@/lib/messaging/protocol';
 import { sameDocumentTitle } from '@/lib/onnara/document-list';
 import { fitToBudget } from '@/lib/extract/budget';
+import { pdfText, withPdfSections } from '@/lib/extract/pdf-offscreen';
 import type { DocumentListLocation } from '@/lib/onnara/document-navigation';
 /**
  * Service Worker — 계획서 §3 설계 결정 ①
@@ -369,6 +370,7 @@ async function dispatchExtractionAcrossFrames(
     }
   }));
 
+  await attachPdfText(attempts, msg.budgetTokens);
   const current = await chrome.tabs.get(tabId);
   assertCurrent(msg.control, current.url ?? '', cancelled.has(msg.control.id));
   const best = chooseBestExtraction(attempts, msg);
@@ -382,9 +384,17 @@ async function dispatchExtractionAcrossFrames(
     };
   }
 
-  const payload = msg.purpose === 'document-detail' && !best.response.payload.structuredData
-    ? mergeDetailFrames(best, attempts, frames, msg.budgetTokens)
-    : best.response.payload;
+  // 이미 연 상세 화면을 그대로 요약할 때(purpose 'page')도 본문이 PDF 프레임에 있으면
+  // PDF 프레임 하나만 고르지 말고 바깥 화면(제목·첨부 목록)까지 최상위부터 합친다.
+  const hasPdf = attempts.some(candidate => candidate.response.type === 'EXTRACTED' && candidate.response.payload.method === 'pdf');
+  const top = attempts.find(candidate => candidate.frameId === 0 && candidate.response.type === 'EXTRACTED');
+  const payload = best.response.payload.structuredData
+    ? best.response.payload
+    : msg.purpose === 'document-detail'
+      ? mergeDetailFrames(best, attempts, frames, msg.budgetTokens)
+      : hasPdf && top
+        ? mergeDetailFrames(top, attempts, frames, msg.budgetTokens)
+        : best.response.payload;
   return {
     type: 'EXTRACTED',
     payload: {
@@ -405,6 +415,17 @@ async function dispatchExtractionAcrossFrames(
       },
     },
   };
+}
+
+/** 프레임이 넘긴 PDF 원본을 글자로 바꿔 그 프레임의 추출 결과에 합친다. */
+async function attachPdfText(attempts: ExtractedCandidate[], budgetTokens: number): Promise<void> {
+  await Promise.all(attempts.map(async candidate => {
+    const response = candidate.response;
+    if (response.type !== 'EXTRACTED' || !response.pdf?.length || response.payload.structuredData) return;
+    // 같은 PDF를 바깥 문서의 embed와 PDF 프레임이 함께 알려 올 수 있다. 해석 결과는 주소별로 재사용된다.
+    const results = await Promise.all(response.pdf.map(pdfText));
+    candidate.response = { type: 'EXTRACTED', payload: withPdfSections(response.payload, results, budgetTokens) };
+  }));
 }
 
 /**
@@ -432,20 +453,23 @@ export function mergeDetailFrames(
       ? [candidate.response.payload] : [])
     // 본문 프레임이 대개 가장 길다. 예산을 넘으면 뒤쪽이 잘리므로 긴 것부터 담는다.
     .sort((left, right) => right.charCount - left.charCount);
-  const merged: string[] = [];
+  const merged: ExtractedPage[] = [];
   let charCount = 0;
   for (const segment of segments) {
     // 부모 프레임이 같은 출처 하위 프레임 본문을 이미 포함했으면 중복해서 넣지 않는다.
     const probe = compactText(segment.text.slice(0, 200));
-    if (probe && merged.some(text => compactText(text).includes(probe))) continue;
-    merged.push(segment.text);
+    if (probe && merged.some(kept => compactText(kept.text).includes(probe))) continue;
+    merged.push(segment);
     charCount += segment.charCount;
   }
+  // 글자가 하위 프레임(PDF 뷰어 등)에만 있으면 그 프레임 결과를 쓰되 화면 제목은 기준 프레임 것을 유지한다.
+  if (merged.length === 1 && merged[0] !== base) return { ...merged[0]!, title: base.title || merged[0]!.title };
   if (merged.length <= 1) return base;
-  const fitted = fitToBudget(merged.join('\n\n'), budgetTokens);
+  const fitted = fitToBudget(merged.map(segment => segment.text).join('\n\n'), budgetTokens);
   const truncated = fitted.truncated || segments.some(segment => segment.truncated);
   return {
     ...base,
+    method: merged.some(segment => segment.method === 'pdf') ? 'pdf' : base.method,
     text: fitted.text,
     charCount,
     truncated,

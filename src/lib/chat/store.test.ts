@@ -534,28 +534,6 @@ it('요약과 첨부 다운로드를 함께 요청하면 문서마다 한 번 �
   expect(useChat.getState().error).toBeNull();
 });
 
-it('AI 대화의 목록 내보내기 요청은 모델을 부르지 않고 자동화 작업으로 저장한 뒤 결과를 남긴다', async () => {
-  const common = { url: 'https://onnara.test/main', title: '받은문서', text: '목록', charCount: 100,
-    truncated: false, keptRatio: 1, estimatedTokens: 30, method: 'onnara-document-list' as const, extractedAt: Date.now() };
-  vi.stubGlobal('chrome', {
-    runtime: { sendMessage: vi.fn(async () => ({ type: 'PAGE_EXTRACTED', payload: { ...common, structuredData: {
-      kind: 'onnara-document-list', listName: '받은문서', columns: [], rows: [{ title: '문서 A' }], selectedTitles: [],
-    } } })) },
-    downloads: { download: vi.fn(async () => 9), search: vi.fn(async () => [{ id: 9, state: 'complete', filename: 'C:\Downloads\받은문서.csv' }]) },
-    storage: { local: { get: vi.fn(async () => ({})), set: vi.fn(async () => undefined) } },
-  });
-  URL.createObjectURL = vi.fn(() => 'blob:csv');
-  URL.revokeObjectURL = vi.fn();
-  const generate = vi.spyOn(stream, 'streamChat');
-  await useChat.getState().openForTab(1, common.url);
-  await useChat.getState().send('받은문서 목록을 엑셀로 내보내줘', DEFAULT_SETTINGS);
-  expect(generate).not.toHaveBeenCalled();
-  const answer = useChat.getState().messages.find(message => message.role === 'assistant')!;
-  expect(answer.origin).toBe('automation');
-  expect(answer.content).toContain('(#saide-download=open:9)');
-  expect(useChat.getState().streaming).toBe(false);
-});
-
 it('핵심·조치사항 요청은 문서마다 JSON 스키마로 생성하고 원문과 대조한 카드를 남긴다', async () => {
   const common = { url: 'https://onnara.test/main', title: '받은문서', text: '목록', charCount: 100,
     truncated: false, keptRatio: 1, estimatedTokens: 30, method: 'innerText' as const, extractedAt: Date.now() };

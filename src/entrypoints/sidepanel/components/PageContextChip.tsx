@@ -19,6 +19,7 @@ const METHOD_KEY = {
   innerText: 'page.method.innerText',
   'youtube-caption': 'page.method.youtube',
   'onnara-document-list': 'page.method.onnaraList',
+  pdf: 'page.method.pdf',
 } as const satisfies Record<ExtractedPage['method'], MessageKey>;
 
 export function PageContextChip({ page, onDetach }: Props) {

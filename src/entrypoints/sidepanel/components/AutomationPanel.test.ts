@@ -95,5 +95,5 @@ it('기억한 탭이 닫혀 읽기에 실패해도 "다시 읽기"를 누르면 
   expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'EXTRACT_PAGE', tabId: 9 }));
   expect(onTabChange).toHaveBeenCalledWith(expect.objectContaining({ tabId: 9, url: 'https://onnara.test/main2' }));
   expect(document.querySelector('.auto-error')).toBeNull();
-  expect(cards().map(card => card.disabled)).toEqual([false, false]);
+  expect(cards().map(card => card.disabled)).toEqual([false]);
 });

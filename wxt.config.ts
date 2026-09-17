@@ -1,5 +1,11 @@
+import { readdirSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { defineConfig } from 'wxt';
 import tailwindcss from '@tailwindcss/vite';
+
+// 글꼴을 넣지 않은 한글 PDF를 읽는 데 필요한 CMap만 배포한다(전체는 170개가 넘는다). lib/extract/pdf-text.ts 참조.
+const CMAP_DIR = resolve('node_modules/pdfjs-dist/cmaps');
+const KOREAN_CMAP = /^(Adobe-Korea1-|KSC|UniKS-)/;
 
 // manifest 전체는 이 파일에서 단일 관리한다.
 export default defineConfig({
@@ -9,6 +15,14 @@ export default defineConfig({
   vite: () => ({
     plugins: [tailwindcss()],
   }),
+
+  hooks: {
+    'build:publicAssets': (_wxt, files) => {
+      for (const name of readdirSync(CMAP_DIR).filter(file => KOREAN_CMAP.test(file))) {
+        files.push({ absoluteSrc: resolve(CMAP_DIR, name), relativeDest: `cmaps/${name}` });
+      }
+    },
+  },
 
   manifest: {
     minimum_chrome_version: '116',
@@ -41,6 +55,8 @@ export default defineConfig({
       'downloads',
       // 답변의 다운로드 파일 경로를 눌러 기본 프로그램으로 여는 데 필요하다.
       'downloads.open',
+      // 문서 본문이 PDF 뷰어로 표시될 때 pdf.js로 글자를 뽑는 숨은 문서를 만든다.
+      'offscreen',
     ],
 
     // 설치 시점에 확정으로 갖는 접근권은 로컬 Ollama뿐이다.
