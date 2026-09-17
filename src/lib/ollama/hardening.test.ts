@@ -25,11 +25,11 @@ it('done 뒤 연결이 열려 있어도 완료하고 reader를 취소한다', as
   expect(await streamChat(endpoint, req, {})).toMatchObject({ totalMs: 0 });
   expect(cancel).toHaveBeenCalledOnce();
 });
-it('일반 대화 스트림이 무응답이면 180초에 중단한다', async () => {
+it('CPU 추론은 180초 이후에도 기다리되 무응답 15분에 중단한다', async () => {
   vi.useFakeTimers();
   vi.stubGlobal('fetch', async () => new Response(new ReadableStream({ pull: () => new Promise(() => {}) })));
   const result = expect(streamChat(endpoint, req, {})).rejects.toMatchObject({ code: 'TIMEOUT' });
-  await vi.advanceTimersByTimeAsync(180001); await result;
+  await vi.advanceTimersByTimeAsync(900001); await result;
 });
 it('초과한 컨텍스트는 HTTP 요청 전에 거부한다', async () => {
   const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);

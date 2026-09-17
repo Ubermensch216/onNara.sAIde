@@ -1,4 +1,5 @@
 import { assertCurrent, captureTab, trustedPanel, validPanelRequest } from '@/lib/browser/guards';
+import { duplicateWorkTab, panelTab, workTabs } from '@/lib/browser/work-tabs';
 import type { AppError, ExtractedPage, RequestControl, SWToContent } from '@/lib/messaging/protocol';
 /**
  * Service Worker — 계획서 §3 설계 결정 ①
@@ -61,7 +62,7 @@ export default defineBackground(() => {
 
   // 탭 전환 → 패널이 세션을 갈아끼울 수 있도록 알린다 (계획서 Phase 2-5)
   chrome.tabs.onActivated.addListener(async ({ tabId }) => {
-    const tab = await chrome.tabs.get(tabId).catch(() => null);
+    const tab = await panelTab(tabId);
     if (tab) pushToPanel({ type: 'TAB_CHANGED', tab: toSummary(tab) });
   });
 
@@ -75,10 +76,11 @@ export default defineBackground(() => {
    *
    *   history API 이동은 `info.url`로 온다. 둘 다 받아야 한다.
    */
-  chrome.tabs.onUpdated.addListener((_tabId, info, tab) => {
+  chrome.tabs.onUpdated.addListener(async (_tabId, info, tab) => {
     if (!tab.active) return;
     if (info.url || info.status === 'complete') {
-      pushToPanel({ type: 'TAB_CHANGED', tab: toSummary(tab) });
+      const visible = await panelTab(_tabId);
+      if (visible?.active) pushToPanel({ type: 'TAB_CHANGED', tab: toSummary(visible) });
     }
   });
 
@@ -361,13 +363,13 @@ export async function readDocumentInBackground(
   try {
     assertCurrent(control, source.url ?? '', cancelled.has(control.id));
     const before = new Set((await chrome.tabs.query({})).flatMap(tab => typeof tab.id === 'number' ? [tab.id] : []));
-    const duplicate = await chrome.tabs.duplicate(sourceTabId);
+    const duplicate = await duplicateWorkTab(sourceTabId);
     if (!duplicate || typeof duplicate.id !== 'number') throw new Error('백그라운드 작업 탭을 만들지 못했습니다.');
     const workTabId = duplicate.id;
     temporary.add(workTabId);
     await keepBackground(workTabId, source);
 
-    const taskControl: RequestControl = { ...control, expectedUrl: undefined };
+    const taskControl: RequestControl = { ...control, deadline: control.deadline - 5000, expectedUrl: undefined };
     const list = await waitForDocumentList(workTabId, title, budgetTokens, taskControl);
     const openFrameId = list.sourceFrameId ?? 0;
     const opened = await sendToFrame(workTabId, openFrameId, {
@@ -378,8 +380,7 @@ export async function readDocumentInBackground(
       return { type: 'ERROR', error: { code: 'UNKNOWN', message: '문서 열기 동작을 시작하지 못했습니다.' } };
     }
 
-    let fallback: ExtractedPage | null = null;
-    while (Date.now() < control.deadline) {
+    while (Date.now() < taskControl.deadline) {
       assertCurrent(taskControl, '', cancelled.has(control.id));
       await delay(300);
       const tabs = await chrome.tabs.query({});
@@ -387,6 +388,7 @@ export async function readDocumentInBackground(
         if (typeof tab.id !== 'number' || before.has(tab.id) || tab.id === workTabId) continue;
         if (tab.openerTabId === workTabId) {
           temporary.add(tab.id);
+          workTabs.add(tab.id);
           await keepBackground(tab.id, source);
         }
       }
@@ -403,7 +405,6 @@ export async function readDocumentInBackground(
         control: taskControl,
       });
       if (result.type !== 'EXTRACTED' || result.payload.structuredData || result.payload.charCount < 120) continue;
-      fallback = result.payload;
       const preferred = popup || result.payload.sourceFrameId === openFrameId;
       const mentionsTitle = compactText(`${result.payload.title} ${result.payload.text}`).includes(compactText(title));
       if (!preferred && !mentionsTitle) continue;
@@ -418,12 +419,6 @@ export async function readDocumentInBackground(
       };
     }
 
-    if (fallback) {
-      return {
-        type: 'DOCUMENT_READ', requestedTitle: title,
-        payload: { ...fallback, url: source.url ?? fallback.url, title: fallback.title || title },
-      };
-    }
     return {
       type: 'ERROR',
       error: {
@@ -433,10 +428,12 @@ export async function readDocumentInBackground(
       },
     };
   } catch (error) {
-    return { type: 'ERROR', error: accessError(error) };
+    return { type: 'ERROR', error: cancelled.has(control.id)
+      ? { code: 'ABORTED', message: '문서 읽기를 중단했습니다.' }
+      : { code: 'UNKNOWN', message: `문서 화면 읽기에 실패했습니다 (AI 생성 전 단계). ${String(error)}`, hint: '복제한 탭에서 문서 목록과 상세 본문이 표시되는지 확인하세요.' } };
   } finally {
     if (temporary.size) await chrome.tabs.remove([...temporary]).catch(() => undefined);
-    if (source.active) await chrome.tabs.update(sourceTabId, { active: true }).catch(() => undefined);
+    for (const id of temporary) workTabs.delete(id);
   }
 }
 
@@ -447,6 +444,7 @@ async function waitForDocumentList(
   control: RequestControl,
 ): Promise<ExtractedPage> {
   while (Date.now() < control.deadline) {
+    assertCurrent(control, '', cancelled.has(control.id));
     const result = await dispatchContent(tabId, { type: 'EXTRACT', budgetTokens, purpose: 'page', control });
     if (result.type === 'EXTRACTED' && result.payload.structuredData?.rows.some(row => row.title === title)) {
       return result.payload;
@@ -467,8 +465,8 @@ async function sendToFrame(tabId: number, frameId: number, msg: SWToContent): Pr
 }
 
 async function keepBackground(tabId: number, source: chrome.tabs.Tab): Promise<void> {
-  await chrome.tabs.update(tabId, { active: false }).catch(() => undefined);
-  if (source.active && typeof source.id === 'number') {
+  const tab = await chrome.tabs.get(tabId).catch(() => null);
+  if (tab?.active && source.active && typeof source.id === 'number') {
     await chrome.tabs.update(source.id, { active: true }).catch(() => undefined);
   }
 }

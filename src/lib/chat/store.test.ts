@@ -6,6 +6,31 @@ import * as stream from '@/lib/ollama/stream';
 import { DEFAULT_SETTINGS } from '@/lib/storage/settings';
 import type { SWToPanel } from '@/lib/messaging/protocol';
 
+it('선택한 여러 문서는 읽기와 AI 요약을 한 건씩 순서대로 실행한다', async () => {
+  const order: string[] = [];
+  const common = { url: 'https://onnara.test/main', title: '문서등록대장', text: '본문', charCount: 100,
+    truncated: false, keptRatio: 1, estimatedTokens: 30, method: 'innerText' as const, extractedAt: Date.now() };
+  vi.stubGlobal('chrome', { runtime: { sendMessage: vi.fn(async (message: { type: string; title?: string }) => {
+    if (message.type === 'EXTRACT_PAGE') return { type: 'PAGE_EXTRACTED', payload: { ...common, structuredData: {
+      kind: 'onnara-document-list', listName: '문서등록대장', columns: [],
+      rows: [{ title: '문서 A' }, { title: '문서 B' }, { title: '문서 C' }], selectedTitles: ['문서 A', '문서 C'],
+    } } };
+    order.push(`read:${message.title}`);
+    return { type: 'DOCUMENT_READ', requestedTitle: message.title, payload: { ...common, title: message.title, text: `${message.title}의 본문` } };
+  }) } });
+  vi.spyOn(stream, 'streamChat').mockImplementation(async (_endpoint, request, handlers) => {
+    order.push('generate');
+    expect(request.think).toBe(false);
+    handlers.onToken?.('문서 요약 결과');
+    return null;
+  });
+  await useChat.getState().openForTab(1, common.url);
+  await useChat.getState().send('이 문서들의 내용을 요약해줘', DEFAULT_SETTINGS);
+  expect(order).toEqual(['read:문서 A', 'generate', 'read:문서 C', 'generate']);
+  expect(useChat.getState().messages.filter(message => message.role === 'assistant')).toHaveLength(2);
+  expect(useChat.getState().streaming).toBe(false);
+});
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>(r => { resolve = r; });
@@ -139,4 +164,35 @@ it('목록에서 지정한 문서를 백그라운드로 읽은 뒤 그 본문을
   const request = vi.mocked(stream.streamChat).mock.calls[0]![1];
   expect(request.messages.some(message => message.content.includes('제출기한은 9월 30일'))).toBe(true);
   expect(useChat.getState().page?.title).toBe(title);
+});
+
+it('문서 읽기가 진행 중이면 질문과 처리 상태가 남고 실패 원인을 표시한다', async () => {
+  const title = '감사위원회 직원 노고 격려를 위한 간담회 개최';
+  const reading = deferred<SWToPanel>();
+  const started = deferred<void>();
+  const sendMessage = vi.fn(async (message: { type: string }) => {
+    if (message.type === 'READ_DOCUMENT') { started.resolve(); return reading.promise; }
+    return {
+      type: 'PAGE_EXTRACTED', payload: {
+        url: 'https://onnara.test/main', title: '문서등록대장', text: title,
+        charCount: 30, truncated: false, keptRatio: 1, estimatedTokens: 20,
+        method: 'onnara-document-list', extractedAt: Date.now(),
+        structuredData: { kind: 'onnara-document-list', listName: '문서등록대장',
+          columns: [{ key: 'title', label: '제목', sourceIndex: 0 }], rows: [{ title }] },
+      },
+    } satisfies SWToPanel;
+  });
+  vi.stubGlobal('chrome', { runtime: { sendMessage } });
+  vi.spyOn(stream, 'streamChat').mockResolvedValue(null);
+  await useChat.getState().openForTab(1, 'https://onnara.test/main');
+  const prompt = `"${title}" 문서 내용을 요약해줘.`;
+  const pending = useChat.getState().send(prompt, DEFAULT_SETTINGS);
+  await started.promise;
+  expect(useChat.getState()).toMatchObject({ streaming: true, extracting: true });
+  expect(useChat.getState().messages.at(-1)?.content).toBe(prompt);
+  reading.resolve({ type: 'ERROR', error: { code: 'TIMEOUT', message: '문서 본문을 읽을 수 없습니다.' } });
+  await pending;
+  expect(useChat.getState()).toMatchObject({ streaming: false, extracting: false, error: { code: 'TIMEOUT' } });
+  expect(useChat.getState().messages.at(-1)?.content).toBe(prompt);
+  expect(stream.streamChat).not.toHaveBeenCalled();
 });

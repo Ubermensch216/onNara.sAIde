@@ -7,6 +7,7 @@ import {
   isDocumentListTableRequest,
   isDocumentSummaryRequest,
   matchDocumentTitle,
+  requestedDocumentTitles,
   openDocumentTarget,
   serializeDocumentList,
 } from './document-list';
@@ -22,6 +23,15 @@ beforeEach(() => {
         <tr><td><input type="checkbox"></td><td>2026.09.15</td><td>제목에 | 기호가 있는 문서</td><td>감사담당관</td><td>해운대구</td><td>서주영</td><td>접수</td></tr>
       </tbody>
     </table>`;
+});
+
+it('체크 문서만 선택하고 전체 요청은 현재 표시된 모든 행을 선택한다', () => {
+  document.querySelector<HTMLInputElement>('input[type="checkbox"]')!.checked = true;
+  const list = extractStructuredDocumentList()!;
+  expect(requestedDocumentTitles('이 문서들의 내용을 요약해줘', list)).toEqual([list.rows[0]!.title]);
+  expect(requestedDocumentTitles('전체 문서를 읽고 요약해줘', list)).toEqual(list.rows.map(row => row.title));
+  document.querySelector<HTMLInputElement>('input[type="checkbox"]')!.checked = false;
+  expect(requestedDocumentTitles('선택한 문서를 요약해줘', extractStructuredDocumentList()!)).toEqual([]);
 });
 
 it('요약 요청에서 따옴표로 지정한 제목을 목록과 대조한다', () => {

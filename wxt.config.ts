@@ -55,7 +55,7 @@ export default defineConfig({
 
     commands: {
       _execute_action: {
-        suggested_key: { default: 'Ctrl+Shift+S' },
+        suggested_key: { default: 'Alt+Shift+A' },
         description: '__MSG_commandOpen__',
       },
     },

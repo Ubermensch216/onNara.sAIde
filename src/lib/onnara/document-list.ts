@@ -20,6 +20,7 @@ export interface StructuredDocumentList {
   listName: string;
   columns: DocumentListColumn[];
   rows: Array<Partial<Record<DocumentListField, string>>>;
+  selectedTitles?: string[];
 }
 
 const CONTAINER_SELECTOR = 'table, [role="table"], [role="grid"]';
@@ -115,6 +116,7 @@ export function extractStructuredDocumentList(root: ParentNode = document): Stru
     if (headerIndex < 0) continue;
 
     const data: StructuredDocumentList['rows'] = [];
+    const selectedTitles: string[] = [];
     for (const row of rows.slice(headerIndex + 1)) {
       const cells = cellsOf(row);
       const record: Partial<Record<DocumentListField, string>> = {};
@@ -126,6 +128,7 @@ export function extractStructuredDocumentList(root: ParentNode = document): Stru
       const nativeTitle = row.querySelector<HTMLInputElement>('input[name="chkDocTitle"]')?.value;
       if (cleanText(nativeTitle)) record.title = cleanText(nativeTitle);
       if (record.title) data.push(record);
+      if (record.title && row.querySelector('input[type="checkbox"]:checked, [role="checkbox"][aria-checked="true"]')) selectedTitles.push(record.title);
       if (data.length >= 500) break;
     }
     if (!data.length) continue;
@@ -135,6 +138,7 @@ export function extractStructuredDocumentList(root: ParentNode = document): Stru
       listName: listName(root, container),
       columns,
       rows: data,
+      selectedTitles,
     };
     if (!best || result.rows.length > best.rows.length) best = result;
   }
@@ -178,6 +182,15 @@ export type DocumentTitleMatch =
   | { status: 'ambiguous'; candidates: string[] }
   | { status: 'none'; candidates: string[] };
 
+export function requestedDocumentTitles(prompt: string, list: StructuredDocumentList): string[] {
+  const compact = prompt.replace(/\s/g, '');
+  if (/(전체|모든)문서|문서(들을|를)?(전부|모두)|전체를/.test(compact)) return list.rows.flatMap(row => row.title ? [row.title] : []);
+  const match = matchDocumentTitle(prompt, list);
+  if (match.status === 'matched') return [match.title];
+  if (/선택|체크|이문서|해당문서/.test(compact)) return list.selectedTitles ?? [];
+  return [];
+}
+
 function searchable(value: string): string {
   return value.toLowerCase().replace(/[\s\p{P}\p{S}]/gu, '');
 }
@@ -213,7 +226,9 @@ export function findDocumentOpenTarget(title: string, root: ParentNode = documen
   for (const container of root.querySelectorAll(CONTAINER_SELECTOR)) {
     for (const row of rowsOf(container)) {
       const cells = cellsOf(row);
-      const titleCell = cells.find(cell => searchable(elementText(cell)) === wanted);
+      const nativeTitle = row.querySelector<HTMLInputElement>('input[name="chkDocTitle"]');
+      const titleCell = cells.find(cell => searchable(elementText(cell)) === wanted) ??
+        (nativeTitle && searchable(nativeTitle.value) === wanted ? nativeTitle.closest('td') : null);
       if (!titleCell) continue;
       const interactive = [...titleCell.querySelectorAll<HTMLElement>('a, button, [role="link"], [onclick], [ondblclick]')]
         .find(element => searchable(elementText(element)) === wanted || searchable(elementText(element)).includes(wanted));

@@ -21,7 +21,7 @@ export function validAction(v: unknown): v is PageAction {
 
 export function validControl(v: unknown): v is RequestControl {
   return record(v) && text(v.id, 100) && typeof v.deadline === 'number' && Number.isFinite(v.deadline) &&
-    v.deadline > Date.now() && v.deadline <= Date.now() + 60_000 &&
+    v.deadline > Date.now() && v.deadline <= Date.now() + 180_000 &&
     (v.expectedUrl === undefined || text(v.expectedUrl, 8192)) &&
     (v.approvalToken === undefined || text(v.approvalToken, 100));
 }

@@ -138,7 +138,7 @@ it('복제한 백그라운드 탭에서 제목 문서를 열고 본문만 회수
     ]) },
   });
   const response = await readDocumentInBackground(1, title, 2000, {
-    id: crypto.randomUUID(), deadline: Date.now() + 5000, expectedUrl: 'https://onnara.test/main',
+    id: crypto.randomUUID(), deadline: Date.now() + 15000, expectedUrl: 'https://onnara.test/main',
   });
   expect(response).toMatchObject({ type: 'DOCUMENT_READ', requestedTitle: title, payload: { url: 'https://onnara.test/main' } });
   expect(sendMessage).toHaveBeenCalledWith(20, expect.objectContaining({ type: 'OPEN_DOCUMENT', title }), { frameId: 2 });

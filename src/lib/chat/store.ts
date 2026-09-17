@@ -44,6 +44,7 @@ import {
   isDocumentListTableRequest,
   isDocumentSummaryRequest,
   matchDocumentTitle,
+  requestedDocumentTitles,
 } from '@/lib/onnara/document-list';
 
 /** 에이전트가 조작할 탭. 제목까지 필요하다 — 승인 카드와 모델 안내에 쓴다. */
@@ -79,6 +80,7 @@ interface ChatState {
   screenshot: string | null;
   /** 페이지 추출 또는 화면 캡처 진행 중 */
   extracting: boolean;
+  documentProgress?: string | null;
   /**
    * 패널이 알고 있는 현재 탭의 URL.
    * 붙어 있는 첨부물이 아직 이 페이지의 것인지 대조하는 데 쓴다.
@@ -257,13 +259,9 @@ export const useChat = create<ChatState>((set, get) => ({
   detachScreenshot: () => { ++attachmentEpoch; set({ screenshot: null, lastContext: null, extracting: false }); },
 
   async send(text, settings) {
-    await refreshDocumentListIfRequested(get, text, settings);
-    if (!await prepareDocumentSummary(set, get, text, settings)) return;
     await submit(set, get, text, settings);
   },
   async sendAgent(text, settings, tab) {
-    await refreshDocumentListIfRequested(get, text, settings);
-    if (!await prepareDocumentSummary(set, get, text, settings)) return;
     await submit(set, get, text, settings, tab);
   },
 
@@ -335,7 +333,7 @@ async function submit(set: Set, get: Get, text: string, settings: Settings, tab?
   const epoch = ++operationEpoch;
   const owns = () => epoch === operationEpoch;
   const ownSet = guardedSet(set, owns);
-  ownSet({ streaming: true, abort: new AbortController(), error: null });
+  ownSet({ streaming: true, startedAt: Date.now(), abort: new AbortController(), error: null });
   try {
     const conv = await ensureConversation(ownSet, get, trimmed, owns);
     if (!conv || !owns()) return;
@@ -343,6 +341,10 @@ async function submit(set: Set, get: Get, text: string, settings: Settings, tab?
     const id = await addMessage(userMsg);
     if (!owns()) return;
     ownSet(s => ({ messages: [...s.messages, { ...userMsg, id }] }));
+
+    await refreshDocumentListIfRequested(get, text, settings);
+    if (!owns()) return;
+    if (!await prepareDocumentSummary(ownSet, get, text, settings) || !owns()) return;
 
     const localAnswer = buildDocumentTitleTable(trimmed, get().page?.structuredData);
     if (localAnswer) {
@@ -363,7 +365,7 @@ async function submit(set: Set, get: Get, text: string, settings: Settings, tab?
     if (tab) await runAgent(ownSet, get, settings, tab);
     else await runGeneration(ownSet, get, settings);
   } catch (error) { ownSet({ error: toAppError(error instanceof OllamaError ? error : null, error) }); }
-  finally { ownSet({ streaming: false, abort: null, startedAt: null }); }
+  finally { ownSet({ streaming: false, abort: null, startedAt: null, documentProgress: null }); }
 }
 
 async function refreshDocumentListIfRequested(get: Get, text: string, settings: Settings): Promise<void> {
@@ -383,21 +385,26 @@ async function prepareDocumentSummary(
   const state = get();
   const tabId = state.conversation?.tabId ?? state.pending?.tabId;
   if (typeof tabId !== 'number' || tabId < 0) return true;
+  const signal = state.abort?.signal;
+  const view = viewEpoch;
 
   const listPage = await state.attachPage(tabId, settings, true);
+  if (signal?.aborted || view !== viewEpoch) return false;
+  if (!listPage) return false;
   const list = listPage?.structuredData;
   // 일반 웹 문서의 요약 요청은 기존 페이지 요약 경로에 맡긴다.
   if (!list) return true;
 
   const match = matchDocumentTitle(text, list);
-  if (match.status !== 'matched') {
-    const candidates = match.candidates.slice(0, 5).join(', ');
+  const titles = requestedDocumentTitles(text, list);
+  if (!titles.length) {
+    const candidates = ('candidates' in match ? match.candidates : []).slice(0, 5).join(', ');
     set({
       error: {
         code: 'UNKNOWN',
         message: match.status === 'ambiguous'
           ? '요청한 제목과 일치하는 문서가 여러 개입니다.'
-          : '현재 목록에서 요청한 문서 제목을 찾지 못했습니다.',
+          : '요약할 문서를 찾지 못했습니다. 문서를 체크하거나 제목 또는 전체 문서를 지정하세요.',
         hint: candidates ? `문서 제목을 더 정확히 입력하세요. 현재 후보: ${candidates}` : undefined,
       },
     });
@@ -406,27 +413,51 @@ async function prepareDocumentSummary(
 
   const epoch = ++attachmentEpoch;
   set({ extracting: true, error: null });
+  const controller = state.abort;
+  const failures: string[] = [];
   try {
+    for (const [index, title] of titles.entries()) {
+    if (signal?.aborted || epoch !== attachmentEpoch) return false;
+    set({ extracting: true, streaming: true, abort: controller, documentProgress: `${index + 1}/${titles.length} 문서 읽는 중 · ${title} (현재 목록 기준)` });
     const response = await sendToSW({
       type: 'READ_DOCUMENT',
       tabId,
-      title: match.title,
-      budgetTokens: settings.pageTokenBudget,
+      title,
+      budgetTokens: Math.min(settings.pageTokenBudget, 2000),
       control: { id: '', deadline: 0, expectedUrl: state.currentUrl || undefined },
-    }, undefined, 45_000);
-    if (epoch !== attachmentEpoch) return false;
+    }, signal, 120_000);
+    if (epoch !== attachmentEpoch || signal?.aborted) return false;
     if (response.type === 'ERROR') {
-      set({ error: response.error });
-      return false;
+      if (titles.length === 1) { set({ error: response.error }); return false; }
+      failures.push(`${title}: ${response.error.message}`);
+      continue;
     }
     if (response.type !== 'DOCUMENT_READ') {
       set({ error: { code: 'UNKNOWN', message: '문서 본문 읽기 결과를 받지 못했습니다.' } });
       return false;
     }
-    set({ page: response.payload, screenshot: null, lastContext: null });
+    set({ page: { ...response.payload, title }, screenshot: null, lastContext: null });
+    if (titles.length > 1) {
+      set({ extracting: false, documentProgress: `${index + 1}/${titles.length} 문서 요약 중 · ${title} (CPU에서는 수 분 걸릴 수 있습니다)` });
+      const batchGet: Get = () => ({ ...get(), messages: get().messages.filter(message => message.role === 'user').slice(-1).map(message => ({ ...message, content: `현재 목록 중 이번에 읽은 문서 '${title}' 한 건만 요약하세요. 첫 줄에 문서 제목을 표시하고 핵심 내용, 요청 사항, 기한을 정리하세요. 본문에 없는 내용은 추측하지 마세요. 사용자 요청: ${text}` })) });
+      // 한 문서씩 생성해 여러 본문을 CPU 모델에 한꺼번에 넣지 않는다.
+      const batchSet: Set = patch => set(current => ({
+        ...(typeof patch === 'function' ? patch(current) : patch),
+        streaming: true, abort: controller,
+      }));
+      await runGeneration(batchSet, batchGet, { ...settings, thinkMode: 'off' });
+      if (signal?.aborted) return false;
+      if (get().error) failures.push(`${title}: ${get().error!.message}`);
+    }
+    }
+    if (failures.length) set({ error: { code: 'UNKNOWN', message: `일부 문서를 처리하지 못했습니다.\n${failures.join('\n')}` } });
+    if (titles.length > 1) return false;
+    set({ documentProgress: '문서 요약 중 · CPU에서는 수 분 걸릴 수 있습니다.' });
     return true;
   } catch (error) {
-    if (epoch === attachmentEpoch) set({ error: toAppError(null, error) });
+    if (epoch === attachmentEpoch && !signal?.aborted) set({ error: error instanceof Error && error.name === 'TimeoutError'
+      ? { code: 'UNKNOWN', message: '문서 화면 읽기가 120초 안에 완료되지 않았습니다. AI 생성 전 단계의 시간 초과입니다.', hint: '복제 탭에서 원래 문서 목록이 복원되는지, 상세 본문이 표시되는지 확인이 필요합니다.' }
+      : toAppError(null, error) });
     return false;
   } finally {
     if (epoch === attachmentEpoch) set({ extracting: false });

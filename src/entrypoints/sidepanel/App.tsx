@@ -536,6 +536,8 @@ export default function App() {
       {/* 승인 대기 중에는 진행 표시를 내린다 — 지금 기다리는 것은 모델이 아니라 사용자다. */}
       {chat.streaming && !chat.pendingApproval && (
         <StreamingBar
+          documentProgress={chat.documentProgress}
+          extracting={chat.extracting}
           startedAt={chat.startedAt}
           expectedSec={chat.expectedPrefillSec}
           agentTurn={chat.agentTurn}
@@ -673,12 +675,16 @@ export default function App() {
  * 0에 가깝게 나온다 — 실제로도 빠르므로 정직한 표시다.
  */
 function StreamingBar({
+  documentProgress,
+  extracting,
   startedAt,
   expectedSec,
   agentTurn,
   maxTurns,
   onStop,
 }: {
+  documentProgress?: string | null;
+  extracting: boolean;
   startedAt: number | null;
   expectedSec: number;
   /** 0이면 일반 생성. 1 이상이면 에이전트 루프의 현재 턴. */
@@ -695,10 +701,10 @@ function StreamingBar({
   }, []);
 
   const sec = startedAt ? (now - startedAt) / 1000 : 0;
-  const showEta = expectedSec >= 3 && sec < expectedSec;
+  const showEta = !extracting && expectedSec >= 3 && sec < expectedSec;
 
   // 에이전트는 몇 턴째인지 알려준다. 1턴 25초라 진행감이 없으면 고장으로 보인다.
-  const label = agentTurn > 0
+  const label = extracting ? t('panel.readingPage') : agentTurn > 0
     ? t('agent.turn', { turn: agentTurn, max: maxTurns })
     : showEta
       ? t('panel.readingPage')
@@ -706,7 +712,7 @@ function StreamingBar({
 
   return (
     <div className="progress" role="status" aria-live="polite">
-      <span>{label}</span>
+      <span>{documentProgress || label}</span>
       <div className="track">
         {showEta ? (
           <div className="fill" style={{ width: `${Math.min(97, (sec / expectedSec) * 100)}%` }} />

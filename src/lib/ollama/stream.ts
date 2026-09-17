@@ -95,11 +95,11 @@ export async function streamChat(
 ): Promise<PerfSample | null> {
   assertRequestBudget(req);
   signal?.throwIfAborted();
-  const guard = idleSignal(180_000, signal);
+  const guard = idleSignal(900_000, signal);
   try {
     return await readChat(endpoint, req, handlers, guard.signal, guard.touch);
   } catch (error) {
-    if (guard.signal.aborted) throw new OllamaError(signal?.aborted ? 'ABORTED' : 'TIMEOUT', signal?.aborted ? '생성을 중단했습니다.' : '서버에서 180초 동안 응답을 받지 못했습니다.');
+    if (guard.signal.aborted) throw new OllamaError(signal?.aborted ? 'ABORTED' : 'TIMEOUT', signal?.aborted ? '생성을 중단했습니다.' : 'AI 서버에서 15분 동안 응답을 받지 못했습니다. CPU 실행 시 모델 로딩과 본문 분석에 시간이 걸릴 수 있습니다.');
     throw error;
   } finally { guard.dispose(); }
 }
