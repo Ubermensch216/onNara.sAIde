@@ -476,6 +476,15 @@ export default function App() {
           <SaideIcon size={20} />
           <Wordmark />
         </div>
+        <button
+          className="model-chip"
+          onClick={() => chrome.runtime.openOptionsPage()}
+          title={`내 PC · Ollama · ${settings.model}`}
+          aria-label={`현재 모델: 내 PC Ollama ${settings.model}. 모델 설정 열기`}
+        >
+          <span className="model-chip-dot" aria-hidden="true" />
+          <span className="model-chip-text">내 PC · {settings.model}</span>
+        </button>
         {chat.conversation && chat.messages.length > 0 && (
           <span className="conv-chip">{chat.conversation.title}</span>
         )}

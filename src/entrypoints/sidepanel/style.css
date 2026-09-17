@@ -104,6 +104,40 @@ select {
   font-weight: 700;
 }
 
+.model-chip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  max-width: 132px;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid rgb(255 255 255 / 20%);
+  border-radius: 6px;
+  background: rgb(255 255 255 / 8%);
+  color: var(--header-muted);
+  font-size: 11px;
+}
+
+.model-chip:hover {
+  background: rgb(255 255 255 / 14%);
+  color: var(--header-fg);
+}
+
+.model-chip-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #64c7c0;
+  flex: none;
+}
+
+.model-chip-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .app-header .spacer {
   flex: 1;
 }
