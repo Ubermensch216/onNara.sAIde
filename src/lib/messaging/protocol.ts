@@ -151,6 +151,7 @@ export interface RequestControl {
 
 export type PanelToSW = (
   | { type: 'EXTRACT_PAGE'; tabId: number; budgetTokens: number }
+  | { type: 'READ_DOCUMENT'; tabId: number; title: string; budgetTokens: number }
   | { type: 'CAPTURE_SCREENSHOT'; tabId: number }
   | { type: 'EXEC_ACTION'; tabId: number; action: PageAction }
   | { type: 'LIST_TABS' }
@@ -171,6 +172,7 @@ export interface TabSummary {
 export type SWToPanel =
   | { type: 'ACTION_PREPARED'; token: string; label?: string }
   | { type: 'PAGE_EXTRACTED'; payload: ExtractedPage }
+  | { type: 'DOCUMENT_READ'; payload: ExtractedPage; requestedTitle: string }
   | { type: 'SCREENSHOT'; dataUrl: string }
   | { type: 'ACTION_RESULT'; result: ActionResult }
   | { type: 'TABS'; tabs: TabSummary[] }
@@ -183,7 +185,8 @@ export type SWToPanel =
 
 export type SWToContent = (
   | { type: 'CANCEL' }
-  | { type: 'EXTRACT'; budgetTokens: number }
+  | { type: 'EXTRACT'; budgetTokens: number; purpose?: 'page' | 'document-detail'; preferredFrameId?: number; targetTitle?: string }
+  | { type: 'OPEN_DOCUMENT'; title: string }
   | { type: 'ACT'; action: PageAction }
   | { type: 'PREPARE'; action: PageAction }
 ) & { control: RequestControl };
@@ -191,6 +194,7 @@ export type SWToContent = (
 export type ContentToSW =
   | { type: 'PREPARED'; token: string; label?: string }
   | { type: 'EXTRACTED'; payload: ExtractedPage }
+  | { type: 'OPENING_DOCUMENT'; title: string }
   | { type: 'ACTED'; result: ActionResult }
   | { type: 'FAILED'; error: AppError };
 

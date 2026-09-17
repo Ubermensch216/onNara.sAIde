@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { chooseBestExtraction, handlePanelMessage } from '@/entrypoints/background';
+import { chooseBestExtraction, handlePanelMessage, readDocumentInBackground } from '@/entrypoints/background';
 
 afterEach(() => vi.unstubAllGlobals());
 it('스크립트 주입을 기다리는 동안 취소하면 실행 메시지를 보내지 않는다', async () => {
@@ -93,4 +93,54 @@ it('추출 요청은 접근 가능한 iframe을 모두 읽고 탭 URL을 첨부 
   expect(sendMessage).toHaveBeenCalledWith(9, expect.objectContaining({
     control: expect.objectContaining({ expectedUrl: 'https://onnara.test/frame/list' }),
   }), { frameId: 2 });
+});
+
+it('복제한 백그라운드 탭에서 제목 문서를 열고 본문만 회수한 뒤 임시 탭을 닫는다', async () => {
+  const title = '감사결과 처분요구 이행실태 특정감사 자료 제출';
+  const common = { truncated: false, keptRatio: 1, estimatedTokens: 80, extractedAt: Date.now() };
+  const sendMessage = vi.fn(async (_tabId: number, message: { type: string; purpose?: string }, options: { frameId: number }) => {
+    if (message.type === 'OPEN_DOCUMENT') return { type: 'OPENING_DOCUMENT', title };
+    if (message.purpose === 'page' && options.frameId === 2) return {
+      type: 'EXTRACTED',
+      payload: {
+        ...common, url: 'https://onnara.test/list-frame', title: '문서등록대장', text: `행 1 | 제목=${title}`,
+        charCount: 80, method: 'onnara-document-list',
+        structuredData: {
+          kind: 'onnara-document-list', listName: '문서등록대장',
+          columns: [{ key: 'title', label: '제목', sourceIndex: 2 }], rows: [{ title }],
+        },
+      },
+    };
+    if (message.purpose === 'document-detail' && options.frameId === 2) return {
+      type: 'EXTRACTED',
+      payload: {
+        ...common, url: 'https://onnara.test/detail-frame', title,
+        text: `${title}\n감사 목적은 이행실태를 확인하는 것이며 제출기한은 9월 30일입니다.`.repeat(4),
+        charCount: 300, method: 'innerText',
+      },
+    };
+    return { type: 'EXTRACTED', payload: { ...common, url: 'https://onnara.test/main', title: '온나라', text: '업무 메뉴', charCount: 5, method: 'innerText' } };
+  });
+  const remove = vi.fn(async () => undefined);
+  vi.stubGlobal('chrome', {
+    tabs: {
+      get: vi.fn(async (id: number) => id === 1
+        ? { id: 1, url: 'https://onnara.test/main', title: '온나라', active: true, windowId: 7 }
+        : { id: 20, url: 'https://onnara.test/main', title: '온나라', active: false, windowId: 7 }),
+      query: vi.fn(async () => [{ id: 1, url: 'https://onnara.test/main', active: true, windowId: 7 }, { id: 20, url: 'https://onnara.test/main', active: false, windowId: 7 }]),
+      duplicate: vi.fn(async () => ({ id: 20, url: 'https://onnara.test/main', active: false, windowId: 7 })),
+      update: vi.fn(async () => undefined), sendMessage, remove,
+    },
+    scripting: { executeScript: vi.fn(async () => []) },
+    webNavigation: { getAllFrames: vi.fn(async () => [
+      { frameId: 0, parentFrameId: -1, url: 'https://onnara.test/main' },
+      { frameId: 2, parentFrameId: 0, url: 'https://onnara.test/list-frame' },
+    ]) },
+  });
+  const response = await readDocumentInBackground(1, title, 2000, {
+    id: crypto.randomUUID(), deadline: Date.now() + 5000, expectedUrl: 'https://onnara.test/main',
+  });
+  expect(response).toMatchObject({ type: 'DOCUMENT_READ', requestedTitle: title, payload: { url: 'https://onnara.test/main' } });
+  expect(sendMessage).toHaveBeenCalledWith(20, expect.objectContaining({ type: 'OPEN_DOCUMENT', title }), { frameId: 2 });
+  expect(remove).toHaveBeenCalledWith([20]);
 });

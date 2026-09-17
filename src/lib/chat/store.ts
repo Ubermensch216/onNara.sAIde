@@ -42,6 +42,8 @@ import { buildAgentSystem } from '@/lib/prompts/agent';
 import {
   buildDocumentTitleTable,
   isDocumentListTableRequest,
+  isDocumentSummaryRequest,
+  matchDocumentTitle,
 } from '@/lib/onnara/document-list';
 
 /** 에이전트가 조작할 탭. 제목까지 필요하다 — 승인 카드와 모델 안내에 쓴다. */
@@ -256,10 +258,12 @@ export const useChat = create<ChatState>((set, get) => ({
 
   async send(text, settings) {
     await refreshDocumentListIfRequested(get, text, settings);
+    if (!await prepareDocumentSummary(set, get, text, settings)) return;
     await submit(set, get, text, settings);
   },
   async sendAgent(text, settings, tab) {
     await refreshDocumentListIfRequested(get, text, settings);
+    if (!await prepareDocumentSummary(set, get, text, settings)) return;
     await submit(set, get, text, settings, tab);
   },
 
@@ -367,6 +371,66 @@ async function refreshDocumentListIfRequested(get: Get, text: string, settings: 
   const state = get();
   const tabId = state.conversation?.tabId ?? state.pending?.tabId;
   if (typeof tabId === 'number' && tabId >= 0) await state.attachPage(tabId, settings, true);
+}
+
+async function prepareDocumentSummary(
+  set: Set,
+  get: Get,
+  text: string,
+  settings: Settings,
+): Promise<boolean> {
+  if (!isDocumentSummaryRequest(text)) return true;
+  const state = get();
+  const tabId = state.conversation?.tabId ?? state.pending?.tabId;
+  if (typeof tabId !== 'number' || tabId < 0) return true;
+
+  const listPage = await state.attachPage(tabId, settings, true);
+  const list = listPage?.structuredData;
+  // 일반 웹 문서의 요약 요청은 기존 페이지 요약 경로에 맡긴다.
+  if (!list) return true;
+
+  const match = matchDocumentTitle(text, list);
+  if (match.status !== 'matched') {
+    const candidates = match.candidates.slice(0, 5).join(', ');
+    set({
+      error: {
+        code: 'UNKNOWN',
+        message: match.status === 'ambiguous'
+          ? '요청한 제목과 일치하는 문서가 여러 개입니다.'
+          : '현재 목록에서 요청한 문서 제목을 찾지 못했습니다.',
+        hint: candidates ? `문서 제목을 더 정확히 입력하세요. 현재 후보: ${candidates}` : undefined,
+      },
+    });
+    return false;
+  }
+
+  const epoch = ++attachmentEpoch;
+  set({ extracting: true, error: null });
+  try {
+    const response = await sendToSW({
+      type: 'READ_DOCUMENT',
+      tabId,
+      title: match.title,
+      budgetTokens: settings.pageTokenBudget,
+      control: { id: '', deadline: 0, expectedUrl: state.currentUrl || undefined },
+    }, undefined, 45_000);
+    if (epoch !== attachmentEpoch) return false;
+    if (response.type === 'ERROR') {
+      set({ error: response.error });
+      return false;
+    }
+    if (response.type !== 'DOCUMENT_READ') {
+      set({ error: { code: 'UNKNOWN', message: '문서 본문 읽기 결과를 받지 못했습니다.' } });
+      return false;
+    }
+    set({ page: response.payload, screenshot: null, lastContext: null });
+    return true;
+  } catch (error) {
+    if (epoch === attachmentEpoch) set({ error: toAppError(null, error) });
+    return false;
+  } finally {
+    if (epoch === attachmentEpoch) set({ extracting: false });
+  }
 }
 
 /**

@@ -122,6 +122,9 @@ export function extractStructuredDocumentList(root: ParentNode = document): Stru
         const cell = cells[column.sourceIndex];
         if (cell) record[column.key] = elementText(cell);
       }
+      // 구형 온나라 목록은 화면 제목을 줄여 그리면서 원문을 hidden input에 둔다.
+      const nativeTitle = row.querySelector<HTMLInputElement>('input[name="chkDocTitle"]')?.value;
+      if (cleanText(nativeTitle)) record.title = cleanText(nativeTitle);
       if (record.title) data.push(record);
       if (data.length >= 500) break;
     }
@@ -162,6 +165,76 @@ export function isDocumentListTableRequest(prompt: string): boolean {
   const namesDocuments = compact.includes('받은문서') || compact.includes('문서목록') || compact.includes('receiveddocument');
   const wantsTitles = compact.includes('제목') || compact.includes('리스트') || compact.includes('목록');
   return wantsTable && namesDocuments && wantsTitles;
+}
+
+export function isDocumentSummaryRequest(prompt: string): boolean {
+  const compact = prompt.toLowerCase().replace(/\s+/g, '');
+  const wantsContent = ['요약', '정리', '핵심', '읽고', '읽어서', '내용', '보고'].some(word => compact.includes(word));
+  return compact.includes('문서') && wantsContent && !isDocumentListTableRequest(prompt);
+}
+
+export type DocumentTitleMatch =
+  | { status: 'matched'; title: string }
+  | { status: 'ambiguous'; candidates: string[] }
+  | { status: 'none'; candidates: string[] };
+
+function searchable(value: string): string {
+  return value.toLowerCase().replace(/[\s\p{P}\p{S}]/gu, '');
+}
+
+/** 모델에게 고르게 하지 않고 현재 표의 제목과 사용자 문장을 결정적으로 대조한다. */
+export function matchDocumentTitle(prompt: string, list: StructuredDocumentList): DocumentTitleMatch {
+  const titles = [...new Set(list.rows.map(row => cleanText(row.title)).filter(Boolean))];
+  const normalizedPrompt = searchable(prompt);
+  const exact = titles.filter(title => {
+    const value = searchable(title);
+    return value.length >= 4 && normalizedPrompt.includes(value);
+  });
+  if (exact.length === 1) return { status: 'matched', title: exact[0]! };
+  if (exact.length > 1) {
+    const longest = Math.max(...exact.map(title => searchable(title).length));
+    const best = exact.filter(title => searchable(title).length === longest);
+    return best.length === 1 ? { status: 'matched', title: best[0]! } : { status: 'ambiguous', candidates: best };
+  }
+
+  const quoted = [...prompt.matchAll(/["'“”‘’「」『』](.*?)["'“”‘’「」『』]/g)]
+    .map(match => searchable(match[1] ?? ''))
+    .filter(value => value.length >= 4);
+  const partial = titles.filter(title => quoted.some(value => searchable(title).includes(value)));
+  if (partial.length === 1) return { status: 'matched', title: partial[0]! };
+  if (partial.length > 1) return { status: 'ambiguous', candidates: partial };
+  return { status: 'none', candidates: titles };
+}
+
+/** 제목이 들어 있는 표 셀에서 실제 열기 동작을 가진 요소를 찾는다. */
+export function findDocumentOpenTarget(title: string, root: ParentNode = document): HTMLElement | null {
+  const wanted = searchable(title);
+  const matches: HTMLElement[] = [];
+  for (const container of root.querySelectorAll(CONTAINER_SELECTOR)) {
+    for (const row of rowsOf(container)) {
+      const cells = cellsOf(row);
+      const titleCell = cells.find(cell => searchable(elementText(cell)) === wanted);
+      if (!titleCell) continue;
+      const interactive = [...titleCell.querySelectorAll<HTMLElement>('a, button, [role="link"], [onclick], [ondblclick]')]
+        .find(element => searchable(elementText(element)) === wanted || searchable(elementText(element)).includes(wanted));
+      const target = interactive ?? (titleCell as HTMLElement);
+      if (isAvailable(target)) matches.push(target);
+    }
+  }
+  return matches.length === 1 ? matches[0]! : null;
+}
+
+export function openDocumentTarget(target: HTMLElement): void {
+  target.scrollIntoView({ block: 'center' });
+  const usesDoubleClick = target.hasAttribute('ondblclick') ||
+    !target.matches('a, button, [role="link"], [onclick]');
+  if (usesDoubleClick) {
+    const view = target.ownerDocument.defaultView;
+    const EventCtor = view?.MouseEvent ?? MouseEvent;
+    target.dispatchEvent(new EventCtor('dblclick', { bubbles: true, cancelable: true }));
+  } else {
+    target.click();
+  }
 }
 
 function markdownCell(value: string): string {

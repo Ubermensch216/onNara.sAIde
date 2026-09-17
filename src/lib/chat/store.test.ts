@@ -103,3 +103,40 @@ it('받은문서 제목 표 요청은 화면을 다시 읽고 모델 없이 Mark
   expect(messages.at(-1)?.content).toContain('| 2 | 처분요구 자료 제출 |');
   expect(stream.streamChat).not.toHaveBeenCalled();
 });
+
+it('목록에서 지정한 문서를 백그라운드로 읽은 뒤 그 본문을 모델 컨텍스트에 넣는다', async () => {
+  const title = '감사결과 처분요구 이행실태 특정감사 자료 제출';
+  const sendMessage = vi.fn(async (message: { type: string }) => {
+    if (message.type === 'EXTRACT_PAGE') return {
+      type: 'PAGE_EXTRACTED',
+      payload: {
+        url: 'https://onnara.test/main', title: '문서등록대장 · 온나라', text: `행 1 | 제목=${title}`,
+        charCount: 70, truncated: false, keptRatio: 1, estimatedTokens: 30,
+        method: 'onnara-document-list', extractedAt: Date.now(),
+        structuredData: {
+          kind: 'onnara-document-list', listName: '문서등록대장',
+          columns: [{ key: 'title', label: '제목', sourceIndex: 2 }], rows: [{ title }],
+        },
+      },
+    } satisfies SWToPanel;
+    if (message.type === 'READ_DOCUMENT') return {
+      type: 'DOCUMENT_READ', requestedTitle: title,
+      payload: {
+        url: 'https://onnara.test/main', title,
+        text: '문서 본문: 제출기한은 9월 30일이며 담당 부서는 감사담당관입니다.',
+        charCount: 46, truncated: false, keptRatio: 1, estimatedTokens: 25,
+        method: 'innerText', extractedAt: Date.now(),
+      },
+    } satisfies SWToPanel;
+    throw new Error(`unexpected ${message.type}`);
+  });
+  vi.stubGlobal('chrome', { runtime: { sendMessage } });
+  vi.spyOn(stream, 'streamChat').mockResolvedValue(null);
+  await useChat.getState().openForTab(1, 'https://onnara.test/main');
+  await useChat.getState().send(`'${title}' 문서를 읽고 핵심 내용을 요약해줘.`, DEFAULT_SETTINGS);
+
+  expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'READ_DOCUMENT', tabId: 1, title }));
+  const request = vi.mocked(stream.streamChat).mock.calls[0]![1];
+  expect(request.messages.some(message => message.content.includes('제출기한은 9월 30일'))).toBe(true);
+  expect(useChat.getState().page?.title).toBe(title);
+});

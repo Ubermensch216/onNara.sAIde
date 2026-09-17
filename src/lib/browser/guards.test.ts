@@ -51,6 +51,8 @@ it('validates sender and rejects unapproved, expired, or non-HTTP actions', () =
   expect(validPanelRequest({ type: 'EXEC_ACTION', tabId: 1, action: { kind: 'click', selector: 'x' }, control: control() })).toBe(false);
   expect(validPanelRequest({ type: 'CAPTURE_SCREENSHOT', tabId: 1, control: { ...control(), deadline: 0 } })).toBe(false);
   expect(validPanelRequest({ type: 'PREPARE_ACTION', tabId: 1, action: { kind: 'navigate', url: 'javascript:alert(1)' }, control: control() })).toBe(false);
+  expect(validPanelRequest({ type: 'READ_DOCUMENT', tabId: 1, title: '감사자료 제출', budgetTokens: 2000, control: control() })).toBe(true);
+  expect(validPanelRequest({ type: 'READ_DOCUMENT', tabId: 1, title: '', budgetTokens: 2000, control: control() })).toBe(false);
 });
 it('cancels the wait and notifies the worker when the browser ignores AbortSignal', async () => {
   const sendMessage = vi.fn(() => new Promise(() => {}));

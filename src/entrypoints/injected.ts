@@ -19,6 +19,8 @@ import { Readability } from '@mozilla/readability';
 import { fitToBudget } from '@/lib/extract/budget';
 import {
   extractStructuredDocumentList,
+  findDocumentOpenTarget,
+  openDocumentTarget,
   serializeDocumentList,
 } from '@/lib/onnara/document-list';
 import {
@@ -71,6 +73,18 @@ export default defineUnlistedScript(() => {
             type: 'EXTRACTED',
             payload: await extractPage(msg.budgetTokens),
           } satisfies ContentToSW);
+        } else if (msg.type === 'OPEN_DOCUMENT') {
+          const target = findDocumentOpenTarget(msg.title);
+          if (!target) {
+            sendResponse({
+              type: 'FAILED',
+              error: { code: 'UNKNOWN', message: `목록에서 문서를 하나로 식별할 수 없습니다: ${msg.title}` },
+            } satisfies ContentToSW);
+          } else {
+            sendResponse({ type: 'OPENING_DOCUMENT', title: msg.title } satisfies ContentToSW);
+            // 응답 포트가 닫힌 뒤 실행해야 같은 프레임 이동에도 성공 응답이 보존된다.
+            setTimeout(() => openDocumentTarget(target), 0);
+          }
         } else if (msg.type === 'ACT' && validAction(msg.action)) {
           sendResponse({
             type: 'ACTED',
