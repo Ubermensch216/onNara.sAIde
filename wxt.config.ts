@@ -37,6 +37,7 @@ export default defineConfig({
       'storage',
       'contextMenus',
       'tabs',
+      'webNavigation',
     ],
 
     // 설치 시점에 확정으로 갖는 접근권은 로컬 Ollama뿐이다.

@@ -1,5 +1,5 @@
 import { assertCurrent, captureTab, trustedPanel, validPanelRequest } from '@/lib/browser/guards';
-import type { RequestControl, SWToContent } from '@/lib/messaging/protocol';
+import type { AppError, RequestControl, SWToContent } from '@/lib/messaging/protocol';
 /**
  * Service Worker — 계획서 §3 설계 결정 ①
  *
@@ -222,6 +222,10 @@ async function dispatchContent(tabId: number, msg: SWToContent): Promise<Content
     };
   }
 
+  // 온나라 업무 화면은 목록이 하위 iframe에 있는 경우가 많다. 추출 요청만
+  // 접근 가능한 모든 프레임에서 실행하고, 구조화된 문서 목록을 최우선 선택한다.
+  if (msg.type === 'EXTRACT') return dispatchExtractionAcrossFrames(tabId, msg, tab);
+
   try {
     assertCurrent(msg.control, tab.url ?? '', cancelled.has(msg.control.id));
     await chrome.scripting.executeScript({ target: { tabId }, files: [INJECTED_SCRIPT] });
@@ -249,6 +253,86 @@ async function dispatchContent(tabId: number, msg: SWToContent): Promise<Content
   } catch (e) {
     return { type: 'FAILED', error: { code: 'UNKNOWN', message: String(e) } };
   }
+}
+
+type ExtractRequest = SWToContent & { type: 'EXTRACT' };
+type ExtractedCandidate = { frameId: number; frameUrl: string; response: ContentToSW };
+
+export function chooseBestExtraction(candidates: ExtractedCandidate[]): ExtractedCandidate | null {
+  const extracted = candidates.filter(candidate => candidate.response.type === 'EXTRACTED');
+  return extracted.sort((left, right) => extractionScore(right.response) - extractionScore(left.response))[0] ?? null;
+}
+
+function extractionScore(response: ContentToSW): number {
+  if (response.type !== 'EXTRACTED') return -1;
+  const rows = response.payload.structuredData?.rows.length ?? 0;
+  return (rows ? 1_000_000 + rows * 10_000 : 0) + response.payload.charCount;
+}
+
+async function dispatchExtractionAcrossFrames(
+  tabId: number,
+  msg: ExtractRequest,
+  tab: chrome.tabs.Tab,
+): Promise<ContentToSW> {
+  const topUrl = tab.url ?? '';
+  let frames: Array<{ frameId: number; url: string }> = [{ frameId: 0, url: topUrl }];
+  try {
+    const discovered = await chrome.webNavigation.getAllFrames({ tabId });
+    if (discovered?.length) frames = discovered.map(frame => ({ frameId: frame.frameId, url: frame.url || topUrl }));
+  } catch {
+    // webNavigation이 없는 개발 mock이나 구형 환경에서는 최상위 프레임만 읽는다.
+  }
+
+  const attempts = await Promise.all(frames.map(async frame => {
+    const control = { ...msg.control, expectedUrl: frame.url || topUrl };
+    try {
+      await chrome.scripting.executeScript({ target: { tabId, frameIds: [frame.frameId] }, files: [INJECTED_SCRIPT] });
+      const response = await chrome.tabs.sendMessage(tabId, { ...msg, control }, { frameId: frame.frameId }) as ContentToSW;
+      return { frameId: frame.frameId, frameUrl: frame.url, response } satisfies ExtractedCandidate;
+    } catch (error) {
+      return {
+        frameId: frame.frameId,
+        frameUrl: frame.url,
+        response: { type: 'FAILED', error: accessError(error) },
+      } satisfies ExtractedCandidate;
+    }
+  }));
+
+  const current = await chrome.tabs.get(tabId);
+  assertCurrent(msg.control, current.url ?? '', cancelled.has(msg.control.id));
+  const best = chooseBestExtraction(attempts);
+  if (!best || best.response.type !== 'EXTRACTED') {
+    return attempts.find(candidate => candidate.response.type === 'FAILED')?.response ?? {
+      type: 'FAILED',
+      error: { code: 'UNKNOWN', message: t('sw.extractFailed') },
+    };
+  }
+
+  const payload = best.response.payload;
+  return {
+    type: 'EXTRACTED',
+    payload: {
+      ...payload,
+      // 첨부물의 동일성 검사는 탭 URL 기준으로 유지한다. 실제 iframe 주소는 별도 기록한다.
+      url: topUrl || payload.url,
+      title: payload.structuredData?.listName
+        ? `${payload.structuredData.listName} · ${tab.title || payload.title}`
+        : payload.title,
+      sourceFrameId: best.frameId,
+      sourceFrameUrl: best.frameUrl,
+    },
+  };
+}
+
+function accessError(error: unknown): AppError {
+  const raw = String(error);
+  return /must request permission|Cannot access contents/i.test(raw)
+    ? {
+        code: 'HOST_PERMISSION_REQUIRED',
+        message: '이 사이트의 내용을 읽을 권한이 없습니다.',
+        hint: '온나라 본문과 iframe 주소에 대한 사이트 접근 권한을 허용하세요.',
+      }
+    : { code: 'TAB_RESTRICTED', message: '페이지 프레임에 접근할 수 없습니다.', hint: raw };
 }
 
 /* ── 유틸 ──────────────────────────────────────────────── */

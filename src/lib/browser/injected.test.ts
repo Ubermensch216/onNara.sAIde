@@ -54,3 +54,26 @@ it('취소가 먼저 도착한 요청의 승인 토큰이 있어도 클릭하지
   expect(await send({ type: 'ACT', action, control: request })).toMatchObject({ type: 'FAILED' });
   expect(click).not.toHaveBeenCalled();
 });
+
+it('온나라 받은문서 표를 행·열 구조로 추출한다', async () => {
+  document.body.innerHTML = `
+    <h2>받은문서</h2>
+    <table>
+      <thead><tr><th>보고일자</th><th>제목</th><th>부서</th><th>상태</th></tr></thead>
+      <tbody>
+        <tr><td>2026.09.16</td><td>첫 번째 감사자료 제출</td><td>감사담당관</td><td>접수</td></tr>
+        <tr><td>2026.09.15</td><td>두 번째 감사자료 제출</td><td>감사담당관</td><td>접수</td></tr>
+      </tbody>
+    </table>`;
+  const response = await send({ type: 'EXTRACT', budgetTokens: 2000, control: control() });
+  expect(response).toMatchObject({
+    type: 'EXTRACTED',
+    payload: {
+      method: 'onnara-document-list',
+      structuredData: {
+        kind: 'onnara-document-list',
+        rows: [{ title: '첫 번째 감사자료 제출' }, { title: '두 번째 감사자료 제출' }],
+      },
+    },
+  });
+});

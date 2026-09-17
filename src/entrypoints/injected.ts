@@ -18,6 +18,10 @@ import { requiresApproval, type RequestControl } from '@/lib/messaging/protocol'
 import { Readability } from '@mozilla/readability';
 import { fitToBudget } from '@/lib/extract/budget';
 import {
+  extractStructuredDocumentList,
+  serializeDocumentList,
+} from '@/lib/onnara/document-list';
+import {
   extractYouTubeCaption,
   isYouTubeWatch,
   youTubeMeta,
@@ -89,9 +93,16 @@ export default defineUnlistedScript(() => {
 async function extractPage(budgetTokens: number): Promise<ExtractedPage> {
   let raw = '';
   let method: ExtractMethod = 'readability';
+  const structuredData = extractStructuredDocumentList();
+
+  // 온나라 목록은 일반 본문보다 먼저 구조화한다. innerText는 행·열 관계를 잃는다.
+  if (structuredData) {
+    raw = serializeDocumentList(structuredData);
+    method = 'onnara-document-list';
+  }
 
   // ① 유튜브는 Readability로 아무것도 못 건진다. 자막을 먼저 시도한다.
-  if (isYouTubeWatch(location.href)) {
+  if (!raw && isYouTubeWatch(location.href)) {
     const caption = await extractYouTubeCaption();
     if (caption) {
       raw = `${youTubeMeta()}\n\n${caption}`;
@@ -112,7 +123,7 @@ async function extractPage(budgetTokens: number): Promise<ExtractedPage> {
   }
 
   // ③ 폴백 — 리더 모드가 실패하는 페이지(SPA, 대시보드 등)가 흔하다.
-  if (raw.length < 200) {
+  if (!structuredData && raw.length < 200) {
     raw = document.body?.innerText?.trim() ?? '';
     method = 'innerText';
   }
@@ -130,6 +141,7 @@ async function extractPage(budgetTokens: number): Promise<ExtractedPage> {
     estimatedTokens: budgeted.estimatedTokens,
     method,
     extractedAt: Date.now(),
+    structuredData: structuredData ?? undefined,
   };
 }
 

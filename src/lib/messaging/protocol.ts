@@ -1,4 +1,5 @@
 import { abortable, deadlineSignal } from '@/lib/async';
+import type { StructuredDocumentList } from '@/lib/onnara/document-list';
 
 /**
  * 계약 ② — Side Panel ↔ Service Worker ↔ Content Script 3자 통신 규약.
@@ -47,7 +48,7 @@ export interface AppError {
 
 /* ── 페이지 추출 결과 ──────────────────────────────────── */
 
-export type ExtractMethod = 'readability' | 'innerText' | 'youtube-caption';
+export type ExtractMethod = 'readability' | 'innerText' | 'youtube-caption' | 'onnara-document-list';
 
 export interface ExtractedPage {
   url: string;
@@ -64,6 +65,11 @@ export interface ExtractedPage {
   estimatedTokens: number;
   method: ExtractMethod;
   extractedAt: number;
+  /** 온나라 표를 DOM에서 행·열로 검증해 추출했을 때만 존재한다. */
+  structuredData?: StructuredDocumentList;
+  /** iframe에서 선택된 결과라면 실제 추출 프레임을 기록한다. */
+  sourceFrameId?: number;
+  sourceFrameUrl?: string;
 }
 
 /* ── 페이지 액션 (Phase 5 에이전트) ─────────────────────── */

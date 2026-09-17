@@ -39,6 +39,10 @@ import { AGENT_TOOLS } from '@/lib/agent/tools';
 import { createBrowserTools } from '@/lib/agent/executor';
 import { runAgentLoop, type AgentStep, type TurnResult } from '@/lib/agent/loop';
 import { buildAgentSystem } from '@/lib/prompts/agent';
+import {
+  buildDocumentTitleTable,
+  isDocumentListTableRequest,
+} from '@/lib/onnara/document-list';
 
 /** 에이전트가 조작할 탭. 제목까지 필요하다 — 승인 카드와 모델 안내에 쓴다. */
 export interface AgentTab {
@@ -110,7 +114,7 @@ interface ChatState {
 
   openForTab: (tabId: number, url: string) => Promise<void>;
   openConversation: (conversation: Conversation) => Promise<void>;
-  attachPage: (tabId: number, settings: Settings) => Promise<ExtractedPage | null>;
+  attachPage: (tabId: number, settings: Settings, force?: boolean) => Promise<ExtractedPage | null>;
   attachScreenshot: (tabId: number) => Promise<string | null>;
   detachPage: () => void;
   detachScreenshot: () => void;
@@ -178,7 +182,7 @@ export const useChat = create<ChatState>((set, get) => ({
    *   재추출은 낭비일 뿐 아니라, 본문이 1바이트라도 달라지면 접두사가 바뀌어
    *   KV 캐시가 통째로 무효화된다(프리필 183ms → 7,684ms).
    */
-  async attachPage(tabId, settings) {
+  async attachPage(tabId, settings, force = false) {
     const current = get().page;
     if (get().extracting || get().loading) return current;
     const epoch = ++attachmentEpoch;
@@ -202,7 +206,7 @@ export const useChat = create<ChatState>((set, get) => ({
 
       const page = res.payload;
       // 같은 URL이면 기존 것을 유지해 접두사를 보존한다.
-      if (current && current.url === page.url) return current;
+      if (!force && current && current.url === page.url) return current;
 
       set({ page, currentUrl: page.url, lastContext: null });
       return page;
@@ -250,8 +254,14 @@ export const useChat = create<ChatState>((set, get) => ({
   detachPage: () => { ++attachmentEpoch; set({ page: null, lastContext: null, extracting: false }); },
   detachScreenshot: () => { ++attachmentEpoch; set({ screenshot: null, lastContext: null, extracting: false }); },
 
-  async send(text, settings) { await submit(set, get, text, settings); },
-  async sendAgent(text, settings, tab) { await submit(set, get, text, settings, tab); },
+  async send(text, settings) {
+    await refreshDocumentListIfRequested(get, text, settings);
+    await submit(set, get, text, settings);
+  },
+  async sendAgent(text, settings, tab) {
+    await refreshDocumentListIfRequested(get, text, settings);
+    await submit(set, get, text, settings, tab);
+  },
 
   resolveApproval(approved) {
     const pending = get().pendingApproval;
@@ -323,18 +333,40 @@ async function submit(set: Set, get: Get, text: string, settings: Settings, tab?
   const ownSet = guardedSet(set, owns);
   ownSet({ streaming: true, abort: new AbortController(), error: null });
   try {
-    await requireCapabilities(settings.endpoint, settings.model, [...(tab ? ['tools'] : []), ...(get().screenshot ? ['vision'] : [])], get().abort?.signal);
-    if (!owns()) return;
     const conv = await ensureConversation(ownSet, get, trimmed, owns);
     if (!conv || !owns()) return;
     const userMsg = { conversationId: conv.id, role: 'user' as const, content: trimmed, createdAt: Date.now() };
     const id = await addMessage(userMsg);
     if (!owns()) return;
     ownSet(s => ({ messages: [...s.messages, { ...userMsg, id }] }));
+
+    const localAnswer = buildDocumentTitleTable(trimmed, get().page?.structuredData);
+    if (localAnswer) {
+      const assistantMsg = {
+        conversationId: conv.id,
+        role: 'assistant' as const,
+        content: localAnswer,
+        notice: '온나라 문서 목록을 화면의 표 구조에서 읽어 작성했습니다.',
+        createdAt: Date.now() + 1,
+      };
+      const assistantId = await addMessage(assistantMsg);
+      if (owns()) ownSet(s => ({ messages: [...s.messages, { ...assistantMsg, id: assistantId }] }));
+      return;
+    }
+
+    await requireCapabilities(settings.endpoint, settings.model, [...(tab ? ['tools'] : []), ...(get().screenshot ? ['vision'] : [])], get().abort?.signal);
+    if (!owns()) return;
     if (tab) await runAgent(ownSet, get, settings, tab);
     else await runGeneration(ownSet, get, settings);
   } catch (error) { ownSet({ error: toAppError(error instanceof OllamaError ? error : null, error) }); }
   finally { ownSet({ streaming: false, abort: null, startedAt: null }); }
+}
+
+async function refreshDocumentListIfRequested(get: Get, text: string, settings: Settings): Promise<void> {
+  if (!isDocumentListTableRequest(text)) return;
+  const state = get();
+  const tabId = state.conversation?.tabId ?? state.pending?.tabId;
+  if (typeof tabId === 'number' && tabId >= 0) await state.attachPage(tabId, settings, true);
 }
 
 /**

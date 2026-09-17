@@ -71,3 +71,35 @@ it('삭제한 대화에 메시지를 쓰면 실패하고 고아 메시지를 만
   await expect(storage.addMessage({ conversationId: id, role: 'assistant', content: 'late' })).rejects.toThrow('삭제된');
   expect(await storage.db.messages.count()).toBe(0);
 });
+
+it('받은문서 제목 표 요청은 화면을 다시 읽고 모델 없이 Markdown 표로 답한다', async () => {
+  const sendMessage = vi.fn(async () => ({
+    type: 'PAGE_EXTRACTED',
+    payload: {
+      url: 'https://onnara.test/main',
+      title: '받은문서 · 온나라',
+      text: '행 1 | 제목=감사자료 제출\n행 2 | 제목=처분요구 자료 제출',
+      charCount: 44,
+      truncated: false,
+      keptRatio: 1,
+      estimatedTokens: 20,
+      method: 'onnara-document-list',
+      extractedAt: Date.now(),
+      structuredData: {
+        kind: 'onnara-document-list',
+        listName: '받은문서',
+        columns: [{ key: 'title', label: '제목', sourceIndex: 2 }],
+        rows: [{ title: '감사자료 제출' }, { title: '처분요구 자료 제출' }],
+      },
+    },
+  } satisfies SWToPanel));
+  vi.stubGlobal('chrome', { runtime: { sendMessage } });
+  vi.spyOn(stream, 'streamChat').mockResolvedValue(null);
+  await useChat.getState().openForTab(1, 'https://onnara.test/main');
+  await useChat.getState().send('받은문서 메뉴에 리스트업된 모든 문서의 제목을 읽어서 테이블로 만들어줘.', DEFAULT_SETTINGS);
+  const messages = useChat.getState().messages;
+  expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'EXTRACT_PAGE', tabId: 1 }));
+  expect(messages.at(-1)?.content).toContain('| 1 | 감사자료 제출 |');
+  expect(messages.at(-1)?.content).toContain('| 2 | 처분요구 자료 제출 |');
+  expect(stream.streamChat).not.toHaveBeenCalled();
+});
