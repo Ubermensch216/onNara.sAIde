@@ -65,3 +65,35 @@ it('목록에서 아무것도 체크하지 않았으면 첨부 받기를 막고 
   expect(card.disabled).toBe(true);
   expect(card.textContent).toContain('목록에서 문서를 체크하세요');
 });
+
+it('기억한 탭이 닫혀 읽기에 실패해도 "다시 읽기"를 누르면 지금 보고 있는 탭을 찾아 다시 준비한다', async () => {
+  let activeTabs: Array<{ id: number; url: string; title: string }> = [];
+  const sendMessage = vi.fn(async (message: { type: string; tabId?: number }) => message.type === 'EXTRACT_PAGE' && message.tabId === 9
+    ? list(['문서 A'])
+    : { type: 'ERROR', error: { code: 'UNKNOWN', message: '읽을 탭을 찾을 수 없습니다. 탭이 닫혔거나 다시 열렸을 수 있습니다.' } });
+  vi.stubGlobal('chrome', {
+    runtime: { sendMessage },
+    tabs: {
+      query: vi.fn(async () => activeTabs),
+      // 패널이 기억한 7번 탭은 이미 닫혔다.
+      get: vi.fn(async (id: number) => { throw new Error(`No tab with id: ${id}`); }),
+    },
+    storage: { local: { get: vi.fn(async () => ({})), set: vi.fn(async () => undefined) } },
+  });
+  const onTabChange = vi.fn();
+  await act(() => root.render(createElement(AutomationPanel, { tab, onDownloadLink: vi.fn(), onTabChange })));
+  await settle();
+  const cards = () => [...document.querySelectorAll<HTMLButtonElement>('.auto-card')];
+  expect(document.querySelector('.auto-error')).not.toBeNull();
+  expect(cards().every(card => card.disabled)).toBe(true);
+
+  // 사용자가 온나라 탭을 다시 열었다.
+  activeTabs = [{ id: 9, url: 'https://onnara.test/main2', title: '온나라' }];
+  const refresh = [...document.querySelectorAll<HTMLButtonElement>('.auto-target .minibtn')].find(button => button.textContent === '다시 읽기')!;
+  await act(async () => refresh.click());
+  await settle();
+  expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'EXTRACT_PAGE', tabId: 9 }));
+  expect(onTabChange).toHaveBeenCalledWith(expect.objectContaining({ tabId: 9, url: 'https://onnara.test/main2' }));
+  expect(document.querySelector('.auto-error')).toBeNull();
+  expect(cards().map(card => card.disabled)).toEqual([false, false]);
+});

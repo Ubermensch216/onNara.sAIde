@@ -8,7 +8,7 @@
  *   실행 직전에 화면을 다시 읽어, 그사이 바뀐 체크 상태를 따른다.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { t as translate, useT } from '@/lib/i18n';
 import { isRestrictedUrl, sendToSW, type AppError, type ExtractedPage, type TabSummary } from '@/lib/messaging/protocol';
 import { requestHostAccess } from '@/lib/permissions';
@@ -32,9 +32,29 @@ type Screen =
 interface Props {
   tab: TabSummary | null;
   onDownloadLink: (action: DownloadLinkAction, downloadId: number) => void;
+  /** 다시 찾은 탭이 패널이 알던 탭과 다르면 알린다. 패널 전체(AI 탭 포함)를 그 탭으로 맞춘다. */
+  onTabChange?: (tab: TabSummary) => void;
 }
 
-export function AutomationPanel({ tab, onDownloadLink }: Props) {
+/**
+ * 지금 읽을 탭을 찾는다.
+ *
+ * ★ 패널이 기억한 탭 ID만 믿으면, 탭을 닫았다 다시 열거나 다른 창으로 옮긴 뒤에는
+ *   "다시 읽기"를 몇 번 눌러도 같은 없는 탭을 읽으려다 실패한다.
+ *   패널이 열린 창에서 사용자가 지금 보고 있는 탭을 먼저 찾고, 찾지 못할 때만 기억한 탭을 쓴다.
+ */
+async function currentTab(known: TabSummary | null): Promise<TabSummary | null> {
+  if (typeof chrome === 'undefined' || !chrome.tabs?.query) return known;
+  const [active] = await chrome.tabs.query({ active: true, currentWindow: true }).catch(() => [] as chrome.tabs.Tab[]);
+  if (typeof active?.id === 'number' && active.id >= 0 && active.url && !isRestrictedUrl(active.url)) {
+    return { tabId: active.id, url: active.url, title: active.title ?? '', active: true };
+  }
+  if (!known) return null;
+  const alive = await chrome.tabs.get(known.tabId).catch(() => null);
+  return alive ? { ...known, url: alive.url ?? known.url, title: alive.title ?? known.title } : null;
+}
+
+export function AutomationPanel({ tab, onDownloadLink, onTabChange }: Props) {
   const t = useT();
   const jobs = useAutomation(state => state.jobs);
   const [screen, setScreen] = useState<Screen>({ state: 'idle' });
@@ -43,16 +63,26 @@ export function AutomationPanel({ tab, onDownloadLink }: Props) {
 
   const tabId = tab?.tabId;
   const tabUrl = tab?.url;
+  const known = useRef(tab);
+  known.current = tab;
+  const tabChanged = useRef(onTabChange);
+  tabChanged.current = onTabChange;
+  // 실제로 읽은 탭. 첨부 받기는 패널이 알던 탭이 아니라 방금 읽은 탭을 대상으로 한다.
+  const readTab = useRef<TabSummary | null>(null);
+
   // useT()는 렌더마다 새 함수라 의존성에 넣으면 화면을 끝없이 다시 읽는다. 탭이 바뀔 때만 다시 만든다.
   const readScreen = useCallback(async (): Promise<ExtractedPage | null> => {
-    if (tabId === undefined || !tabUrl || isRestrictedUrl(tabUrl)) {
+    setScreen({ state: 'loading' });
+    const target = await currentTab(known.current);
+    readTab.current = target;
+    if (!target || isRestrictedUrl(target.url)) {
       setScreen({ state: 'error', error: { code: 'TAB_RESTRICTED', message: translate('auto.noScreen') } });
       return null;
     }
-    setScreen({ state: 'loading' });
+    if (target.tabId !== known.current?.tabId || target.url !== known.current?.url) tabChanged.current?.(target);
     const response = await sendToSW({
-      type: 'EXTRACT_PAGE', tabId, budgetTokens: 1000,
-      control: { id: '', deadline: 0, expectedUrl: tabUrl },
+      type: 'EXTRACT_PAGE', tabId: target.tabId, budgetTokens: 1000,
+      control: { id: '', deadline: 0, expectedUrl: target.url },
     }).catch((error: unknown) => ({ type: 'ERROR' as const, error: { code: 'UNKNOWN' as const, message: String(error) } }));
     if (response.type === 'PAGE_EXTRACTED') {
       setScreen({ state: 'ready', page: response.payload });
@@ -70,13 +100,13 @@ export function AutomationPanel({ tab, onDownloadLink }: Props) {
   const canDownload = Boolean(page && (!list || selected.length));
 
   const downloadAttachments = async () => {
-    if (!tab) return;
     // 목록 체크는 패널 밖에서 바뀌므로 실행 직전에 다시 읽는다.
     const fresh = await readScreen();
-    if (!fresh) return;
+    const target = readTab.current;
+    if (!fresh || !target) return;
     const titles = fresh.structuredData ? fresh.structuredData.selectedTitles ?? [] : [undefined];
     if (!titles.length) return;
-    void queueAttachmentDownloads({ tabId: tab.tabId, page: fresh, titles, origin: 'automation' });
+    void queueAttachmentDownloads({ tabId: target.tabId, page: fresh, titles, origin: 'automation' });
   };
 
   const exportList = async () => {
@@ -88,7 +118,8 @@ export function AutomationPanel({ tab, onDownloadLink }: Props) {
 
   const grantAccess = () => {
     // 권한 요청은 클릭 핸들러의 첫 동작이어야 한다.
-    if (tab) void requestHostAccess(tab.url).then(ok => { if (ok) void readScreen(); });
+    const target = readTab.current ?? tab;
+    if (target) void requestHostAccess(target.url).then(ok => { if (ok) void readScreen(); });
   };
 
   const active = jobs.filter(job => job.status === 'queued' || job.status === 'running');

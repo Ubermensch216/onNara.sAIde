@@ -161,6 +161,14 @@ export default function App() {
   // 지금 패널이 붙들고 있는 탭. 중복 이벤트를 걸러내는 기준이다.
   const currentTab = useRef<TabSummary | null>(null);
 
+  /** 자동화 탭이 다시 찾은 탭으로 패널 전체를 맞춘다. 같은 문서면 세션을 갈아끼우지 않는다. */
+  const adoptTab = (t: TabSummary) => {
+    const prev = currentTab.current;
+    currentTab.current = t;
+    setTab(t);
+    if (!(prev && prev.tabId === t.tabId && sameDocument(prev.url, t.url))) void chat.openForTab(t.tabId, t.url);
+  };
+
   useEffect(() => {
     let alive = true;
 
@@ -544,7 +552,8 @@ export default function App() {
             <ErrorBanner error={automationError} model={settings.model} onClose={() => setAutomationError(null)} onAction={handleErrorAction} />
           )}
           <main className="app-main">
-            <AutomationPanel tab={tab} onDownloadLink={(action, downloadId) => openDownload(action, downloadId, setAutomationError)} />
+            <AutomationPanel tab={tab} onTabChange={adoptTab}
+              onDownloadLink={(action, downloadId) => openDownload(action, downloadId, setAutomationError)} />
           </main>
         </>
       ) : (

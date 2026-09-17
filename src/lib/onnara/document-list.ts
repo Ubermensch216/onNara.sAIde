@@ -240,13 +240,40 @@ export function findDocumentOpenTarget(title: string, root: ParentNode = documen
         (nativeTitle && searchable(nativeTitle.value) === wanted && titleIndex !== undefined ? cells[titleIndex] : null);
       if (!titleCell) continue;
       const candidates = [...titleCell.querySelectorAll<HTMLElement>('a, button, [role="link"], [onclick], [ondblclick]')].filter(isAvailable);
-      const interactive = candidates.find(element => searchable(elementText(element)) === wanted || searchable(elementText(element)).includes(wanted)) ??
-        (nativeTitle && searchable(nativeTitle.value) === wanted && candidates.length === 1 ? candidates[0] : undefined);
-      const target = interactive ?? (titleCell as HTMLElement);
+      const interactive = pickOpenLink(candidates, wanted, Boolean(nativeTitle && searchable(nativeTitle.value) === wanted));
+      // 제목 칸에 누를 요소가 없으면 행 전체에 열기 동작을 거는 목록이 있다.
+      const rowAction = !interactive && row.matches('[onclick], [ondblclick]') ? row as HTMLElement : undefined;
+      const target = interactive ?? rowAction ?? (titleCell as HTMLElement);
       if (isAvailable(target)) matches.push(target);
     }
   }
   return matches.length === 1 ? matches[0]! : null;
+}
+
+/**
+ * 제목 칸 안에서 문서를 여는 링크를 고른다.
+ *
+ * ★ 온나라 목록은 제목 앞뒤에 [auto]·[긴급] 같은 표시를 링크 밖(또는 별도 링크)에 붙이고,
+ *   긴 제목은 링크 글자를 말줄임한다. 그래서 링크 글자가 제목 전체를 담지 않는 경우가 흔하다.
+ *   전체 제목을 담은 링크가 없으면, 제목의 일부를 담은 링크 중 가장 긴 것을 고른다.
+ *   "[auto]"처럼 짧은 표시 링크를 제목 링크로 오인하지 않도록 최소 길이를 둔다.
+ */
+function pickOpenLink(candidates: HTMLElement[], wanted: string, nativeTitleMatched: boolean): HTMLElement | undefined {
+  const scored = candidates.map(element => ({ element, text: searchable(elementText(element)) })).filter(item => item.text);
+  const full = scored.find(item => item.text === wanted || item.text.includes(wanted));
+  if (full) return full.element;
+  const minLength = Math.max(4, Math.ceil(wanted.length * 0.3));
+  const partial = scored
+    .filter(item => item.text.length >= minLength && wanted.includes(item.text))
+    .sort((left, right) => right.text.length - left.text.length)[0];
+  if (partial) return partial.element;
+  return nativeTitleMatched && candidates.length === 1 ? candidates[0] : undefined;
+}
+
+/** 오류 안내에 쓸, 실제로 누른 요소의 짧은 설명. */
+export function describeOpenTarget(target: HTMLElement): string {
+  const text = cleanText(target.innerText || target.textContent, 40);
+  return `<${target.tagName.toLowerCase()}>${text ? ` "${text}"` : ''}`;
 }
 
 export function openDocumentTarget(target: HTMLElement): void {
@@ -254,9 +281,13 @@ export function openDocumentTarget(target: HTMLElement): void {
   const usesDoubleClick = target.hasAttribute('ondblclick') ||
     !target.matches('a, button, [role="link"], [onclick]');
   if (usesDoubleClick) {
+    // 링크가 아닌 칸·행은 목록 스크립트가 click이나 dblclick 중 무엇을 듣는지 알 수 없다.
+    // 사용자가 실제로 두 번 누를 때와 같은 순서로 이벤트를 보낸다.
     const view = target.ownerDocument.defaultView;
     const EventCtor = view?.MouseEvent ?? MouseEvent;
-    target.dispatchEvent(new EventCtor('dblclick', { bubbles: true, cancelable: true }));
+    const fire = (type: string, detail: number) => target.dispatchEvent(new EventCtor(type, { bubbles: true, cancelable: true, detail }));
+    for (const detail of [1, 2]) { fire('mousedown', detail); fire('mouseup', detail); fire('click', detail); }
+    fire('dblclick', 2);
   } else {
     target.click();
   }

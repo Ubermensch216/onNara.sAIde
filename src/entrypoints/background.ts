@@ -540,6 +540,7 @@ export async function readDocumentInBackground(
     if (opened.type !== 'OPENING_DOCUMENT') {
       return { type: 'ERROR', error: { code: 'UNKNOWN', message: '문서 열기 동작을 시작하지 못했습니다.' } };
     }
+    observed.target = opened.target;
 
     stage = 'detail';
     const detailStarted = Date.now();
@@ -704,6 +705,8 @@ type DetailObservation = {
   state: 'none' | 'failed' | 'list' | 'short' | 'mismatch';
   chars: number;
   error?: string;
+  /** 문서를 열려고 실제로 누른 요소. 반응이 없을 때 엉뚱한 요소를 눌렀는지 알 수 있다. */
+  target?: string;
 };
 
 const DETAIL_WAIT_MS = 60_000;
@@ -745,7 +748,7 @@ export function readTimeoutError(stage: ReadStage, observed: DetailObservation):
   }
   const where = observed.popup ? '새 창' : '작업 탭';
   const hint = !observed.popup && !observed.frameChanged && observed.state !== 'failed'
-    ? '문서 제목을 눌렀지만 새 창도 화면 이동도 일어나지 않았습니다. 브라우저 팝업 차단 설정에서 온나라 주소의 팝업을 허용했는지 확인하세요.'
+    ? `문서 제목을 눌렀지만 새 창도 화면 이동도 일어나지 않았습니다${observed.target ? `(누른 요소: ${observed.target})` : ''}. 브라우저 팝업 차단 설정에서 온나라 주소의 팝업을 허용했는지 확인하세요.`
     : observed.state === 'list'
       ? `${where}에 여전히 문서 목록만 표시됩니다. 문서가 레이어나 전용 뷰어로 열리는지 확인하세요.`
       : observed.state === 'short'

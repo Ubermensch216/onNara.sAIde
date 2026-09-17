@@ -86,3 +86,27 @@ it('사용자 요청을 판별하고 Markdown 안전한 제목 표를 만든다'
   expect(answer).toContain('| 2 | 제목에 \\| 기호가 있는 문서 |');
   expect(answer).toContain('현재 화면에 렌더링된 목록 기준');
 });
+
+it.each([
+  // 숨은 전체 제목 입력이 없는 목록: 링크 글자가 제목 전체를 담지 않아 예전에는 제목 칸(td)을 더블클릭했다.
+  ['제목 앞 표시가 링크 밖에 있음', '<span class="ico_auto">[auto]</span><a href="javascript:void(0)" onclick="openDoc()">감사원 감사자료 제출 요구</a>', false],
+  // 표시도 링크라 제목 칸에 링크가 둘: 숨은 제목이 있어도 "링크가 하나일 때만" 고르던 규칙이 실패했다.
+  ['표시도 링크임', '<a class="ico_auto" href="javascript:void(0)" onclick="autoInfo()">[auto]</a><a href="javascript:void(0)" onclick="openDoc()">감사원 감사자료 제출 요구</a>', true],
+  ['제목 링크가 말줄임됨', '<span>[auto]</span><a href="javascript:void(0)" onclick="openDoc()">감사원 감사자료…</a>', true],
+])('제목 칸에 [auto] 같은 표시가 붙어도 실제 제목 링크를 누른다 (%s)', (_case, cell, hiddenTitle) => {
+  const hidden = hiddenTitle ? '<input type="hidden" name="chkDocTitle" value="[auto]감사원 감사자료 제출 요구">' : '';
+  document.body.innerHTML = `<table>
+    <tr><th>선택</th><th>제목</th><th>상태</th></tr>
+    <tr><td><input type="checkbox">${hidden}</td><td>${cell}</td><td>접수</td></tr>
+  </table>`;
+  const target = findDocumentOpenTarget('[auto]감사원 감사자료 제출 요구');
+  expect(target?.getAttribute('onclick')).toBe('openDoc()');
+});
+
+it('제목 칸에 누를 링크가 없으면 행에 걸린 열기 동작을 누른다', () => {
+  document.body.innerHTML = `<table>
+    <tr><th>선택</th><th>제목</th><th>상태</th></tr>
+    <tr ondblclick="openDoc()"><td><input type="checkbox"></td><td><span>[auto]</span>감사원 감사자료 제출 요구</td><td>접수</td></tr>
+  </table>`;
+  expect(findDocumentOpenTarget('[auto]감사원 감사자료 제출 요구')?.tagName).toBe('TR');
+});

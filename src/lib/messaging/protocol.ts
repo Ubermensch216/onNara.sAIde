@@ -225,7 +225,8 @@ export type SWToContent = (
 export type ContentToSW =
   | { type: 'PREPARED'; token: string; label?: string }
   | { type: 'EXTRACTED'; payload: ExtractedPage }
-  | { type: 'OPENING_DOCUMENT'; title: string }
+  /** target: 실제로 누른 요소 설명. 열기에 반응이 없을 때 원인을 알리는 데 쓴다. */
+  | { type: 'OPENING_DOCUMENT'; title: string; target?: string }
   | { type: 'DOCUMENT_LOCATED'; location: DocumentListLocation }
   | { type: 'DOCUMENT_LIST_RESTORED'; restored: boolean }
   | { type: 'ATTACHMENTS_FOUND'; items: AttachmentItem[] }
