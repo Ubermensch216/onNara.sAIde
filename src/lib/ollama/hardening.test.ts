@@ -25,11 +25,40 @@ it('done 뒤 연결이 열려 있어도 완료하고 reader를 취소한다', as
   expect(await streamChat(endpoint, req, {})).toMatchObject({ totalMs: 0 });
   expect(cancel).toHaveBeenCalledOnce();
 });
-it('CPU 추론은 180초 이후에도 기다리되 무응답 15분에 중단한다', async () => {
+it('응답 헤더·첫 토큰·후속 토큰을 각각 하루 기다려도 최종 답변을 전달한다', async () => {
   vi.useFakeTimers();
-  vi.stubGlobal('fetch', async () => new Response(new ReadableStream({ pull: () => new Promise(() => {}) })));
-  const result = expect(streamChat(endpoint, req, {})).rejects.toMatchObject({ code: 'TIMEOUT' });
-  await vi.advanceTimersByTimeAsync(900001); await result;
+  let respond!: (response: Response) => void;
+  let stream!: ReadableStreamDefaultController<Uint8Array>;
+  vi.stubGlobal('fetch', () => new Promise<Response>(resolve => { respond = resolve; }));
+  const onToken = vi.fn();
+  const onDone = vi.fn();
+  const settled = vi.fn();
+  const result = streamChat(endpoint, req, { onToken, onDone });
+  void result.then(settled, settled);
+  await vi.advanceTimersByTimeAsync(86_400_000);
+  expect(settled).not.toHaveBeenCalled();
+  respond(new Response(new ReadableStream({ start(controller) { stream = controller; } })));
+  await vi.advanceTimersByTimeAsync(86_400_000);
+  expect(settled).not.toHaveBeenCalled();
+  stream.enqueue(new TextEncoder().encode('{"message":{"content":"오래 기다린 "}}\n'));
+  await vi.advanceTimersByTimeAsync(86_400_000);
+  expect(settled).not.toHaveBeenCalled();
+  expect(onToken).toHaveBeenCalledWith('오래 기다린 ');
+  stream.enqueue(new TextEncoder().encode('{"message":{"content":"답변"},"done":true}\n'));
+  await expect(result).resolves.toMatchObject({ totalMs: 0 });
+  expect(onToken.mock.calls.map(([text]) => text).join('')).toBe('오래 기다린 답변');
+  expect(onDone).toHaveBeenCalledOnce();
+});
+it.each(['headers', 'body'])('무기한 %s 대기도 사용자가 중단하면 즉시 종료한다', async phase => {
+  vi.useFakeTimers();
+  const cancel = vi.fn();
+  vi.stubGlobal('fetch', () => phase === 'headers' ? new Promise(() => {}) : Promise.resolve(new Response(new ReadableStream({ cancel }))));
+  const controller = new AbortController();
+  const result = expect(streamChat(endpoint, req, {}, controller.signal)).rejects.toMatchObject({ code: 'ABORTED' });
+  await vi.advanceTimersByTimeAsync(86_400_000);
+  controller.abort();
+  await result;
+  if (phase === 'body') expect(cancel).toHaveBeenCalledOnce();
 });
 it('초과한 컨텍스트는 HTTP 요청 전에 거부한다', async () => {
   const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);

@@ -140,33 +140,27 @@ describe('멈춤 보장 (Phase 5-2)', () => {
     expect(out.steps).toHaveLength(4);
   });
 
-  it('무응답이 이어지면 시간 상한으로 끊는다', async () => {
-    // 토큰도 못 내놓고 응답도 없는 모델. 실제로는 프리필에서 멈춘 상태.
-    const chat = vi.fn(
-      (_m: ChatMessage[], _h: unknown, signal: AbortSignal) =>
-        new Promise<TurnResult>((_res, rej) => {
-          signal.addEventListener('abort', () => rej(new Error('aborted')), { once: true });
-        }),
-    );
-
-    const out = await runAgentLoop(seed, deps({ chat }), { idleTimeoutMs: 40 });
-
-    expect(out.stopReason).toBe('timeout');
-    expect(out.notice).toContain('응답이 없어');
+  it('에이전트도 하루 동안 무응답이면 계속 기다리고 늦게 온 답변을 반환한다', async () => {
+    vi.useFakeTimers();
+    try {
+      let answer!: (result: TurnResult) => void;
+      const chat = vi.fn(() => new Promise<TurnResult>(resolve => { answer = resolve; }));
+      const settled = vi.fn();
+      const result = runAgentLoop(seed, deps({ chat }));
+      void result.then(settled, settled);
+      await vi.advanceTimersByTimeAsync(86_400_000);
+      expect(settled).not.toHaveBeenCalled();
+      answer(turn('오래 걸린 분석 결과'));
+      expect(await result).toMatchObject({ stopReason: 'answered', content: '오래 걸린 분석 결과' });
+    } finally { vi.useRealTimers(); }
   });
 
-  it('토큰이 흐르는 동안에는 시간 상한이 되감긴다', async () => {
-    // 30ms마다 토큰을 흘리는 느린 생성. 무응답 상한 50ms보다 총 시간이 길다.
-    const chat = vi.fn(async (_m: ChatMessage[], h: { onToken?: (t: string) => void }) => {
-      for (let i = 0; i < 5; i++) {
-        await new Promise((r) => setTimeout(r, 30));
-        h.onToken?.('가');
-      }
-      return turn('가가가가가');
-    });
-
-    const out = await runAgentLoop(seed, deps({ chat }), { idleTimeoutMs: 50 });
-    expect(out.stopReason).toBe('answered');
+  it('응답 없는 모델이 signal을 무시해도 사용자의 중단은 즉시 반영한다', async () => {
+    const controller = new AbortController();
+    const chat = vi.fn(() => new Promise<TurnResult>(() => {}));
+    const result = runAgentLoop(seed, deps({ chat }), { signal: controller.signal });
+    controller.abort();
+    expect(await result).toMatchObject({ stopReason: 'aborted' });
   });
 
   it('사용자가 중단하면 aborted로 끝난다', async () => {

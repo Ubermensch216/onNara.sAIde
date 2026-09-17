@@ -37,9 +37,9 @@ const ko = {
   'err.oom.title': '모델을 올릴 메모리가 부족합니다',
   'err.oom.body':
     '설정에서 컨텍스트 길이(num_ctx)를 줄이거나, 메모리를 많이 쓰는 다른 프로그램을 종료한 뒤 다시 시도하세요.',
-  'err.timeout.title': '응답이 오지 않아 중단했습니다',
+  'err.timeout.title': '요청 제한 시간을 초과했습니다',
   'err.timeout.body':
-    '이 컴퓨터는 CPU로 추론하기 때문에 긴 페이지에서 느려질 수 있습니다. 페이지 분량을 줄이거나 질문을 짧게 나눠 보세요.',
+    '서버 연결 확인 또는 페이지 작업이 제한 시간 안에 끝나지 않았습니다. 서버 연결과 현재 페이지 상태를 확인한 뒤 다시 시도하세요.',
   'err.aborted.title': '중단했습니다',
   'err.restricted.title': '이 페이지에서는 내용을 읽을 수 없습니다',
   'err.restricted.body':
@@ -69,6 +69,7 @@ const ko = {
 
   /* ── 패널 ── */
   'panel.conversations': '대화 목록',
+  'panel.resetConversation': '현재 대화 초기화',
   'panel.empty.ready': '무엇을 도와드릴까요?',
   'panel.empty.readyBody':
     '설정한 Ollama 모델로 돕는 AI 조력자입니다. 기본값은 이 컴퓨터의 로컬 서버입니다.',
@@ -111,6 +112,10 @@ const ko = {
   'msg.generating': '응답 생성 중',
   'msg.coldStart': ' · 콜드 스타트',
   'msg.aborted': '여기서 중단했습니다.',
+  'msg.copy': '메시지 복사',
+  'msg.copyFailed': '복사하지 못했습니다. 다시 시도해 주세요.',
+  'msg.delete': '메시지 삭제',
+  'msg.deleteAfterGeneration': '작업이 끝나거나 중단한 뒤 삭제할 수 있습니다.',
 
   /* ── 페이지 첨부 ── */
   'page.method.readability': '본문',
@@ -273,12 +278,9 @@ const ko = {
   'opt.agent.turns': '최대 턴 수',
   'opt.agent.turnsVal': '{n}턴',
   'opt.agent.turnsDesc':
-    '한 턴에 약 25초가 걸리므로 최악의 경우 약 **{min}분**까지 돌 수 있습니다. 중간에 언제든 중단할 수 있습니다.',
-  'opt.agent.idle': '무응답 대기 한도',
-  'opt.agent.idleSec': '{n}초',
-  'opt.agent.idleSecRec': '{n}초 (권장)',
+    '한 턴을 25초로 계산하면 약 **{min}분**입니다. 모델과 입력에 따라 더 오래 걸릴 수 있으며 중간에 언제든 중단할 수 있습니다.',
   'opt.agent.idleDesc':
-    '한 턴이 이 시간 동안 아무것도 내놓지 못하면 멈춥니다. 글자가 나오는 동안에는 시간이 다시 초기화되므로, 느리게라도 답하고 있으면 끊기지 않습니다.',
+    'AI 답변은 시간 제한 없이 기다립니다. 모델 로딩이나 CPU 분석이 오래 걸려도 자동으로 중단하지 않으며, 중단 버튼으로 취소할 수 있습니다.',
 
   'opt.access.h': '페이지 접근',
   'opt.access.intro':
@@ -380,9 +382,9 @@ const en = {
   'err.oom.title': 'Not enough memory to load the model',
   'err.oom.body':
     'Reduce the context length (num_ctx) in settings, or close other memory-heavy programs and try again.',
-  'err.timeout.title': 'Stopped — no response came back',
+  'err.timeout.title': 'Request timed out',
   'err.timeout.body':
-    'This computer runs inference on the CPU, so long pages can be slow. Try a smaller page budget or shorter questions.',
+    'A server connection check or page operation did not finish in time. Check the server connection and current page, then try again.',
   'err.aborted.title': 'Stopped',
   'err.restricted.title': "This page's contents can't be read",
   'err.restricted.body':
@@ -409,6 +411,7 @@ const en = {
   'health.aboutSec': 'about {sec}s',
 
   'panel.conversations': 'Conversations',
+  'panel.resetConversation': 'Reset current conversation',
   'panel.empty.ready': 'How can I help?',
   'panel.empty.readyBody':
     'An AI aide using your configured Ollama model. The default is a local server on this computer.',
@@ -450,6 +453,10 @@ const en = {
   'msg.generating': 'Generating response',
   'msg.coldStart': ' · cold start',
   'msg.aborted': 'Stopped here.',
+  'msg.copy': 'Copy message',
+  'msg.copyFailed': 'Could not copy. Please try again.',
+  'msg.delete': 'Delete message',
+  'msg.deleteAfterGeneration': 'Stop or finish the current task before deleting.',
 
   'page.method.readability': 'Article',
   'page.method.innerText': 'Screen text',
@@ -606,12 +613,9 @@ const en = {
   'opt.agent.turns': 'Maximum turns',
   'opt.agent.turnsVal': '{n} turns',
   'opt.agent.turnsDesc':
-    'At about 25s per turn, the worst case runs for about **{min} minutes**. You can stop it at any point.',
-  'opt.agent.idle': 'Silence before giving up',
-  'opt.agent.idleSec': '{n}s',
-  'opt.agent.idleSecRec': '{n}s (recommended)',
+    'At 25s per turn, this is about **{min} minutes**. The model and input may take longer. You can stop it at any point.',
   'opt.agent.idleDesc':
-    'A turn stops if it produces nothing for this long. The clock resets while text is arriving, so a slow answer is never cut off.',
+    'AI responses have no time limit. Model loading and CPU processing can take as long as needed. Use Stop to cancel.',
 
   'opt.access.h': 'Page access',
   'opt.access.intro':

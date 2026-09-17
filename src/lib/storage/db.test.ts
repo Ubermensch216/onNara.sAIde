@@ -75,6 +75,18 @@ describe('findForTab', () => {
 
     expect((await findForTab(1, 'https://example.com/a'))?.id).toBe(recent);
   });
+
+  it('다른 페이지에서 대화한 뒤 돌아와도 해당 문서의 최신 대화를 찾는다', async () => {
+    const old = await createConversation(1, 'https://example.com/a', '이전 A');
+    const recent = await createConversation(1, 'https://example.com/a', '최근 A');
+    const other = await createConversation(1, 'https://example.com/b', 'B');
+    await db.conversations.update(old, { updatedAt: 100 });
+    await db.conversations.update(recent, { updatedAt: 200 });
+    await db.conversations.update(other, { updatedAt: 300 });
+
+    expect((await findForTab(1, 'https://example.com/a#list'))?.id).toBe(recent);
+    expect((await findForTab(1, 'https://example.com/b'))?.id).toBe(other);
+  });
 });
 
 describe('pruneEmptyConversations', () => {

@@ -31,7 +31,8 @@ import {
 } from '@/lib/prompts/presets';
 import { loadCustomPresets, onCustomPresetsChanged } from '@/lib/storage/presets';
 import { detectPageKind, kindHint, suggestedOrder } from '@/lib/extract/pagetype';
-import { requestAllUrls, requestCaptureAccess, requestHostAccess } from '@/lib/permissions';
+import { requestAllUrls, requestCaptureAccess, requestHostAccess, requestOriginsAccess } from '@/lib/permissions';
+import { runDownloadLink } from '@/lib/downloads/links';
 import { estimateTtfbSeconds } from '@/lib/storage/settings';
 import {
   loadSettings,
@@ -46,6 +47,7 @@ import { ApprovalCard } from './components/ApprovalCard';
 import { ErrorBanner } from './components/ErrorBanner';
 import { HealthBanner } from './components/HealthBanner';
 import { MessageList } from './components/MessageList';
+import { ResetIcon } from './components/ChatActionIcons';
 import { Composer } from './components/Composer';
 import { ConversationMenu } from './components/ConversationMenu';
 import { PageContextChip } from './components/PageContextChip';
@@ -145,7 +147,7 @@ export default function App() {
      *   onUpdated / onActivated는 새로고침이나 탭 왕복만으로도 여러 번 온다.
      *   그때마다 openForTab을 부르면 붙여 둔 페이지가 떨어져, 사용자는
      *   "방금 붙였는데 왜 없어졌지" 상태가 된다.
-     *   반대로 문서가 실제로 바뀌었으면 반드시 갈아끼워야 한다.
+     *   문서가 바뀌면 해당 세션을 표시하되, 숨겨진 세션의 작업은 계속된다.
      */
     const open = (t: TabSummary | null) => {
       if (!alive || !t || t.tabId < 0) return;
@@ -204,10 +206,7 @@ export default function App() {
   const queueRef = useRef<EmbedQueue | null>(null);
   useEffect(() => {
     const q = createEmbedQueue({
-      isBusy: () => {
-        const c = useChat.getState();
-        return c.streaming || c.extracting;
-      },
+      isBusy: () => useChat.isBusy(),
       getSettings: () => settingsRef.current,
       // 실패해도 화면에 띄우지 않는다. 사용자가 요청한 일이 아니라
       // 뒤에서 도는 일이라, 배너를 띄우면 방해만 된다.
@@ -431,9 +430,13 @@ export default function App() {
    */
   const handleErrorAction = (action: 'retry' | 'grant-host' | 'grant-all' | 'open-settings') => {
     switch (action) {
-      case 'grant-host':
-        if (tab) void requestHostAccess(tab.url).then((ok) => ok && chat.clearError());
+      case 'grant-host': {
+        // 본문 뷰어처럼 탭과 다른 주소가 필요하면 그 주소를 요청한다. 탭 주소는 이미 허용돼 있어 다시 요청해도 소용없다.
+        const origins = chat.error?.origins;
+        if (origins?.length) void requestOriginsAccess(tab ? [tab.url, ...origins] : origins).then((ok) => ok && chat.clearError());
+        else if (tab) void requestHostAccess(tab.url).then((ok) => ok && chat.clearError());
         break;
+      }
       case 'grant-all':
         void requestAllUrls().then((ok) => ok && chat.clearError());
         break;
@@ -489,6 +492,11 @@ export default function App() {
           <span className="conv-chip">{chat.conversation.title}</span>
         )}
         <div className="spacer" />
+        <button className="icon-btn" onClick={() => { setDraft(''); void chat.resetConversation(); }}
+          disabled={chat.loading || (!chat.messages.length && !chat.streaming && !chat.page && !chat.screenshot)}
+          title={t('panel.resetConversation')} aria-label={t('panel.resetConversation')}>
+          <ResetIcon />
+        </button>
         <button className="icon-btn" onClick={() => setMenuOpen(true)} title={t('panel.conversations')} aria-label={t('panel.conversations')}>
           <ListIcon />
         </button>
@@ -529,6 +537,13 @@ export default function App() {
             messages={chat.messages}
             dark={dark}
             showThinking={settings.thinkMode !== 'off'}
+            deleteDisabled={chat.streaming || chat.loading}
+            onDelete={chat.removeMessage}
+            onDownloadLink={(action, downloadId) => {
+              // 클릭 중 첫 동작으로 호출해야 chrome.downloads.open의 사용자 제스처 조건을 만족한다.
+              void runDownloadLink(action, downloadId).catch((error: unknown) =>
+                chat.setError({ code: 'UNKNOWN', message: error instanceof Error ? error.message : String(error) }));
+            }}
           />
         )}
       </main>
@@ -644,19 +659,9 @@ export default function App() {
           onPick={pickConversation}
           onClose={() => setMenuOpen(false)}
           onDeleted={(id) => {
+            useChat.forgetConversation(id);
             if (chat.conversation?.id === id) {
-              chat.stop();
-              // 현재 탭으로 다시 대기 상태에 들어간다 — 다음 메시지에서 새로 만든다.
-              useChat.setState({
-                conversation: null,
-                pending: tab ? { tabId: tab.tabId, url: tab.url } : null,
-                messages: [],
-                page: null,
-                screenshot: null,
-                lastContext: null,
-                agentSteps: [],
-                agentTurn: 0,
-              });
+              if (tab) void chat.openForTab(tab.tabId, tab.url);
             }
           }}
         />

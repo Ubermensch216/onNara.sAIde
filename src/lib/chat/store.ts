@@ -1,4 +1,6 @@
 import { abortable } from '@/lib/async';
+import { isAttachmentDownloadRequest } from '@/lib/onnara/attachments';
+import { downloadDocumentAttachments, formatAttachmentReport, releaseWorkTab } from '@/lib/onnara/download';
 /**
  * 채팅 상태. 계획서 §5 Phase 2–3
  *
@@ -9,7 +11,8 @@ import { abortable } from '@/lib/async';
  *   (MV3 워커는 30초 유휴에 죽으므로 장시간 스트리밍을 맡길 수 없다.)
  */
 
-import { create } from 'zustand';
+import { createStore } from 'zustand/vanilla';
+import { createChatSessions } from './sessions';
 import type { ChatMessage, PerfSample } from '@/types/ollama';
 import { streamChat } from '@/lib/ollama/stream';
 import { requireCapabilities } from '@/lib/ollama/client';
@@ -19,6 +22,7 @@ import {
   createConversation,
   db,
   deleteMessagesFrom,
+  deleteMessage,
   deleteConversation,
   findForTab,
   listMessages,
@@ -32,7 +36,7 @@ import {
   type AttachedPage,
   type Attachment,
 } from '@/lib/chat/context';
-import { sameDocument, sendToSW } from '@/lib/messaging/protocol';
+import { isRestrictedUrl, sameDocument, sendToSW } from '@/lib/messaging/protocol';
 import type { ApprovalRequest, AppError, ExtractedPage } from '@/lib/messaging/protocol';
 import type { Settings } from '@/lib/storage/settings';
 import { AGENT_TOOLS } from '@/lib/agent/tools';
@@ -60,7 +64,7 @@ export interface UiMessage extends Omit<StoredMessage, 'id'> {
   streaming?: boolean;
 }
 
-interface ChatState {
+export interface ChatState {
   conversation: Conversation | null;
   loading: boolean;
   /**
@@ -128,193 +132,238 @@ interface ChatState {
   /** 승인 카드의 응답. false면 실행하지 않는다. */
   resolveApproval: (approved: boolean) => void;
   regenerate: (settings: Settings) => Promise<void>;
+  removeMessage: (id: UiMessage['id']) => Promise<void>;
+  resetConversation: () => Promise<void>;
   stop: () => void;
   setError: (e: AppError | string | null) => void;
   clearError: () => void;
 }
 
-let viewEpoch = 0;
-let operationEpoch = 0;
-let attachmentEpoch = 0;
+interface SessionEpochs { view: number; operation: number; attachment: number }
 
-export const useChat = create<ChatState>((set, get) => ({
-  conversation: null,
-  loading: false,
-  pending: null,
-  messages: [],
-  page: null,
-  screenshot: null,
-  extracting: false,
-  currentUrl: '',
-  streaming: false,
-  startedAt: null,
-  expectedPrefillSec: 0,
-  error: null,
-  abort: null,
-  lastContext: null,
-  agentSteps: [],
-  agentTurn: 0,
-  pendingApproval: null,
+/** Each document owns its state and cancellation counters, even while hidden. */
+export function createChatSession() {
+  const epochs: SessionEpochs = { view: 0, operation: 0, attachment: 0 };
+  const tasks = new Set<Promise<void>>();
+  async function track(task: Promise<void>) {
+    tasks.add(task);
+    try { await task; } finally { tasks.delete(task); }
+  }
+  return createStore<ChatState>((set, get) => ({
+    conversation: null,
+    loading: false,
+    pending: null,
+    messages: [],
+    page: null,
+    screenshot: null,
+    extracting: false,
+    currentUrl: '',
+    streaming: false,
+    startedAt: null,
+    expectedPrefillSec: 0,
+    error: null,
+    abort: null,
+    lastContext: null,
+    agentSteps: [],
+    agentTurn: 0,
+    pendingApproval: null,
 
-  /** 탭별 세션 분리 (Phase 2-5). 탭이 바뀌면 그 탭의 대화로 갈아끼운다. */
-  async openForTab(tabId, url) {
-    get().stop();
-    const epoch = ++viewEpoch;
-    ++attachmentEpoch;
-    set({ loading: true, extracting: false, conversation: null, pending: null, messages: [], page: null, screenshot: null, currentUrl: url, error: null, lastContext: null, agentSteps: [] });
-    try {
-      const conversation = await findForTab(tabId, url);
-      const messages = conversation ? await listMessages(conversation.id) : [];
-      if (epoch === viewEpoch) set({ conversation, pending: conversation ? null : { tabId, url }, messages, loading: false });
-    } catch (error) { if (epoch === viewEpoch) set({ loading: false, error: toAppError(null, error) }); }
-  },
-  async openConversation(conversation) {
-    get().stop();
-    const epoch = ++viewEpoch;
-    ++attachmentEpoch;
-    set({ loading: true, extracting: false, page: null, screenshot: null, messages: [], pending: null, conversation: null, agentSteps: [], lastContext: null, error: null });
-    try {
-      const messages = await listMessages(conversation.id);
-      if (epoch === viewEpoch) set({ conversation, messages, loading: false });
-    } catch (error) { if (epoch === viewEpoch) set({ loading: false, error: toAppError(null, error) }); }
-  },
+    /** 탭별 세션 분리 (Phase 2-5). 탭이 바뀌면 그 탭의 대화로 갈아끼운다. */
+    async openForTab(tabId, url) {
+      get().stop();
+      const epoch = ++epochs.view;
+      ++epochs.attachment;
+      set({ loading: true, extracting: false, conversation: null, pending: null, messages: [], page: null, screenshot: null, currentUrl: url, error: null, lastContext: null, agentSteps: [] });
+      try {
+        const conversation = await findForTab(tabId, url);
+        const messages = conversation ? await listMessages(conversation.id) : [];
+        if (epoch === epochs.view) set({ conversation, pending: conversation ? null : { tabId, url }, messages, loading: false });
+      } catch (error) { if (epoch === epochs.view) set({ loading: false, error: toAppError(null, error) }); }
+    },
+    async openConversation(conversation) {
+      get().stop();
+      const epoch = ++epochs.view;
+      ++epochs.attachment;
+      set({ loading: true, extracting: false, page: null, screenshot: null, messages: [], pending: null, conversation: null, agentSteps: [], lastContext: null, error: null });
+      try {
+        const messages = await listMessages(conversation.id);
+        if (epoch === epochs.view) set({ conversation, messages, loading: false });
+      } catch (error) { if (epoch === epochs.view) set({ loading: false, error: toAppError(null, error) }); }
+    },
 
-  /**
-   * 현재 탭 본문을 추출해 대화에 붙인다.
-   *
-   * ★ 이미 같은 URL이 붙어 있으면 재추출하지 않는다(계획서 Phase 3-5).
-   *   재추출은 낭비일 뿐 아니라, 본문이 1바이트라도 달라지면 접두사가 바뀌어
-   *   KV 캐시가 통째로 무효화된다(프리필 183ms → 7,684ms).
-   */
-  async attachPage(tabId, settings, force = false) {
-    const current = get().page;
-    if (get().extracting || get().loading) return current;
-    const epoch = ++attachmentEpoch;
-    const expectedUrl = get().currentUrl;
+    /**
+     * 현재 탭 본문을 추출해 대화에 붙인다.
+     *
+     * ★ 이미 같은 URL이 붙어 있으면 재추출하지 않는다(계획서 Phase 3-5).
+     *   재추출은 낭비일 뿐 아니라, 본문이 1바이트라도 달라지면 접두사가 바뀌어
+     *   KV 캐시가 통째로 무효화된다(프리필 183ms → 7,684ms).
+     */
+    async attachPage(tabId, settings, force = false) {
+      const current = get().page;
+      if (get().extracting || get().loading) return current;
+      const epoch = ++epochs.attachment;
+      const expectedUrl = get().currentUrl;
 
-    set({ extracting: true, error: null });
-    try {
-      const res = await sendToSW({
-        type: 'EXTRACT_PAGE',
-        tabId,
-        budgetTokens: settings.pageTokenBudget,
-        control: { id: '', deadline: 0, expectedUrl: expectedUrl || undefined },
-      });
-      if (epoch !== attachmentEpoch) return null;
+      set({ extracting: true, error: null });
+      try {
+        const res = await sendToSW({
+          type: 'EXTRACT_PAGE',
+          tabId,
+          budgetTokens: settings.pageTokenBudget,
+          control: { id: '', deadline: 0, expectedUrl: expectedUrl || undefined },
+        });
+        if (epoch !== epochs.attachment) return null;
 
-      if (res.type === 'ERROR') {
-        set({ error: res.error });
+        if (res.type === 'ERROR') {
+          set({ error: res.error });
+          return null;
+        }
+        if (res.type !== 'PAGE_EXTRACTED') return null;
+
+        const page = res.payload;
+        // 같은 URL이면 기존 것을 유지해 접두사를 보존한다.
+        if (!force && current && current.url === page.url) return current;
+
+        set({ page, currentUrl: page.url, lastContext: null });
+        return page;
+      } catch (error) {
+        if (epoch === epochs.attachment) set({ error: toAppError(null, error) });
         return null;
+      } finally {
+        if (epoch === epochs.attachment) set({ extracting: false });
       }
-      if (res.type !== 'PAGE_EXTRACTED') return null;
+    },
 
-      const page = res.payload;
-      // 같은 URL이면 기존 것을 유지해 접두사를 보존한다.
-      if (!force && current && current.url === page.url) return current;
+    /**
+     * 현재 탭 화면을 캡처해 붙인다.
+     *
+     * 본문 추출이 실패하는 페이지(캔버스 앱, 대시보드, 차트)에서 특히 유용하다 —
+     * 실측 262토큰 / 프리필 4.5초로, 본문을 넣는 것보다 오히려 싸고 빠르다.
+     */
+    async attachScreenshot(tabId) {
+      if (get().extracting || get().loading) return get().screenshot;
+      const epoch = ++epochs.attachment;
+      const expectedUrl = get().currentUrl;
 
-      set({ page, currentUrl: page.url, lastContext: null });
-      return page;
-    } catch (error) {
-      if (epoch === attachmentEpoch) set({ error: toAppError(null, error) });
-      return null;
-    } finally {
-      if (epoch === attachmentEpoch) set({ extracting: false });
-    }
-  },
+      set({ extracting: true, error: null });
+      try {
+        const res = await sendToSW({ type: 'CAPTURE_SCREENSHOT', tabId, control: { id: '', deadline: 0, expectedUrl: expectedUrl || undefined } });
+        if (epoch !== epochs.attachment) return null;
+        if (res.type === 'ERROR') {
+          set({ error: res.error });
+          return null;
+        }
+        if (res.type !== 'SCREENSHOT') return null;
 
-  /**
-   * 현재 탭 화면을 캡처해 붙인다.
-   *
-   * 본문 추출이 실패하는 페이지(캔버스 앱, 대시보드, 차트)에서 특히 유용하다 —
-   * 실측 262토큰 / 프리필 4.5초로, 본문을 넣는 것보다 오히려 싸고 빠르다.
-   */
-  async attachScreenshot(tabId) {
-    if (get().extracting || get().loading) return get().screenshot;
-    const epoch = ++attachmentEpoch;
-    const expectedUrl = get().currentUrl;
-
-    set({ extracting: true, error: null });
-    try {
-      const res = await sendToSW({ type: 'CAPTURE_SCREENSHOT', tabId, control: { id: '', deadline: 0, expectedUrl: expectedUrl || undefined } });
-      if (epoch !== attachmentEpoch) return null;
-      if (res.type === 'ERROR') {
-        set({ error: res.error });
+        // Ollama의 images 필드는 순수 base64를 받는다. data: 프리픽스를 떼어낸다.
+        const base64 = res.dataUrl.replace(/^data:image\/\w+;base64,/, '');
+        set({ screenshot: base64, lastContext: null });
+        return base64;
+      } catch (error) {
+        if (epoch === epochs.attachment) set({ error: toAppError(null, error) });
         return null;
+      } finally {
+        if (epoch === epochs.attachment) set({ extracting: false });
       }
-      if (res.type !== 'SCREENSHOT') return null;
+    },
 
-      // Ollama의 images 필드는 순수 base64를 받는다. data: 프리픽스를 떼어낸다.
-      const base64 = res.dataUrl.replace(/^data:image\/\w+;base64,/, '');
-      set({ screenshot: base64, lastContext: null });
-      return base64;
-    } catch (error) {
-      if (epoch === attachmentEpoch) set({ error: toAppError(null, error) });
-      return null;
-    } finally {
-      if (epoch === attachmentEpoch) set({ extracting: false });
-    }
-  },
+    detachPage: () => { ++epochs.attachment; set({ page: null, lastContext: null, extracting: false }); },
+    detachScreenshot: () => { ++epochs.attachment; set({ screenshot: null, lastContext: null, extracting: false }); },
 
-  detachPage: () => { ++attachmentEpoch; set({ page: null, lastContext: null, extracting: false }); },
-  detachScreenshot: () => { ++attachmentEpoch; set({ screenshot: null, lastContext: null, extracting: false }); },
+    async send(text, settings) {
+      await track(submit(set, get, text, settings, epochs));
+    },
+    async sendAgent(text, settings, tab) {
+      await track(submit(set, get, text, settings, epochs, tab));
+    },
 
-  async send(text, settings) {
-    await submit(set, get, text, settings);
-  },
-  async sendAgent(text, settings, tab) {
-    await submit(set, get, text, settings, tab);
-  },
-
-  resolveApproval(approved) {
-    const pending = get().pendingApproval;
-    if (!pending) return;
-    set({ pendingApproval: null });
-    pending.resolve(approved);
-  },
-
-  /** 재생성: 마지막 assistant 응답을 걷어내고 같은 입력으로 다시 돌린다. */
-  async regenerate(settings) {
-    if (get().streaming || get().loading) return;
-    const conv = get().conversation;
-    const msgs = get().messages;
-    const index = findLastIndex(msgs, m => m.role === 'assistant');
-    if (!conv || index < 0) return;
-    const epoch = ++operationEpoch;
-    set({ streaming: true, abort: new AbortController() });
-    const ownSet = guardedSet(set, () => epoch === operationEpoch);
-    try {
-      await requireCapabilities(settings.endpoint, settings.model, get().screenshot ? ['vision'] : [], get().abort?.signal);
-      if (epoch !== operationEpoch) return;
-      await deleteMessagesFrom(conv.id, msgs[index]!.createdAt);
-      if (epoch !== operationEpoch) return;
-      ownSet({ messages: msgs.slice(0, index) });
-      await runGeneration(ownSet, get, settings);
-    } catch (error) { ownSet({ error: toAppError(null, error) }); }
-    finally { ownSet({ streaming: false, abort: null }); }
-  },
-
-  stop() {
-    ++operationEpoch;
-    // 승인 대기 중에 중단을 누르면 그 동작은 거부로 처리한다.
-    // 대기 중인 Promise를 남겨 두면 루프가 영원히 멈춰 있게 된다.
-    const pending = get().pendingApproval;
-    if (pending) {
+    resolveApproval(approved) {
+      const pending = get().pendingApproval;
+      if (!pending) return;
       set({ pendingApproval: null });
-      pending.resolve(false);
-    }
+      pending.resolve(approved);
+    },
 
-    const { abort } = get();
-    abort?.abort();
-    set(s => ({ abort: null, streaming: false, startedAt: null, agentTurn: 0,
-      messages: s.messages.filter(m => !m.streaming || m.content || m.thinking).map(m => m.streaming ? { ...m, streaming: false, aborted: true } : m),
-    }));
-  },
+    async removeMessage(id) {
+      const { conversation, streaming, loading } = get();
+      if (!conversation || streaming || loading) return;
+      if (!get().messages.some(message => message.id === id)) return;
+      set({ loading: true, error: null });
+      try {
+        // A stopped response can still be committing its partial answer.
+        await Promise.allSettled([...tasks]);
+        await deleteMessage(conversation.id, id);
+        set(state => ({ messages: state.messages.filter(message => message.id !== id), lastContext: null }));
+      } catch (error) { set({ error: toAppError(null, error) }); }
+      finally { set({ loading: false }); }
+    },
 
-  // 문자열로 넘어온 것은 분류되지 않은 오류다. 코드만 씌워 형태를 맞춘다.
-  setError: (e) =>
-    set({ error: typeof e === 'string' ? { code: 'UNKNOWN', message: e } : e }),
-  clearError: () => set({ error: null }),
-}));
+    async resetConversation() {
+      if (get().loading) return;
+      const { conversation, pending } = get();
+      get().stop();
+      ++epochs.attachment;
+      set({ loading: true, extracting: false, documentProgress: null, error: null });
+      try {
+        // Removing the record also rejects late writes from the cancelled request.
+        if (conversation) await deleteConversation(conversation.id);
+        set({ conversation: null,
+          pending: conversation ? { tabId: conversation.tabId, url: conversation.originUrl } : pending,
+          messages: [], page: null, screenshot: null, lastContext: null,
+          agentSteps: [], agentTurn: 0, expectedPrefillSec: 0,
+        });
+      } catch (error) { set({ error: toAppError(null, error) }); }
+      finally { set({ loading: false }); }
+    },
+
+    /** 재생성: 마지막 assistant 응답을 걷어내고 같은 입력으로 다시 돌린다. */
+    async regenerate(settings) {
+      await track((async () => {
+        if (get().streaming || get().loading) return;
+        const conv = get().conversation;
+        const msgs = get().messages;
+        const index = findLastIndex(msgs, m => m.role === 'assistant');
+        if (!conv || index < 0) return;
+        const epoch = ++epochs.operation;
+        set({ streaming: true, abort: new AbortController() });
+        const ownSet = guardedSet(set, () => epoch === epochs.operation);
+        try {
+          await requireCapabilities(settings.endpoint, settings.model, get().screenshot ? ['vision'] : [], get().abort?.signal);
+          if (epoch !== epochs.operation) return;
+          await deleteMessagesFrom(conv.id, msgs[index]!.createdAt);
+          if (epoch !== epochs.operation) return;
+          ownSet({ messages: msgs.slice(0, index) });
+          await runGeneration(ownSet, get, settings);
+        } catch (error) { ownSet({ error: toAppError(null, error) }); }
+        finally { ownSet({ streaming: false, abort: null }); }
+      })());
+    },
+
+    stop() {
+      ++epochs.operation;
+      // 승인 대기 중에 중단을 누르면 그 동작은 거부로 처리한다.
+      // 대기 중인 Promise를 남겨 두면 루프가 영원히 멈춰 있게 된다.
+      const pending = get().pendingApproval;
+      if (pending) {
+        set({ pendingApproval: null });
+        pending.resolve(false);
+      }
+
+      const { abort } = get();
+      abort?.abort();
+      set(s => ({ abort: null, streaming: false, startedAt: null, agentTurn: 0,
+        messages: s.messages.filter(m => !m.streaming || m.content || m.thinking).map(m => m.streaming ? { ...m, streaming: false, aborted: true } : m),
+      }));
+    },
+
+    // 문자열로 넘어온 것은 분류되지 않은 오류다. 코드만 씌워 형태를 맞춘다.
+    setError: (e) =>
+      set({ error: typeof e === 'string' ? { code: 'UNKNOWN', message: e } : e }),
+    clearError: () => set({ error: null }),
+  }));
+}
+
+export const useChat = createChatSessions(createChatSession);
 
 /* ── 생성 루프 ─────────────────────────────────────────── */
 
@@ -327,11 +376,11 @@ function guardedSet(set: Set, owns: () => boolean): Set {
   return patch => { if (owns()) set(patch); };
 }
 
-async function submit(set: Set, get: Get, text: string, settings: Settings, tab?: AgentTab) {
+async function submit(set: Set, get: Get, text: string, settings: Settings, epochs: SessionEpochs, tab?: AgentTab) {
   const trimmed = text.trim();
   if (!trimmed || get().streaming || get().loading) return;
-  const epoch = ++operationEpoch;
-  const owns = () => epoch === operationEpoch;
+  const epoch = ++epochs.operation;
+  const owns = () => epoch === epochs.operation;
   const ownSet = guardedSet(set, owns);
   ownSet({ streaming: true, startedAt: Date.now(), abort: new AbortController(), error: null });
   try {
@@ -342,9 +391,31 @@ async function submit(set: Set, get: Get, text: string, settings: Settings, tab?
     if (!owns()) return;
     ownSet(s => ({ messages: [...s.messages, { ...userMsg, id }] }));
 
-    await refreshDocumentListIfRequested(get, text, settings);
+    const pageTabId = await resolvePageTab(ownSet, get);
     if (!owns()) return;
-    if (!await prepareDocumentSummary(ownSet, get, text, settings) || !owns()) return;
+
+    const report = async (content: string) => {
+      if (!owns() || get().abort?.signal.aborted) return;
+      const message = { conversationId: conv.id, role: 'assistant' as const, content, createdAt: Date.now() };
+      const reportId = await addMessage(message);
+      ownSet(s => ({ messages: [...s.messages, { ...message, id: reportId }] }));
+    };
+    // "요약하고 첨부도 받아줘"처럼 둘 다 요청하면 다운로드만 하고 끝내지 않는다. 요약 경로에서 문서마다 함께 처리한다.
+    const wantsDownload = isAttachmentDownloadRequest(trimmed);
+    const withAttachments = wantsDownload && isDocumentSummaryRequest(trimmed);
+    if (wantsDownload && !withAttachments) {
+      const signal = get().abort!.signal;
+      if (pageTabId === null) { ownSet({ error: TAB_MISSING_ERROR }); return; }
+      const page = await get().attachPage(pageTabId, settings, true);
+      if (!page || !owns() || signal.aborted) return;
+      await downloadDocumentAttachments({ tabId: pageTabId, page, prompt: trimmed, signal,
+        progress: documentProgress => ownSet({ documentProgress }), report });
+      return;
+    }
+
+    await refreshDocumentListIfRequested(get, text, settings, pageTabId);
+    if (!owns()) return;
+    if (!await prepareDocumentSummary(ownSet, get, text, settings, epochs, pageTabId, withAttachments ? report : undefined) || !owns()) return;
 
     const localAnswer = buildDocumentTitleTable(trimmed, get().page?.structuredData);
     if (localAnswer) {
@@ -368,11 +439,45 @@ async function submit(set: Set, get: Get, text: string, settings: Settings, tab?
   finally { ownSet({ streaming: false, abort: null, startedAt: null, documentProgress: null }); }
 }
 
-async function refreshDocumentListIfRequested(get: Get, text: string, settings: Settings): Promise<void> {
-  if (!isDocumentListTableRequest(text)) return;
+const TAB_MISSING_ERROR: AppError = {
+  code: 'UNKNOWN',
+  message: '이 대화가 연결된 탭을 찾을 수 없습니다.',
+  hint: '온나라 문서 목록이나 문서 화면을 연 탭에서 사이드패널을 열고 다시 요청하세요.',
+};
+
+/**
+ * 페이지를 읽을 실제 탭을 정한다.
+ *
+ * ★ 대화에 저장된 tabId는 영구적이지 않다. 브라우저를 다시 켜거나 탭을 닫은 뒤
+ *   대화 기록에서 대화를 다시 열면 그 id의 탭은 더 이상 없다. 그 id로 요청하면
+ *   서비스 워커가 탭을 찾지 못해 읽기에 실패한다. 저장된 탭이 사라졌으면 지금
+ *   사용자가 보고 있는 탭으로 대화를 다시 연결한다.
+ */
+export async function resolvePageTab(set: Set, get: Get): Promise<number | null> {
   const state = get();
-  const tabId = state.conversation?.tabId ?? state.pending?.tabId;
-  if (typeof tabId === 'number' && tabId >= 0) await state.attachPage(tabId, settings, true);
+  const stored = state.conversation?.tabId ?? state.pending?.tabId;
+  const valid = typeof stored === 'number' && stored >= 0;
+  // 탭 API가 없는 환경(테스트 등)에서는 저장된 값을 그대로 쓴다.
+  if (typeof chrome === 'undefined' || !chrome.tabs?.get || !chrome.tabs?.query) return valid ? stored : null;
+  if (valid && await chrome.tabs.get(stored).then(tab => !!tab, () => false)) return stored;
+
+  const [active] = await chrome.tabs.query({ active: true, currentWindow: true }).catch(() => [] as chrome.tabs.Tab[]);
+  if (typeof active?.id !== 'number' || active.id < 0 || isRestrictedUrl(active.url)) return null;
+  const tabId = active.id;
+  const url = active.url ?? '';
+  const conversation = get().conversation;
+  if (conversation) {
+    await db.conversations.update(conversation.id, { tabId });
+    set({ conversation: { ...conversation, tabId }, currentUrl: url });
+  } else if (state.pending) {
+    set({ pending: { ...state.pending, tabId }, currentUrl: url });
+  }
+  return tabId;
+}
+
+async function refreshDocumentListIfRequested(get: Get, text: string, settings: Settings, tabId: number | null): Promise<void> {
+  if (!isDocumentListTableRequest(text)) return;
+  if (tabId !== null) await get().attachPage(tabId, settings, true);
 }
 
 async function prepareDocumentSummary(
@@ -380,20 +485,30 @@ async function prepareDocumentSummary(
   get: Get,
   text: string,
   settings: Settings,
+  epochs: SessionEpochs,
+  tabId: number | null,
+  /** 있으면 요약과 함께 첨부도 받고 그 결과를 이 함수로 답변에 남긴다. */
+  reportAttachments?: (content: string) => Promise<void>,
 ): Promise<boolean> {
   if (!isDocumentSummaryRequest(text)) return true;
+  if (tabId === null) { set({ error: TAB_MISSING_ERROR }); return false; }
   const state = get();
-  const tabId = state.conversation?.tabId ?? state.pending?.tabId;
-  if (typeof tabId !== 'number' || tabId < 0) return true;
   const signal = state.abort?.signal;
-  const view = viewEpoch;
+  const view = epochs.view;
 
   const listPage = await state.attachPage(tabId, settings, true);
-  if (signal?.aborted || view !== viewEpoch) return false;
+  if (signal?.aborted || view !== epochs.view) return false;
   if (!listPage) return false;
   const list = listPage?.structuredData;
-  // 일반 웹 문서의 요약 요청은 기존 페이지 요약 경로에 맡긴다.
-  if (!list) return true;
+  // 일반 웹 문서(또는 이미 연 상세 화면)의 요약 요청은 기존 페이지 요약 경로에 맡긴다. 첨부는 지금 화면에서 먼저 받는다.
+  if (!list) {
+    if (reportAttachments && signal) {
+      await downloadDocumentAttachments({ tabId, page: listPage, prompt: text, signal,
+        progress: documentProgress => set({ documentProgress }), report: reportAttachments });
+      if (signal.aborted || view !== epochs.view) return false;
+    }
+    return true;
+  }
 
   const match = matchDocumentTitle(text, list);
   const titles = requestedDocumentTitles(text, list);
@@ -411,24 +526,38 @@ async function prepareDocumentSummary(
     return false;
   }
 
-  const epoch = ++attachmentEpoch;
+  const epoch = ++epochs.attachment;
   set({ extracting: true, error: null });
   const controller = state.abort;
   const failures: string[] = [];
+  // 문서 사이에도 중단 버튼과 진행 표시를 유지하려고 생성 중 상태를 붙잡아 둔다.
+  // 배치가 끝난 뒤 도착하는 늦은 갱신(표시 지연 타이머 등)까지 붙잡으면 패널이 영원히 "읽는 중"으로 남는다.
+  let batching = true;
+  const withAttachments = Boolean(reportAttachments);
+  // 첨부를 함께 받으면 한 건이어도 문서별 보고가 필요하므로 배치 경로로 처리한다.
+  const batch = titles.length > 1 || withAttachments;
+  // 여러 문서는 복제한 목록 탭 하나를 끝까지 재사용한다(문서마다 목록 복원을 반복하지 않는다).
+  const keepWorkTab = titles.length > 1;
   try {
     for (const [index, title] of titles.entries()) {
-    if (signal?.aborted || epoch !== attachmentEpoch) return false;
-    set({ extracting: true, streaming: true, abort: controller, documentProgress: `${index + 1}/${titles.length} 문서 읽는 중 · ${title} (현재 목록 기준)` });
+    if (signal?.aborted || epoch !== epochs.attachment) return false;
+    set({ extracting: true, streaming: true, startedAt: Date.now(), expectedPrefillSec: 0, abort: controller, documentProgress: `${index + 1}/${titles.length}번째 문서 본문을 읽는 중 · ${title}` });
     const response = await sendToSW({
       type: 'READ_DOCUMENT',
       tabId,
       title,
-      budgetTokens: Math.min(settings.pageTokenBudget, 2000),
+      budgetTokens: settings.pageTokenBudget,
+      ...(withAttachments ? { withAttachments } : {}),
+      ...(keepWorkTab ? { keepWorkTab } : {}),
       control: { id: '', deadline: 0, expectedUrl: state.currentUrl || undefined },
-    }, signal, 120_000);
-    if (epoch !== attachmentEpoch || signal?.aborted) return false;
+    }, signal, withAttachments ? 170_000 : 120_000);
+    if (epoch !== epochs.attachment || signal?.aborted) return false;
     if (response.type === 'ERROR') {
-      if (titles.length === 1) { set({ error: response.error }); return false; }
+      // 권한 문제는 나머지 문서도 똑같이 실패한다. 계속 돌리지 않고 바로 멈춰 권한 허용 버튼을 보여 준다.
+      if (titles.length === 1 || response.error.code === 'HOST_PERMISSION_REQUIRED') {
+        set({ error: failures.length ? { ...response.error, hint: `${response.error.hint ?? ''} 앞서 실패한 문서: ${failures.join(' / ')}`.trim() } : response.error });
+        return false;
+      }
       failures.push(`${title}: ${response.error.message}`);
       continue;
     }
@@ -437,31 +566,55 @@ async function prepareDocumentSummary(
       return false;
     }
     set({ page: { ...response.payload, title }, screenshot: null, lastContext: null });
-    if (titles.length > 1) {
-      set({ extracting: false, documentProgress: `${index + 1}/${titles.length} 문서 요약 중 · ${title} (CPU에서는 수 분 걸릴 수 있습니다)` });
-      const batchGet: Get = () => ({ ...get(), messages: get().messages.filter(message => message.role === 'user').slice(-1).map(message => ({ ...message, content: `현재 목록 중 이번에 읽은 문서 '${title}' 한 건만 요약하세요. 첫 줄에 문서 제목을 표시하고 핵심 내용, 요청 사항, 기한을 정리하세요. 본문에 없는 내용은 추측하지 마세요. 사용자 요청: ${text}` })) });
+    if (batch) {
+      set({ extracting: false, documentProgress: `${index + 1}/${titles.length}번째 문서 · AI가 읽은 내용을 분석하고 요약하는 중입니다. CPU에서는 수 분 걸릴 수 있습니다.` });
+      const batchGet: Get = () => ({ ...get(), messages: get().messages.filter(message => message.role === 'user').slice(-1).map(message => ({ ...message, content: documentBatchInstruction(title, text, withAttachments) })) });
       // 한 문서씩 생성해 여러 본문을 CPU 모델에 한꺼번에 넣지 않는다.
       const batchSet: Set = patch => set(current => ({
         ...(typeof patch === 'function' ? patch(current) : patch),
-        streaming: true, abort: controller,
+        ...(batching ? { streaming: true, abort: controller } : {}),
       }));
       await runGeneration(batchSet, batchGet, { ...settings, thinkMode: 'off' });
       if (signal?.aborted) return false;
       if (get().error) failures.push(`${title}: ${get().error!.message}`);
+      // 요약 바로 아래에 같은 문서의 첨부 다운로드 결과를 남긴다.
+      if (reportAttachments) await reportAttachments(formatAttachmentReport(title, { results: response.attachments, error: response.attachmentError }));
     }
     }
     if (failures.length) set({ error: { code: 'UNKNOWN', message: `일부 문서를 처리하지 못했습니다.\n${failures.join('\n')}` } });
-    if (titles.length > 1) return false;
-    set({ documentProgress: '문서 요약 중 · CPU에서는 수 분 걸릴 수 있습니다.' });
+    if (batch) return false;
+    set({ documentProgress: '1/1번째 문서 · AI가 읽은 내용을 분석하고 요약하는 중입니다. CPU에서는 수 분 걸릴 수 있습니다.' });
     return true;
   } catch (error) {
-    if (epoch === attachmentEpoch && !signal?.aborted) set({ error: error instanceof Error && error.name === 'TimeoutError'
+    if (epoch === epochs.attachment && !signal?.aborted) set({ error: error instanceof Error && error.name === 'TimeoutError'
       ? { code: 'UNKNOWN', message: '문서 화면 읽기가 120초 안에 완료되지 않았습니다. AI 생성 전 단계의 시간 초과입니다.', hint: '복제 탭에서 원래 문서 목록이 복원되는지, 상세 본문이 표시되는지 확인이 필요합니다.' }
       : toAppError(null, error) });
     return false;
   } finally {
-    if (epoch === attachmentEpoch) set({ extracting: false });
+    batching = false;
+    if (keepWorkTab) void releaseWorkTab(tabId);
+    if (epoch === epochs.attachment) set({ extracting: false });
   }
+}
+
+/**
+ * 여러 문서를 한 건씩 요약할 때 모델에 보내는 요청.
+ *
+ * ★ 항목(핵심 내용·요청 사항·기한 등)을 미리 정해 두지 않는다. 틀을 주면 작은
+ *   모델은 본문을 읽기보다 칸을 채우려 하고, 알림·보고·회의록처럼 틀에 맞지 않는
+ *   문서마다 "명시되어 있지 않습니다"만 늘어놓는다. 형식은 사용자 요청과 문서
+ *   자체의 구성을 따르게 한다.
+ */
+export function documentBatchInstruction(title: string, request: string, attachmentsHandled = false): string {
+  return [
+    `첨부된 페이지 내용은 문서 '${title}'의 상세 화면이다. 이 문서 한 건의 본문을 직접 읽고 사용자 요청에 답하라.`,
+    '첫 줄에 문서 제목을 쓰고, 이어서 본문에 실제로 적힌 내용을 문서의 구성에 맞게 정리하라.',
+    '정해진 항목을 채우려 하지 말고, 본문에 없는 항목은 언급하지 마라.',
+    '화면에 메뉴·버튼·첨부 목록만 있고 본문을 찾을 수 없으면 그렇게 밝혀라.',
+    // 다운로드 요청까지 모델에 그대로 넘기면 "다운로드 기능이 없다"고 답한다. 실제 다운로드는 앱이 따로 하고 결과를 아래에 붙인다.
+    ...(attachmentsHandled ? ['첨부 파일 다운로드는 앱이 이미 처리해 결과를 따로 보여 준다. 다운로드에 대해서는 아무것도 쓰지 말고 문서 내용 요약만 하라.'] : []),
+    `사용자 요청: ${request}`,
+  ].join('\n');
 }
 
 /**
@@ -586,15 +739,16 @@ async function runGeneration(set: Set, get: Get, settings: Settings) {
     }));
 
   // 토큰마다 React를 돌리면 프레임을 놓친다. 60ms 단위로 묶는다.
-  let pending = false;
+  let pending: ReturnType<typeof setTimeout> | undefined;
   const schedule = () => {
     if (pending) return;
-    pending = true;
-    setTimeout(() => {
-      pending = false;
+    pending = setTimeout(() => {
+      pending = undefined;
       flush();
     }, 60);
   };
+  // 응답이 끝난 뒤 남은 지연 갱신이 완료 상태를 덮어쓰지 않게 한다.
+  const cancelScheduled = () => { clearTimeout(pending); pending = undefined; };
 
   // 페이지를 처음 붙인 턴에만 절단 고지를 메시지에 남긴다.
   // 조용히 넘어가지 않는다 — 페이지 없이 답한 사실을 반드시 알린다.
@@ -633,10 +787,12 @@ async function runGeneration(set: Set, get: Get, settings: Settings) {
     ), abort.signal);
     abort.signal.throwIfAborted();
 
+    cancelScheduled();
     flush();
 
     const id = await addMessage({
       conversationId: conv.id,
+      clientId: String(placeholder.id),
       role: 'assistant',
       content,
       thinking: thinking || undefined,
@@ -668,11 +824,13 @@ async function runGeneration(set: Set, get: Get, settings: Settings) {
   } catch (e) {
     const err = e instanceof OllamaError ? e : null;
     const aborted = err?.code === 'ABORTED' || abort.signal.aborted;
+    cancelScheduled();
 
     // 중단은 오류가 아니다. 여기까지 받은 내용은 살려서 저장한다.
     if (aborted && content) {
       const id = await addMessage({
         conversationId: conv.id,
+        clientId: String(placeholder.id),
         role: 'assistant',
         content,
         thinking: thinking || undefined,
@@ -844,7 +1002,6 @@ async function runAgent(set: Set, get: Get, settings: Settings, tab: AgentTab) {
       },
       {
         maxTurns: settings.agentMaxTurns,
-        idleTimeoutMs: settings.agentIdleTimeoutMs,
         signal: abort.signal,
       },
     );
@@ -858,6 +1015,7 @@ async function runAgent(set: Set, get: Get, settings: Settings, tab: AgentTab) {
 
     const id = await addMessage({
       conversationId: conv.id,
+      clientId: String(placeholder.id),
       role: 'assistant',
       content,
       thinking: thinking || undefined,

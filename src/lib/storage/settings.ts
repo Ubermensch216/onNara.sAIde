@@ -41,11 +41,6 @@ export interface Settings {
   agentEnabled: boolean;
   /** 루프 턴 상한. 이 하드웨어에서 1턴 약 25초라 8턴이면 최악 3분이다. */
   agentMaxTurns: number;
-  /**
-   * 한 턴이 이만큼 아무것도 내놓지 못하면 중단(밀리초).
-   * ★ 총 턴 시간이 아니라 **무응답 시간**이다 — loop.ts 머리말 참조.
-   */
-  agentIdleTimeoutMs: number;
 
   /** Phase 6. 방문 페이지 임베딩 저장 여부 — 기본 꺼짐(옵트인). */
   memoryEnabled: boolean;
@@ -74,7 +69,6 @@ export const DEFAULT_SETTINGS: Settings = {
 
   agentEnabled: true,
   agentMaxTurns: 8,
-  agentIdleTimeoutMs: 30_000,
 
   memoryEnabled: false,
   memoryExcludedDomains: [],
@@ -103,7 +97,8 @@ export function normalizeSettings(input: unknown): Settings {
       if (['http:', 'https:'].includes(url.protocol) && !url.username && !url.password && !url.search && !url.hash) next.endpoint = url.href.replace(/\/+$/, '');
     } catch { /* damaged settings use a safe default */ }
   }
-  const ranges = { temperature: [0, 1.5], numCtx: [2048, 32768], pageTokenBudget: [500, 8000], agentMaxTurns: [2, 12], agentIdleTimeoutMs: [20000, 120000], memoryRetentionDays: [0, 3650] };
+  // 이전 버전의 agentIdleTimeoutMs 저장값은 읽지 않는다. LLM 응답은 무기한 대기한다.
+  const ranges = { temperature: [0, 1.5], numCtx: [2048, 32768], pageTokenBudget: [500, 8000], agentMaxTurns: [2, 12], memoryRetentionDays: [0, 3650] };
   for (const [key, [min, max]] of Object.entries(ranges)) {
     const value = raw[key as keyof Settings];
     if (typeof value === 'number' && Number.isFinite(value)) Object.assign(next, { [key]: Math.min(max!, Math.max(min!, key === 'temperature' ? value : Math.round(value))) });

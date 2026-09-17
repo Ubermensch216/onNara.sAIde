@@ -122,7 +122,8 @@ export function presentError(e: AppError, model = ''): ErrorPresentation {
         ...base,
         severity: 'blocked',
         title: t('err.hostPerm.title'),
-        body: t('err.hostPerm.body'),
+        // 다른 주소의 권한이 필요하면 어떤 주소인지 보여 준다. 기본 문구만으로는 이미 허용한 사이트와 구분되지 않는다.
+        body: e.origins?.length ? `${e.message} ${e.hint ?? ''}`.trim() : t('err.hostPerm.body'),
         action: 'grant-host',
         actionLabel: t('ui.grantPermission'),
       };

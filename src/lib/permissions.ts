@@ -59,6 +59,20 @@ export async function requestHostAccess(url: string): Promise<boolean> {
   }
 }
 
+/**
+ * 여러 주소의 접근 권한을 한 번의 대화상자로 요청한다.
+ * 문서 본문이 목록과 다른 호스트(전용 뷰어 등)에 있을 때 쓴다. requestHostAccess와 같이 클릭 핸들러의 첫 동작이어야 한다.
+ */
+export async function requestOriginsAccess(urls: string[]): Promise<boolean> {
+  const origins = [...new Set(urls.map(originPatternFor).filter((pattern): pattern is string => Boolean(pattern)))];
+  if (!origins.length) return false;
+  try {
+    return await chrome.permissions.request({ origins });
+  } catch {
+    return false;
+  }
+}
+
 /** 모든 사이트 접근을 한 번에 허용받는다(설정 화면의 선택지). */
 export async function requestAllUrls(): Promise<boolean> {
   try {

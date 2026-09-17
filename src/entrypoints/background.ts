@@ -1,6 +1,9 @@
 import { assertCurrent, captureTab, trustedPanel, validPanelRequest } from '@/lib/browser/guards';
-import { duplicateWorkTab, panelTab, workTabs } from '@/lib/browser/work-tabs';
-import type { AppError, ExtractedPage, RequestControl, SWToContent } from '@/lib/messaging/protocol';
+import { committedSince, duplicateWorkTab, forgetWorkTab, panelTab, registerWorkTabListeners, tabsSpawnedBy, workTabs } from '@/lib/browser/work-tabs';
+import type { AppError, AttachmentDownloadResult, ExtractedPage, RequestControl, SWToContent } from '@/lib/messaging/protocol';
+import { sameDocumentTitle } from '@/lib/onnara/document-list';
+import { fitToBudget } from '@/lib/extract/budget';
+import type { DocumentListLocation } from '@/lib/onnara/document-navigation';
 /**
  * Service Worker — 계획서 §3 설계 결정 ①
  *
@@ -42,6 +45,9 @@ export default defineBackground(() => {
   chrome.runtime.onInstalled.addListener(() => {
     registerContextMenus();
   });
+
+  // 작업 탭이 새 창으로 띄운 문서 팝업을 추적한다. 서비스 워커가 깨어날 때마다 최상위에서 등록해야 한다.
+  registerWorkTabListeners();
 
   chrome.runtime.onMessage.addListener((msg: unknown, sender, sendResponse) => {
     if (!trustedPanel(sender)) return false;
@@ -141,6 +147,15 @@ export async function handlePanelMessage(msg: PanelToSW): Promise<SWToPanel> {
   const control = msg.control!;
   const isCancelled = () => cancelled.has(control?.id);
   switch (msg.type) {
+    case 'DOWNLOAD_ATTACHMENTS': {
+      if (msg.title) {
+        return readDocumentInBackground(msg.tabId, msg.title, 1000, control,
+          target => downloadAttachmentsInTab(target.tabId, target.control), { keepWorkTab: msg.keepWorkTab });
+      }
+      const tab = await chrome.tabs.get(msg.tabId);
+      assertCurrent(control, tab.url ?? '', isCancelled());
+      return downloadAttachmentsInTab(msg.tabId, control);
+    }
     case 'GET_ACTIVE_TAB': {
       const tab = await activeTab();
       return { type: 'ACTIVE_TAB', tab: tab ? toSummary(tab) : null };
@@ -162,8 +177,25 @@ export async function handlePanelMessage(msg: PanelToSW): Promise<SWToPanel> {
       return { type: 'ERROR', error: { code: 'UNKNOWN', message: t('sw.extractFailed') } };
     }
 
-    case 'READ_DOCUMENT':
-      return readDocumentInBackground(msg.tabId, msg.title, msg.budgetTokens, control);
+    case 'READ_DOCUMENT': {
+      const title = msg.title;
+      // 본문을 읽은 그 상세 화면에서 첨부까지 받는다. 문서를 두 번 열면 목록 복원 실패 위험도 두 배가 된다.
+      const withAttachments = msg.withAttachments
+        ? async (target: DetailTarget): Promise<SWToPanel> => {
+            const downloaded = await downloadAttachmentsInTab(target.tabId, target.control);
+            return {
+              type: 'DOCUMENT_READ', requestedTitle: title, payload: target.payload,
+              ...(downloaded.type === 'ATTACHMENTS_DOWNLOADED' ? { attachments: downloaded.results } : {}),
+              ...(downloaded.type === 'ERROR' ? { attachmentError: downloaded.error } : {}),
+            };
+          }
+        : undefined;
+      return readDocumentInBackground(msg.tabId, title, msg.budgetTokens, control, withAttachments, { keepWorkTab: msg.keepWorkTab });
+    }
+
+    case 'RELEASE_WORK_TAB':
+      await releaseKeptWorkTab(msg.tabId);
+      return { type: 'ACTIVE_TAB', tab: null };
 
     case 'PREPARE_ACTION': {
       const res = await withContentScript(msg.tabId, { type: 'PREPARE', action: msg.action, control });
@@ -216,7 +248,18 @@ async function withContentScript(
 
 async function dispatchContent(tabId: number, msg: SWToContent): Promise<ContentToSW> {
   const tab = await chrome.tabs.get(tabId).catch(() => null);
-  if (!tab || isRestrictedUrl(tab.url)) {
+  if (!tab) {
+    // 닫힌 탭을 chrome:// 제한 페이지로 안내하면 사용자가 원인을 찾을 수 없다.
+    return {
+      type: 'FAILED',
+      error: {
+        code: 'UNKNOWN',
+        message: '읽을 탭을 찾을 수 없습니다. 탭이 닫혔거나 다시 열렸을 수 있습니다.',
+        hint: '읽을 페이지 탭에서 사이드패널을 열고 다시 요청하세요.',
+      },
+    };
+  }
+  if (isRestrictedUrl(tab.url)) {
     return {
       type: 'FAILED',
       error: {
@@ -247,7 +290,7 @@ async function dispatchContent(tabId: number, msg: SWToContent): Promise<Content
             message: '이 사이트의 내용을 읽을 권한이 없습니다.',
             hint: '권한 요청 대화상자에서 허용하거나, 설정에서 모든 사이트를 한 번에 허용하세요.',
           }
-        : { code: 'TAB_RESTRICTED', message: '페이지에 접근할 수 없습니다.', hint: raw },
+        : { code: 'UNKNOWN', message: '페이지에 접근할 수 없습니다.', hint: raw },
     };
   }
 
@@ -286,7 +329,8 @@ function extractionScore(
       (candidate.frameId === options.preferredFrameId ? 10_000_000 : 0) +
       (titleKey && contentKey.includes(titleKey) ? 1_000_000 : 0);
   }
-  return (rows ? 1_000_000 + rows * 10_000 : 0) + response.payload.charCount;
+  const containsTarget = options.targetTitle && response.payload.structuredData?.rows.some(row => row.title && sameDocumentTitle(row.title, options.targetTitle!));
+  return (containsTarget ? 100_000_000 : 0) + (rows ? 1_000_000 + rows * 10_000 : 0) + response.payload.charCount;
 }
 
 async function dispatchExtractionAcrossFrames(
@@ -295,10 +339,11 @@ async function dispatchExtractionAcrossFrames(
   tab: chrome.tabs.Tab,
 ): Promise<ContentToSW> {
   const topUrl = tab.url ?? '';
-  let frames: Array<{ frameId: number; url: string }> = [{ frameId: 0, url: topUrl }];
+  assertCurrent(msg.control, topUrl, cancelled.has(msg.control.id));
+  let frames: Array<{ frameId: number; parentFrameId: number; url: string }> = [{ frameId: 0, parentFrameId: -1, url: topUrl }];
   try {
     const discovered = await chrome.webNavigation.getAllFrames({ tabId });
-    if (discovered?.length) frames = discovered.map(frame => ({ frameId: frame.frameId, url: frame.url || topUrl }));
+    if (discovered?.length) frames = discovered.map(frame => ({ frameId: frame.frameId, parentFrameId: frame.parentFrameId ?? -1, url: frame.url || topUrl }));
   } catch {
     // webNavigation이 없는 개발 mock이나 구형 환경에서는 최상위 프레임만 읽는다.
   }
@@ -306,8 +351,14 @@ async function dispatchExtractionAcrossFrames(
   const attempts = await Promise.all(frames.map(async frame => {
     const control = { ...msg.control, expectedUrl: frame.url || topUrl };
     try {
-      await chrome.scripting.executeScript({ target: { tabId, frameIds: [frame.frameId] }, files: [INJECTED_SCRIPT] });
-      const response = await chrome.tabs.sendMessage(tabId, { ...msg, control }, { frameId: frame.frameId }) as ContentToSW;
+      // 로딩이 끝나지 않는 프레임 하나가 executeScript(document_idle 대기)를 붙잡으면
+      // Promise.all 전체가 제한 시간을 다 써 버린다. 프레임마다 짧게 끊는다.
+      const response = await frameTimeout((async () => {
+        assertCurrent(msg.control, topUrl, cancelled.has(msg.control.id));
+        await chrome.scripting.executeScript({ target: { tabId, frameIds: [frame.frameId] }, files: [INJECTED_SCRIPT] });
+        assertCurrent(msg.control, topUrl, cancelled.has(msg.control.id));
+        return await chrome.tabs.sendMessage(tabId, { ...msg, control }, { frameId: frame.frameId }) as ContentToSW;
+      })(), msg.control);
       return { frameId: frame.frameId, frameUrl: frame.url, response } satisfies ExtractedCandidate;
     } catch (error) {
       return {
@@ -321,14 +372,19 @@ async function dispatchExtractionAcrossFrames(
   const current = await chrome.tabs.get(tabId);
   assertCurrent(msg.control, current.url ?? '', cancelled.has(msg.control.id));
   const best = chooseBestExtraction(attempts, msg);
+  const blockedFrameUrls = [...new Set(attempts.flatMap(candidate => candidate.response.type === 'FAILED' &&
+    candidate.response.error.code === 'HOST_PERMISSION_REQUIRED' && /^https?:/.test(candidate.frameUrl) ? [candidate.frameUrl] : []))];
   if (!best || best.response.type !== 'EXTRACTED') {
+    if (blockedFrameUrls.length) return { type: 'FAILED', error: blockedFramesError(blockedFrameUrls) };
     return attempts.find(candidate => candidate.response.type === 'FAILED')?.response ?? {
       type: 'FAILED',
       error: { code: 'UNKNOWN', message: t('sw.extractFailed') },
     };
   }
 
-  const payload = best.response.payload;
+  const payload = msg.purpose === 'document-detail' && !best.response.payload.structuredData
+    ? mergeDetailFrames(best, attempts, frames, msg.budgetTokens)
+    : best.response.payload;
   return {
     type: 'EXTRACTED',
     payload: {
@@ -340,7 +396,61 @@ async function dispatchExtractionAcrossFrames(
         : payload.title,
       sourceFrameId: best.frameId,
       sourceFrameUrl: best.frameUrl,
+      ...(blockedFrameUrls.length ? { blockedFrameUrls } : {}),
+      attachments: payload.structuredData ? payload.attachments : {
+        links: [...new Map(attempts.flatMap(candidate => candidate.response.type === 'EXTRACTED' && !candidate.response.payload.structuredData
+          ? candidate.response.payload.attachments?.links ?? [] : []).map(link => [link.url, link])).values()],
+        unsupported: attempts.reduce((sum, candidate) => sum + (candidate.response.type === 'EXTRACTED' && !candidate.response.payload.structuredData
+          ? candidate.response.payload.attachments?.unsupported ?? 0 : 0), 0),
+      },
     },
+  };
+}
+
+/**
+ * 상세 화면은 제목·결재정보 프레임 안에 본문 프레임이 따로 있는 경우가 많다.
+ * 고른 프레임 하나만 보내면 LLM이 제목과 버튼만 보고 요약하게 되므로,
+ * 그 프레임과 하위 프레임의 본문을 모두 합쳐 예산 안에 담는다.
+ */
+export function mergeDetailFrames(
+  best: ExtractedCandidate,
+  attempts: ExtractedCandidate[],
+  frames: Array<{ frameId: number; parentFrameId: number }>,
+  budgetTokens: number,
+): ExtractedPage {
+  const base = (best.response as ContentToSW & { type: 'EXTRACTED' }).payload;
+  const parents = new Map(frames.map(frame => [frame.frameId, frame.parentFrameId]));
+  const isDescendant = (frameId: number) => {
+    for (let parent = parents.get(frameId); parent !== undefined && parent >= 0; parent = parents.get(parent)) {
+      if (parent === best.frameId) return true;
+    }
+    return false;
+  };
+  const segments = attempts
+    .filter(candidate => candidate.frameId === best.frameId || isDescendant(candidate.frameId))
+    .flatMap(candidate => candidate.response.type === 'EXTRACTED' && !candidate.response.payload.structuredData && candidate.response.payload.text.trim()
+      ? [candidate.response.payload] : [])
+    // 본문 프레임이 대개 가장 길다. 예산을 넘으면 뒤쪽이 잘리므로 긴 것부터 담는다.
+    .sort((left, right) => right.charCount - left.charCount);
+  const merged: string[] = [];
+  let charCount = 0;
+  for (const segment of segments) {
+    // 부모 프레임이 같은 출처 하위 프레임 본문을 이미 포함했으면 중복해서 넣지 않는다.
+    const probe = compactText(segment.text.slice(0, 200));
+    if (probe && merged.some(text => compactText(text).includes(probe))) continue;
+    merged.push(segment.text);
+    charCount += segment.charCount;
+  }
+  if (merged.length <= 1) return base;
+  const fitted = fitToBudget(merged.join('\n\n'), budgetTokens);
+  const truncated = fitted.truncated || segments.some(segment => segment.truncated);
+  return {
+    ...base,
+    text: fitted.text,
+    charCount,
+    truncated,
+    keptRatio: truncated ? Math.min(1, fitted.text.length / Math.max(1, charCount)) : 1,
+    estimatedTokens: fitted.estimatedTokens,
   };
 }
 
@@ -353,25 +463,76 @@ export async function readDocumentInBackground(
   title: string,
   budgetTokens: number,
   control: RequestControl,
+  /** 상세 화면을 찾은 뒤 작업 탭이 닫히기 전에 실행할 후속 작업(예: 첨부 다운로드). */
+  onDetail?: (target: DetailTarget) => Promise<SWToPanel>,
+  options: { keepWorkTab?: boolean } = {},
 ): Promise<SWToPanel> {
   const temporary = new Set<number>();
+  let keptWorkTabId: number | undefined;
   const source = await chrome.tabs.get(sourceTabId).catch(() => null);
-  if (!source || isRestrictedUrl(source.url)) {
+  if (!source) {
+    return { type: 'ERROR', error: { code: 'UNKNOWN', message: '온나라 탭을 찾을 수 없습니다. 탭이 닫혔거나 다시 열렸을 수 있습니다.', hint: '온나라 문서 목록 탭에서 사이드패널을 열고 다시 요청하세요.' } };
+  }
+  if (isRestrictedUrl(source.url)) {
     return { type: 'ERROR', error: { code: 'TAB_RESTRICTED', message: '현재 온나라 화면을 복제할 수 없습니다.' } };
   }
 
+  const taskControl: RequestControl = { ...control, deadline: control.deadline - 5000, expectedUrl: undefined };
+  let stage: ReadStage = 'source';
+  const observed: DetailObservation = { popup: false, frameChanged: false, state: 'none', chars: 0 };
   try {
     assertCurrent(control, source.url ?? '', cancelled.has(control.id));
+    // duplicate()는 JS로 바뀐 iframe·검색·페이지 상태를 보장하지 않는다.
+    // 복제 전에 실제 목록 프레임에서 읽기 전용으로 복원 정보를 확보한다.
+    const originalList = await dispatchContent(sourceTabId, { type: 'EXTRACT', budgetTokens, purpose: 'page', targetTitle: title, control });
+    if (originalList.type === 'FAILED') return { type: 'ERROR', error: originalList.error };
+    if (originalList.type !== 'EXTRACTED' || !originalList.payload.structuredData?.rows.some(row => row.title && sameDocumentTitle(row.title, title))) {
+      return { type: 'ERROR', error: { code: 'UNKNOWN', message: '현재 목록에서 요청한 문서를 찾을 수 없습니다. 목록을 다시 확인한 뒤 요청하세요.' } };
+    }
+    const located = await sendToFrame(sourceTabId, originalList.payload.sourceFrameId ?? 0, {
+      type: 'LOCATE_DOCUMENT', title,
+      control: { ...control, expectedUrl: originalList.payload.sourceFrameUrl ?? source.url },
+    });
+    if (located.type === 'FAILED') return { type: 'ERROR', error: located.error };
+    if (located.type !== 'DOCUMENT_LOCATED') throw new Error('원본 문서 목록 위치를 확인하지 못했습니다.');
+    assertCurrent(control, (await chrome.tabs.get(sourceTabId)).url ?? '', cancelled.has(control.id));
     const before = new Set((await chrome.tabs.query({})).flatMap(tab => typeof tab.id === 'number' ? [tab.id] : []));
-    const duplicate = await duplicateWorkTab(sourceTabId);
-    if (!duplicate || typeof duplicate.id !== 'number') throw new Error('백그라운드 작업 탭을 만들지 못했습니다.');
-    const workTabId = duplicate.id;
-    temporary.add(workTabId);
-    await keepBackground(workTabId, source);
-
-    const taskControl: RequestControl = { ...control, deadline: control.deadline - 5000, expectedUrl: undefined };
-    const list = await waitForDocumentList(workTabId, title, budgetTokens, taskControl);
+    stage = 'list';
+    // 앞 문서에서 남겨 둔 작업 탭의 목록에 이 문서가 그대로 있으면 복제·복원 없이 이어서 쓴다.
+    // 문서마다 복제하면 목록 복원을 매번 반복하게 되고, 한 번만 실패해도 그 문서를 읽지 못한다.
+    let chosenTabId: number | undefined;
+    let chosenList: ExtractedPage | undefined;
+    const kept = await takeKeptWorkTab(sourceTabId, source.url);
+    if (kept !== undefined) {
+      temporary.add(kept);
+      workTabs.add(kept);
+      const current = await dispatchContent(kept, { type: 'EXTRACT', budgetTokens, purpose: 'page', targetTitle: title, control: taskControl });
+      if (current.type === 'EXTRACTED' && current.payload.structuredData?.rows.some(row => row.title && sameDocumentTitle(row.title, title))) {
+        chosenTabId = kept;
+        chosenList = current.payload;
+      }
+    }
+    if (chosenTabId === undefined || !chosenList) {
+      if (kept !== undefined) {
+        await chrome.tabs.remove(kept).catch(() => undefined);
+        temporary.delete(kept);
+        forgetWorkTab(kept);
+      }
+      const duplicate = await duplicateWorkTab(sourceTabId);
+      if (!duplicate || typeof duplicate.id !== 'number') throw new Error('백그라운드 작업 탭을 만들지 못했습니다.');
+      chosenTabId = duplicate.id;
+      temporary.add(chosenTabId);
+      await keepBackground(chosenTabId, source);
+      chosenList = await waitForDocumentList(chosenTabId, title, budgetTokens, taskControl, located.location);
+    }
+    // 목록을 확보한 작업 탭만 다음 문서에 넘긴다.
+    const workTabId: number = chosenTabId;
+    const list: ExtractedPage = chosenList;
+    if (options.keepWorkTab) keptWorkTabId = workTabId;
     const openFrameId = list.sourceFrameId ?? 0;
+    stage = 'open';
+    const framesBefore = await frameUrls(workTabId);
+    const openedAt = Date.now();
     const opened = await sendToFrame(workTabId, openFrameId, {
       type: 'OPEN_DOCUMENT', title, control: taskControl,
     });
@@ -380,20 +541,46 @@ export async function readDocumentInBackground(
       return { type: 'ERROR', error: { code: 'UNKNOWN', message: '문서 열기 동작을 시작하지 못했습니다.' } };
     }
 
-    while (Date.now() < taskControl.deadline) {
+    stage = 'detail';
+    const detailStarted = Date.now();
+    const detailDeadline = Math.min(taskControl.deadline, detailStarted + DETAIL_WAIT_MS);
+    const finish = async (detail: ExtractedPage, tabId: number): Promise<SWToPanel> => {
+      const payload = { ...detail, url: source.url ?? detail.url, title: detail.title || title };
+      if (onDetail) {
+        stage = 'followUp';
+        return await onDetail({ tabId, payload, control: taskControl });
+      }
+      return { type: 'DOCUMENT_READ', requestedTitle: title, payload };
+    };
+    let stableChars = -1;
+    let stableSince = 0;
+    let readableSince = 0;
+    let readable: { payload: ExtractedPage; tabId: number } | undefined;
+    let blockedStreak = 0;
+    while (Date.now() < detailDeadline) {
       assertCurrent(taskControl, '', cancelled.has(control.id));
       await delay(300);
-      const tabs = await chrome.tabs.query({});
-      for (const tab of tabs) {
-        if (typeof tab.id !== 'number' || before.has(tab.id) || tab.id === workTabId) continue;
-        if (tab.openerTabId === workTabId) {
-          temporary.add(tab.id);
-          workTabs.add(tab.id);
-          await keepBackground(tab.id, source);
-        }
+      const tabs = new Map((await chrome.tabs.query({})).flatMap(tab => typeof tab.id === 'number' ? [[tab.id, tab] as const] : []));
+      // 새 창(popup window) 팝업은 openerTabId가 비어 있으므로 window.open 이벤트로 기록한 체인을 먼저 본다.
+      const children = [...tabsSpawnedBy(workTabId), ...[...tabs.values()]
+        .filter(tab => !before.has(tab.id!) && tab.openerTabId === workTabId).map(tab => tab.id!)];
+      for (const id of children) {
+        if (id === workTabId || temporary.has(id)) continue;
+        temporary.add(id);
+        workTabs.add(id);
+        await keepBackground(id, source);
       }
 
-      const popup = [...temporary].find(id => id !== workTabId);
+      // 로더 창이 스스로 닫히는 경우가 있어 살아 있는 가장 최근 팝업을 읽는다.
+      const created = [...temporary].filter(id => id !== workTabId && tabs.has(id)).at(-1);
+      // 복제 탭은 원본과 같은 브라우징 그룹이라, 같은 이름의 창이 이미 열려 있으면 새 창 대신 그 창이 이동한다.
+      // 사용자가 연 창일 수 있으므로 읽기만 하고 닫지 않는다.
+      const reused = created === undefined ? await reusedPopup(tabs, before, sourceTabId, source.url, openedAt) : undefined;
+      const popup = created ?? reused;
+      observed.popup = popup !== undefined;
+      if (!observed.popup && !observed.frameChanged) observed.frameChanged = (await frameUrls(workTabId)) !== framesBefore;
+      // 팝업 차단 등으로 클릭에 아무 반응이 없으면 2분을 기다리지 않는다.
+      if (!observed.popup && !observed.frameChanged && Date.now() - detailStarted >= NO_REACTION_MS) break;
       const targetTabId = popup ?? workTabId;
       const preferredFrameId = popup ? 0 : openFrameId;
       const result = await dispatchContent(targetTabId, {
@@ -404,36 +591,298 @@ export async function readDocumentInBackground(
         targetTitle: title,
         control: taskControl,
       });
-      if (result.type !== 'EXTRACTED' || result.payload.structuredData || result.payload.charCount < 120) continue;
-      const preferred = popup || result.payload.sourceFrameId === openFrameId;
+      if (result.type !== 'EXTRACTED') {
+        // 팝업이 권한 없는 주소(전용 뷰어 등)로 열리면 기다려도 읽을 수 없다.
+        if (result.type === 'FAILED' && result.error.code === 'HOST_PERMISSION_REQUIRED') return { type: 'ERROR', error: result.error };
+        Object.assign(observed, { state: 'failed', error: result.type === 'FAILED' ? result.error.hint ?? result.error.message : result.type });
+        continue;
+      }
+      // 본문이 다른 호스트(전용 뷰어 등) 프레임에 있으면 그 주소 권한 없이는 끝내 읽을 수 없다.
+      // 조용히 기다리지 말고 어떤 주소를 허용해야 하는지 바로 알린다. 로딩 중 순간값을 피하려고 두 번 연속 확인한다.
+      const blocked = result.payload.blockedFrameUrls ?? [];
+      blockedStreak = blocked.length ? blockedStreak + 1 : 0;
+      if (blockedStreak >= 2) return { type: 'ERROR', error: blockedFramesError(blocked) };
+      if (result.payload.structuredData) { Object.assign(observed, { state: 'list', chars: result.payload.charCount }); continue; }
+      if (result.payload.charCount < 120) { Object.assign(observed, { state: 'short', chars: result.payload.charCount }); continue; }
+      // 재사용된 창은 이전 문서가 남아 있을 수 있어 제목이 보일 때만 받아들인다.
+      const preferred = popup === undefined ? result.payload.sourceFrameId === openFrameId : popup === created;
       const mentionsTitle = compactText(`${result.payload.title} ${result.payload.text}`).includes(compactText(title));
-      if (!preferred && !mentionsTitle) continue;
-      return {
-        type: 'DOCUMENT_READ',
-        requestedTitle: title,
-        payload: {
-          ...result.payload,
-          url: source.url ?? result.payload.url,
-          title: result.payload.title || title,
-        },
-      };
+      if (!preferred && !mentionsTitle) { Object.assign(observed, { state: 'mismatch', chars: result.payload.charCount }); continue; }
+      // 본문 iframe은 제목 프레임보다 늦게 채워진다. 글자 수가 잠시 변하지 않을 때까지 기다리되,
+      // 시계·남은 시간처럼 계속 바뀌는 화면 때문에 끝없이 기다리지 않도록 일정 시간이 지나면 읽은 내용으로 진행한다.
+      const now = Date.now();
+      readable = { payload: result.payload, tabId: targetTabId };
+      readableSince ||= now;
+      if (stableChars !== result.payload.charCount) { stableChars = result.payload.charCount; stableSince = now; }
+      if (now - stableSince < DETAIL_STABLE_MS && now - readableSince < DETAIL_SETTLE_LIMIT_MS) continue;
+      return await finish(result.payload, targetTabId);
     }
 
+    if (readable) return await finish(readable.payload, readable.tabId);
+
+    return { type: 'ERROR', error: readTimeoutError(stage, observed) };
+  } catch (error) {
+    if (cancelled.has(control.id)) return { type: 'ERROR', error: { code: 'ABORTED', message: '문서 읽기를 중단했습니다.' } };
+    if (error instanceof ReadFailure) return { type: 'ERROR', error: error.appError };
+    // 마감이 루프 조건 검사와 프레임 추출 사이에 지나면 assertCurrent가 던진다.
+    // 원문 그대로면 어느 단계에서 왜 멈췄는지 알 수 없으므로 단계별 시간 초과로 바꾼다.
+    if (Date.now() >= taskControl.deadline) return { type: 'ERROR', error: readTimeoutError(stage, observed) };
+    return { type: 'ERROR', error: { code: 'UNKNOWN', message: `문서 화면 읽기에 실패했습니다 (${STAGE_LABEL[stage]}). ${String(error)}`, hint: '복제한 탭에서 문서 목록과 상세 본문이 표시되는지 확인하세요.' } };
+  } finally {
+    // 마지막 확인 뒤에 뜬 팝업도 함께 닫는다. 이미 닫힌 ID가 섞여 일괄 삭제가 실패하면 하나씩 닫는다.
+    for (const root of [...temporary]) for (const id of tabsSpawnedBy(root)) temporary.add(id);
+    // 다음 문서에 재사용할 작업 탭은 남기고, 이 문서의 팝업만 닫는다.
+    if (keptWorkTabId !== undefined && !cancelled.has(control.id) && await chrome.tabs.get(keptWorkTabId).then(() => true, () => false)) {
+      temporary.delete(keptWorkTabId);
+      await saveKeptWorkTab(sourceTabId, keptWorkTabId, source.url);
+    } else {
+      await clearKeptWorkTab(sourceTabId);
+    }
+    if (temporary.size) {
+      await chrome.tabs.remove([...temporary])
+        .catch(() => Promise.all([...temporary].map(id => chrome.tabs.remove(id).catch(() => undefined))));
+    }
+    for (const id of temporary) forgetWorkTab(id);
+  }
+}
+
+type DetailTarget = { tabId: number; payload: ExtractedPage; control: RequestControl };
+
+/* ── 여러 문서 처리 중 작업 탭 재사용 ─────────────────────── */
+
+// 문서 요약 사이에 CPU 생성이 몇 분씩 걸려 서비스 워커가 내려갈 수 있다. 메모리 대신 세션 저장소에 둔다.
+const keptKey = (sourceTabId: number) => `saide.keptWorkTab.${sourceTabId}`;
+type KeptWorkTab = { workTabId: number; origin: string };
+
+function originOf(url: string | undefined): string {
+  try { return new URL(url ?? '').origin; } catch { return ''; }
+}
+
+async function takeKeptWorkTab(sourceTabId: number, sourceUrl: string | undefined): Promise<number | undefined> {
+  try {
+    const key = keptKey(sourceTabId);
+    const kept = (await chrome.storage.session.get(key))[key] as KeptWorkTab | undefined;
+    if (!kept) return undefined;
+    await chrome.storage.session.remove(key);
+    const tab = await chrome.tabs.get(kept.workTabId).catch(() => null);
+    if (!tab || kept.origin !== originOf(sourceUrl) || originOf(tab.url) !== kept.origin) {
+      if (tab) await chrome.tabs.remove(kept.workTabId).catch(() => undefined);
+      return undefined;
+    }
+    return kept.workTabId;
+  } catch {
+    return undefined;
+  }
+}
+
+async function saveKeptWorkTab(sourceTabId: number, workTabId: number, sourceUrl: string | undefined): Promise<void> {
+  try {
+    await chrome.storage.session.set({ [keptKey(sourceTabId)]: { workTabId, origin: originOf(sourceUrl) } satisfies KeptWorkTab });
+  } catch {
+    // 저장할 수 없으면 재사용하지 않고 바로 닫는다.
+    await chrome.tabs.remove(workTabId).catch(() => undefined);
+    forgetWorkTab(workTabId);
+  }
+}
+
+async function clearKeptWorkTab(sourceTabId: number): Promise<void> {
+  try { await chrome.storage.session.remove(keptKey(sourceTabId)); } catch { /* 저장소 없음 */ }
+}
+
+/** 여러 문서 처리가 끝나면 남겨 둔 작업 탭을 닫는다. */
+export async function releaseKeptWorkTab(sourceTabId: number): Promise<void> {
+  const workTabId = await takeKeptWorkTab(sourceTabId, (await chrome.tabs.get(sourceTabId).catch(() => null))?.url);
+  if (workTabId === undefined) return;
+  await chrome.tabs.remove(workTabId).catch(() => undefined);
+  forgetWorkTab(workTabId);
+}
+
+type ReadStage = 'source' | 'list' | 'open' | 'detail' | 'followUp';
+type DetailObservation = {
+  popup: boolean;
+  frameChanged: boolean;
+  state: 'none' | 'failed' | 'list' | 'short' | 'mismatch';
+  chars: number;
+  error?: string;
+};
+
+const DETAIL_WAIT_MS = 60_000;
+const NO_REACTION_MS = 15_000;
+const DETAIL_STABLE_MS = 1000;
+const DETAIL_SETTLE_LIMIT_MS = 10_000;
+
+/** 권한 없는 본문 프레임 주소를 사용자가 허용할 수 있는 형태로 알린다. */
+export function blockedFramesError(urls: string[]): AppError {
+  const origins = [...new Set(urls.flatMap(url => { try { return [new URL(url).origin]; } catch { return []; } }))];
+  return {
+    code: 'HOST_PERMISSION_REQUIRED',
+    message: `문서 본문이 다른 주소(${origins.join(', ')})에 있어 읽을 권한이 없습니다.`,
+    hint: '"권한 허용"을 눌러 이 주소를 허용한 뒤 다시 요청하세요.',
+    origins,
+  };
+}
+
+const STAGE_LABEL: Record<ReadStage, string> = {
+  source: '원본 목록 확인 단계',
+  list: '작업 탭 목록 준비 단계',
+  open: '문서 열기 단계',
+  detail: '상세 본문 읽기 단계',
+  followUp: '첨부 다운로드 단계',
+};
+
+/** 마지막으로 관찰한 상세 화면 상태를 근거로 사용자가 확인할 지점을 알려 준다. */
+export function readTimeoutError(stage: ReadStage, observed: DetailObservation): AppError {
+  if (stage !== 'detail') {
+    return {
+      code: 'TIMEOUT',
+      message: `문서 화면 읽기가 제한 시간을 초과했습니다 (${STAGE_LABEL[stage]}).`,
+      hint: stage === 'source'
+        ? '원본 온나라 화면이 응답하는지 확인한 뒤 다시 시도하세요.'
+        : stage === 'followUp'
+          ? '첨부 파일이 크거나 브라우저가 다운로드 확인을 기다리는지 다운로드 목록에서 확인하세요.'
+          : '복제한 탭이 로그인 화면이나 첫 화면으로 열리지 않는지 확인하세요.',
+    };
+  }
+  const where = observed.popup ? '새 창' : '작업 탭';
+  const hint = !observed.popup && !observed.frameChanged && observed.state !== 'failed'
+    ? '문서 제목을 눌렀지만 새 창도 화면 이동도 일어나지 않았습니다. 브라우저 팝업 차단 설정에서 온나라 주소의 팝업을 허용했는지 확인하세요.'
+    : observed.state === 'list'
+      ? `${where}에 여전히 문서 목록만 표시됩니다. 문서가 레이어나 전용 뷰어로 열리는지 확인하세요.`
+      : observed.state === 'short'
+        ? `${where}의 상세 화면에서 읽은 글자가 ${observed.chars}자뿐입니다. 본문이 HWP·PDF 전용 뷰어로 표시되는지 확인하세요.`
+        : observed.state === 'mismatch'
+          ? `${where}에서 읽은 화면에 요청한 문서 제목이 보이지 않습니다.`
+          : observed.state === 'failed'
+            ? `${where}의 상세 화면에 접근하지 못했습니다: ${observed.error ?? '알 수 없는 오류'}`
+            : '상세 화면을 한 번도 읽지 못했습니다. 온나라 화면의 응답이 매우 느린지 확인하세요.';
+  return { code: 'TIMEOUT', message: '문서를 열었지만 제한 시간 안에 본문을 읽지 못했습니다.', hint };
+}
+
+/* ── 첨부 다운로드 ──────────────────────────────────────── */
+
+const DOWNLOAD_START_TIMEOUT_MS = 15_000;
+const ATTACHMENT_SCAN_MS = 5000;
+
+/**
+ * 상세 화면의 모든 프레임에서 첨부를 찾아 한 파일씩 받는다.
+ * 일반 링크는 downloads API로, 온나라의 스크립트 첨부는 화면 요소를 눌러 브라우저가
+ * 만든 다운로드를 감지한다. 동시 다운로드를 피하려고 앞 파일이 끝나야 다음을 시작한다.
+ */
+export async function downloadAttachmentsInTab(tabId: number, control: RequestControl): Promise<SWToPanel> {
+  const frameControl: RequestControl = { ...control, expectedUrl: undefined };
+  let frames: Array<{ frameId: number }> = [{ frameId: 0 }];
+  try {
+    const discovered = await chrome.webNavigation.getAllFrames({ tabId });
+    if (discovered?.length) frames = discovered;
+  } catch {
+    // 최상위 프레임만 확인한다.
+  }
+  const found: Array<{ frameId: number; index: number; name: string; url?: string }> = [];
+  // 본문보다 첨부 목록이 늦게 그려지는 화면이 있어 잠시 다시 찾는다.
+  const scanUntil = Math.min(frameControl.deadline, Date.now() + ATTACHMENT_SCAN_MS);
+  do {
+    const seen = new Set<string>();
+    for (const frame of frames) {
+      const reply = await sendToFrame(tabId, frame.frameId, { type: 'SCAN_ATTACHMENTS', control: frameControl });
+      if (reply.type !== 'ATTACHMENTS_FOUND') continue;
+      for (const item of reply.items) {
+        const key = item.url ?? `name:${item.name}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        found.push({ frameId: frame.frameId, ...item });
+      }
+    }
+    if (found.length) break;
+    await delay(500);
+  } while (Date.now() < scanUntil && !cancelled.has(control.id));
+  if (!found.length) {
     return {
       type: 'ERROR',
       error: {
-        code: 'TIMEOUT',
-        message: '문서는 열었지만 본문을 읽을 수 없었습니다.',
-        hint: '온나라의 문서 상세 화면이나 팝업에 대한 사이트 접근 권한을 확인하세요.',
+        code: 'UNKNOWN',
+        message: '문서 화면에서 첨부 파일을 찾지 못했습니다.',
+        hint: '첨부가 없는 문서이거나, 첨부 목록이 파일 이름 없이 아이콘으로만 표시되는지 확인하세요.',
       },
     };
-  } catch (error) {
-    return { type: 'ERROR', error: cancelled.has(control.id)
-      ? { code: 'ABORTED', message: '문서 읽기를 중단했습니다.' }
-      : { code: 'UNKNOWN', message: `문서 화면 읽기에 실패했습니다 (AI 생성 전 단계). ${String(error)}`, hint: '복제한 탭에서 문서 목록과 상세 본문이 표시되는지 확인하세요.' } };
+  }
+
+  const results: AttachmentDownloadResult[] = [];
+  for (const item of found) {
+    assertCurrent(frameControl, '', cancelled.has(control.id));
+    let downloadId: number | undefined;
+    try {
+      downloadId = item.url
+        ? await chrome.downloads.download({ url: item.url, conflictAction: 'uniquify', saveAs: false })
+        : await clickAndCatchDownload(tabId, item, frameControl);
+      if (downloadId === undefined) {
+        results.push({
+          name: item.name, status: 'not_started',
+          message: '첨부를 눌렀지만 다운로드가 시작되지 않았습니다. 브라우저가 여러 파일 다운로드 허용이나 팝업 허용을 묻고 있는지 확인하세요.',
+        });
+        continue;
+      }
+      const outcome = await waitForDownload(downloadId, frameControl);
+      results.push({ name: item.name, ...outcome });
+      if (outcome.status === 'in_progress') break;
+    } catch (error) {
+      if (cancelled.has(control.id)) {
+        if (downloadId !== undefined) await chrome.downloads.cancel(downloadId).catch(() => undefined);
+        throw error;
+      }
+      if (Date.now() >= control.deadline) {
+        results.push({ name: item.name, status: 'in_progress', ...(downloadId !== undefined ? { downloadId } : {}), message: '제한 시간 안에 끝나지 않았습니다. 다운로드 목록에서 확인하세요.' });
+        break;
+      }
+      results.push({ name: item.name, status: 'failed', message: String(error) });
+    }
+  }
+  return { type: 'ATTACHMENTS_DOWNLOADED', results };
+}
+
+async function clickAndCatchDownload(
+  tabId: number,
+  item: { frameId: number; index: number; name: string },
+  control: RequestControl,
+): Promise<number | undefined> {
+  const created: number[] = [];
+  const onCreated = (download: chrome.downloads.DownloadItem) => { created.push(download.id); };
+  chrome.downloads.onCreated.addListener(onCreated);
+  try {
+    const reply = await sendToFrame(tabId, item.frameId, { type: 'CLICK_ATTACHMENT', index: item.index, name: item.name, control });
+    if (reply.type === 'FAILED') throw new Error(reply.error.hint ?? reply.error.message);
+    if (reply.type !== 'ATTACHMENT_CLICKED' || !reply.clicked) throw new Error('화면이 바뀌어 첨부 항목을 다시 찾지 못했습니다.');
+    const until = Math.min(control.deadline, Date.now() + DOWNLOAD_START_TIMEOUT_MS);
+    while (!created.length && Date.now() < until) {
+      assertCurrent(control, '', cancelled.has(control.id));
+      await delay(250);
+    }
+    return created[0];
   } finally {
-    if (temporary.size) await chrome.tabs.remove([...temporary]).catch(() => undefined);
-    for (const id of temporary) workTabs.delete(id);
+    chrome.downloads.onCreated.removeListener(onCreated);
+  }
+}
+
+async function waitForDownload(downloadId: number, control: RequestControl): Promise<Omit<AttachmentDownloadResult, 'name'>> {
+  while (Date.now() < control.deadline) {
+    assertCurrent(control, '', cancelled.has(control.id));
+    const [item] = await chrome.downloads.search({ id: downloadId });
+    if (item?.state === 'complete') {
+      return item.mime === 'text/html'
+        ? { status: 'failed', message: '파일 대신 HTML 페이지가 내려왔습니다. 로그인 상태나 다운로드 주소를 확인하세요.' }
+        : { status: 'complete', downloadId, ...(item.filename ? { path: item.filename } : {}) };
+    }
+    if (item?.state === 'interrupted') return { status: 'failed', message: item.error || '다운로드가 중단되었습니다.' };
+    await delay(500);
+  }
+  return { status: 'in_progress', downloadId, message: '제한 시간 안에 끝나지 않았습니다. 다운로드 목록에서 확인하세요.' };
+}
+
+async function frameUrls(tabId: number): Promise<string> {
+  try {
+    const frames = await chrome.webNavigation.getAllFrames({ tabId });
+    return (frames ?? []).map(frame => `${frame.frameId}:${frame.url}`).sort().join('\n');
+  } catch {
+    return '';
   }
 }
 
@@ -442,23 +891,74 @@ async function waitForDocumentList(
   title: string,
   budgetTokens: number,
   control: RequestControl,
+  location: DocumentListLocation,
 ): Promise<ExtractedPage> {
-  while (Date.now() < control.deadline) {
+  const started = Date.now();
+  const listDeadline = Math.min(control.deadline, started + LIST_WAIT_MS);
+  let restores = 0;
+  let lastRestore = 0;
+  let accepted = false;
+  let seen = '화면을 한 번도 읽지 못함';
+  while (Date.now() < listDeadline) {
     assertCurrent(control, '', cancelled.has(control.id));
-    const result = await dispatchContent(tabId, { type: 'EXTRACT', budgetTokens, purpose: 'page', control });
-    if (result.type === 'EXTRACTED' && result.payload.structuredData?.rows.some(row => row.title === title)) {
+    const result = await dispatchContent(tabId, { type: 'EXTRACT', budgetTokens, purpose: 'page', targetTitle: title, control });
+    if (result.type === 'EXTRACTED' && result.payload.structuredData?.rows.some(row => row.title && sameDocumentTitle(row.title, title))) {
       return result.payload;
     }
-    if (result.type === 'FAILED' && result.error.code === 'HOST_PERMISSION_REQUIRED') throw new Error(result.error.message);
+    if (result.type === 'FAILED' && result.error.code === 'HOST_PERMISSION_REQUIRED') throw new ReadFailure(result.error);
+    seen = result.type === 'EXTRACTED'
+      ? result.payload.structuredData
+        ? `${result.payload.structuredData.listName} 목록 ${result.payload.structuredData.rows.length}건에 요청 문서 없음`
+        : `문서 목록 표 없음(${result.payload.charCount}자: "${result.payload.text.replace(/\s+/g, ' ').trim().slice(0, 80)}")`
+      : result.type === 'FAILED' ? result.error.message : result.type;
+
+    // 복제 탭은 스스로 이전 iframe 주소를 다시 불러온다. 그 이동이 끝나기 전에 조회 폼을
+    // 보내면 뒤늦은 이동이 복원 결과를 덮어쓴다. 전송 성공만으로 복원을 끝내지 않고,
+    // 목록이 끝내 나타나지 않으면 탭이 조용해진 뒤 다시 보낸다.
+    const since = Date.now() - (lastRestore || started);
+    const due = since >= (restores ? RESTORE_RETRY_MS : RESTORE_SETTLE_MS);
+    if (due && restores < MAX_RESTORES) {
+      const tab = await chrome.tabs.get(tabId).catch(() => null);
+      if (tab?.status !== 'loading' || since >= RESTORE_LOADING_LIMIT_MS) {
+        restores++;
+        lastRestore = Date.now();
+        const frames = await chrome.webNavigation.getAllFrames({ tabId }).catch(() => null);
+        // 부모 경로가 맞는 프레임 하나만 실제로 전송한다. 느린 프레임이 다른 프레임을 막지 않게 동시에 묻는다.
+        const replies = await Promise.all((frames?.length ? frames : [{ frameId: 0 }]).map(frame =>
+          sendToFrame(tabId, frame.frameId, { type: 'RESTORE_DOCUMENT_LIST', location, control })));
+        if (replies.some(reply => reply.type === 'DOCUMENT_LIST_RESTORED' && reply.restored)) accepted = true;
+      }
+    }
     await delay(250);
   }
-  throw new Error(`복제한 목록에서 문서를 찾지 못했습니다: ${title}`);
+  assertCurrent(control, '', cancelled.has(control.id));
+  throw new ReadFailure({
+    code: 'UNKNOWN',
+    message: `작업 탭에서 원본 문서 목록을 복원하지 못했습니다: ${title}`,
+    hint: `복원 시도 ${restores}회(${accepted ? '목록 프레임에 조회 조건 전송' : '목록 프레임을 찾지 못함'}), 마지막 화면: ${seen}. `
+      + '원본 목록을 새로 고쳐 문서가 그대로 있는지 확인한 뒤 다시 요청하거나, 원본에서 해당 문서를 직접 열고 요약을 요청하세요.',
+  });
+}
+
+const LIST_WAIT_MS = 40_000;
+const RESTORE_SETTLE_MS = 2000;
+const RESTORE_RETRY_MS = 5000;
+const RESTORE_LOADING_LIMIT_MS = 10_000;
+const MAX_RESTORES = 3;
+
+/** 사용자에게 그대로 보여 줄 수 있는 단계별 실패. 원문 Error 문자열로 감싸지 않는다. */
+class ReadFailure extends Error {
+  constructor(readonly appError: AppError) { super(appError.message); }
 }
 
 async function sendToFrame(tabId: number, frameId: number, msg: SWToContent): Promise<ContentToSW> {
   try {
-    await chrome.scripting.executeScript({ target: { tabId, frameIds: [frameId] }, files: [INJECTED_SCRIPT] });
-    return await chrome.tabs.sendMessage(tabId, msg, { frameId }) as ContentToSW;
+    return await frameTimeout((async () => {
+      assertCurrent(msg.control, msg.control.expectedUrl ?? '', cancelled.has(msg.control.id));
+      await chrome.scripting.executeScript({ target: { tabId, frameIds: [frameId] }, files: [INJECTED_SCRIPT] });
+      assertCurrent(msg.control, msg.control.expectedUrl ?? '', cancelled.has(msg.control.id));
+      return await chrome.tabs.sendMessage(tabId, msg, { frameId }) as ContentToSW;
+    })(), msg.control);
   } catch (error) {
     return { type: 'FAILED', error: accessError(error) };
   }
@@ -466,9 +966,33 @@ async function sendToFrame(tabId: number, frameId: number, msg: SWToContent): Pr
 
 async function keepBackground(tabId: number, source: chrome.tabs.Tab): Promise<void> {
   const tab = await chrome.tabs.get(tabId).catch(() => null);
-  if (tab?.active && source.active && typeof source.id === 'number') {
+  if (!tab || typeof source.id !== 'number') return;
+  // 새 창 팝업은 뒤로 보내지 않는다. 가려진 창은 문서가 hidden 상태가 되어
+  // 화면에 보일 때만 본문을 그리는 뷰어가 끝내 내용을 채우지 않는다.
+  if (tab.windowId !== source.windowId) return;
+  if (tab.active && source.active) {
     await chrome.tabs.update(source.id, { active: true }).catch(() => undefined);
   }
+}
+
+/** 문서 열기 이후 최상위 이동이 확정된, 원본과 같은 출처의 기존 팝업 창. */
+async function reusedPopup(
+  tabs: Map<number, chrome.tabs.Tab>,
+  before: Set<number>,
+  sourceTabId: number,
+  sourceUrl: string | undefined,
+  openedAt: number,
+): Promise<number | undefined> {
+  for (const tab of tabs.values()) {
+    if (!before.has(tab.id!) || tab.id === sourceTabId || !committedSince(tab.id!, openedAt) || !sameOrigin(tab.url, sourceUrl)) continue;
+    const window = await chrome.windows?.get(tab.windowId).catch(() => null);
+    if (window?.type === 'popup') return tab.id;
+  }
+  return undefined;
+}
+
+function sameOrigin(left: string | undefined, right: string | undefined): boolean {
+  try { return new URL(left ?? '').origin === new URL(right ?? '').origin; } catch { return false; }
 }
 
 function compactText(value: string): string {
@@ -479,6 +1003,23 @@ function delay(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+const FRAME_TIMEOUT_MS = 8000;
+
+/** 프레임 하나의 주입·응답 대기를 요청 마감과 프레임 한도 중 이른 쪽에서 끊는다. */
+async function frameTimeout<T>(work: Promise<T>, control: RequestControl): Promise<T> {
+  work.catch(() => undefined);
+  const ms = Math.max(0, Math.min(FRAME_TIMEOUT_MS, control.deadline - Date.now()));
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('프레임이 제한 시간 안에 응답하지 않았습니다.')), ms); }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function accessError(error: unknown): AppError {
   const raw = String(error);
   return /must request permission|Cannot access contents/i.test(raw)
@@ -487,7 +1028,7 @@ function accessError(error: unknown): AppError {
         message: '이 사이트의 내용을 읽을 권한이 없습니다.',
         hint: '온나라 본문과 iframe 주소에 대한 사이트 접근 권한을 허용하세요.',
       }
-    : { code: 'TAB_RESTRICTED', message: '페이지 프레임에 접근할 수 없습니다.', hint: raw };
+    : { code: 'UNKNOWN', message: '페이지 프레임에 접근할 수 없습니다.', hint: raw };
 }
 
 /* ── 유틸 ──────────────────────────────────────────────── */

@@ -8,14 +8,28 @@ import type { UiMessage } from '@/lib/chat/store';
 import type { PerfSample } from '@/types/ollama';
 import { AgentSteps } from './AgentSteps';
 import { Markdown } from './Markdown';
+import { CopyIcon, DeleteIcon } from './ChatActionIcons';
+import { parseDownloadLink, type DownloadLinkAction } from '@/lib/downloads/links';
 
 interface Props {
   messages: UiMessage[];
   dark: boolean;
   showThinking: boolean;
+  deleteDisabled: boolean;
+  onDelete: (id: UiMessage['id']) => Promise<void>;
+  /** 답변 안의 다운로드 파일 링크를 눌렀을 때. 사용자 제스처가 살아 있도록 클릭 중에 동기로 호출한다. */
+  onDownloadLink?: (action: DownloadLinkAction, downloadId: number) => void;
 }
 
-export function MessageList({ messages, dark, showThinking }: Props) {
+export function MessageList({ messages, dark, showThinking, deleteDisabled, onDelete, onDownloadLink }: Props) {
+  // 마크다운 HTML 안의 링크에는 React 핸들러를 달 수 없어 목록에서 한 번에 가로챈다.
+  const onClick = (event: React.MouseEvent) => {
+    const anchor = (event.target as Element).closest?.('a');
+    const link = parseDownloadLink(anchor?.getAttribute('href'));
+    if (!link) return;
+    event.preventDefault();
+    onDownloadLink?.(link.action, link.downloadId);
+  };
   const endRef = useRef<HTMLDivElement>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
@@ -32,9 +46,9 @@ export function MessageList({ messages, dark, showThinking }: Props) {
   }, [messages]);
 
   return (
-    <div className="msgs" ref={scrollerRef} onScroll={onScroll}>
+    <div className="msgs" ref={scrollerRef} onScroll={onScroll} onClick={onClick}>
       {messages.map((m) => (
-        <Message key={String(m.id)} msg={m} dark={dark} showThinking={showThinking} />
+        <Message key={String(m.id)} msg={m} dark={dark} showThinking={showThinking} deleteDisabled={deleteDisabled} onDelete={onDelete} />
       ))}
       <div ref={endRef} />
     </div>
@@ -45,16 +59,21 @@ function Message({
   msg,
   dark,
   showThinking,
+  deleteDisabled,
+  onDelete,
 }: {
   msg: UiMessage;
   dark: boolean;
   showThinking: boolean;
+  deleteDisabled: boolean;
+  onDelete: Props['onDelete'];
 }) {
   const t = useT();
   if (msg.role === 'user') {
     return (
       <div className="msg msg-user">
         <div className="bubble">{msg.content}</div>
+        <MessageActions msg={msg} deleteDisabled={deleteDisabled} onDelete={onDelete} />
       </div>
     );
   }
@@ -82,6 +101,43 @@ function Message({
 
       {msg.aborted && <div className="aborted">{t('msg.aborted')}</div>}
       {msg.perf && !msg.streaming && <PerfLine perf={msg.perf} />}
+      <MessageActions msg={msg} deleteDisabled={deleteDisabled} onDelete={onDelete} />
+    </div>
+  );
+}
+
+function MessageActions({ msg, deleteDisabled, onDelete }: {
+  msg: UiMessage; deleteDisabled: boolean; onDelete: Props['onDelete'];
+}) {
+  const t = useT();
+  const [status, setStatus] = useState<'idle' | 'copied' | 'failed'>('idle');
+  useEffect(() => {
+    if (status === 'idle') return;
+    const timer = setTimeout(() => setStatus('idle'), 2000);
+    return () => clearTimeout(timer);
+  }, [status]);
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(msg.content);
+      setStatus('copied');
+    } catch { setStatus('failed'); }
+  };
+
+  return (
+    <div className="message-actions">
+      <button type="button" className="message-action" onClick={copy} disabled={!msg.content}
+        title={t('msg.copy')} aria-label={t('msg.copy')}>
+        <CopyIcon />
+      </button>
+      <button type="button" className="message-action message-action-delete" onClick={() => void onDelete(msg.id)}
+        disabled={deleteDisabled || Boolean(msg.streaming)}
+        title={t(deleteDisabled ? 'msg.deleteAfterGeneration' : 'msg.delete')} aria-label={t('msg.delete')}>
+        <DeleteIcon />
+      </button>
+      <span className={`message-action-status ${status === 'failed' ? 'failed' : ''}`} role="status">
+        {status === 'copied' ? t('ui.copied') : status === 'failed' ? t('msg.copyFailed') : ''}
+      </span>
     </div>
   );
 }

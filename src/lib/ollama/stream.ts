@@ -1,4 +1,4 @@
-import { abortable, idleSignal } from '@/lib/async';
+import { abortable } from '@/lib/async';
 import { estimateTokens } from '@/lib/extract/budget';
 /**
  * NDJSON 스트리밍 파서. 계획서 §5 Phase 2-1
@@ -95,16 +95,17 @@ export async function streamChat(
 ): Promise<PerfSample | null> {
   assertRequestBudget(req);
   signal?.throwIfAborted();
-  const guard = idleSignal(900_000, signal);
   try {
-    return await readChat(endpoint, req, handlers, guard.signal, guard.touch);
+    // CPU 추론과 모델 로딩은 무응답 시간만으로 실패를 판단할 수 없다.
+    // 완료 응답이나 실제 연결 오류가 올 때까지 기다리고 사용자 중단만 전달한다.
+    return await readChat(endpoint, req, handlers, signal);
   } catch (error) {
-    if (guard.signal.aborted) throw new OllamaError(signal?.aborted ? 'ABORTED' : 'TIMEOUT', signal?.aborted ? '생성을 중단했습니다.' : 'AI 서버에서 15분 동안 응답을 받지 못했습니다. CPU 실행 시 모델 로딩과 본문 분석에 시간이 걸릴 수 있습니다.');
+    if (signal?.aborted) throw new OllamaError('ABORTED', '생성을 중단했습니다.');
     throw error;
-  } finally { guard.dispose(); }
+  }
 }
 
-async function readChat(endpoint: string, req: ChatRequest, handlers: StreamHandlers, signal: AbortSignal, touch: () => void): Promise<PerfSample | null> {
+async function readChat(endpoint: string, req: ChatRequest, handlers: StreamHandlers, signal?: AbortSignal): Promise<PerfSample | null> {
   const body: ChatRequest = {
     think: false,
     keep_alive: '10m',
@@ -153,7 +154,6 @@ async function readChat(endpoint: string, req: ChatRequest, handlers: StreamHand
     for (;;) {
       const { done, value } = await abortable(reader.read(), signal);
       if (done) break;
-      touch();
 
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split('\n');

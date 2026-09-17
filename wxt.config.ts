@@ -38,6 +38,9 @@ export default defineConfig({
       'contextMenus',
       'tabs',
       'webNavigation',
+      'downloads',
+      // 답변의 다운로드 파일 경로를 눌러 기본 프로그램으로 여는 데 필요하다.
+      'downloads.open',
     ],
 
     // 설치 시점에 확정으로 갖는 접근권은 로컬 Ollama뿐이다.

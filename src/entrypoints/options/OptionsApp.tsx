@@ -319,19 +319,6 @@ export default function OptionsApp() {
         </div>
 
         <div className="field">
-          <div className="row">
-            <label htmlFor="idle">{t('opt.agent.idle')}</label>
-            <select
-              id="idle"
-              value={s.agentIdleTimeoutMs}
-              onChange={(e) => patch({ agentIdleTimeoutMs: Number(e.target.value) })}
-            >
-              <option value={20_000}>{t('opt.agent.idleSec', { n: 20 })}</option>
-              <option value={30_000}>{t('opt.agent.idleSecRec', { n: 30 })}</option>
-              <option value={60_000}>{t('opt.agent.idleSec', { n: 60 })}</option>
-              <option value={120_000}>{t('opt.agent.idleSec', { n: 120 })}</option>
-            </select>
-          </div>
           <p className="desc">{t('opt.agent.idleDesc')}</p>
         </div>
       </section>

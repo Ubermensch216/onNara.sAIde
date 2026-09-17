@@ -125,7 +125,8 @@ export function renderMarkdown(md: string): string {
     ],
     ALLOWED_ATTR: ['href', 'title', 'class', 'style'],
     // javascript:, data: 등 실행 가능한 스킴을 링크에서 제거한다.
-    ALLOWED_URI_REGEXP: /^(?:https?|mailto):/i,
+    // #saide-download= 조각 주소는 답변의 다운로드 파일 열기 링크다(lib/downloads/links.ts).
+    ALLOWED_URI_REGEXP: /^(?:https?:|mailto:|#saide-download=(?:open|show):\d+$)/i,
   });
 }
 

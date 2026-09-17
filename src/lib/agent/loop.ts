@@ -5,18 +5,13 @@ import { abortable, deadlineSignal } from '@/lib/async';
  * ★ 이 루프의 설계 목표는 "똑똑함"이 아니라 **멈춤 보장**이다.
  *   2.3B 모델은 같은 도구를 무한히 반복하거나, 결과를 무시하고 같은 호출을
  *   되풀이하는 일이 흔하다. 한 턴이 25초인 하드웨어에서 8턴이면 이미 3분이다.
- *   그래서 종료 조건을 셋으로 못박는다(계획서 5-2).
+ *   그래서 도구 반복과 턴 수에 상한을 둔다.
  *
  *     MAX_TURNS      8    — 턴 수 상한
- *     IDLE_TIMEOUT   30초 — 한 턴이 이 시간 동안 아무것도 못 내놓으면 중단
  *     MAX_SAME_TOOL  3    — 동일 (도구, 인자) 조합이 3회면 강제 종료
  *
- * ★ 30초 타임아웃은 "총 턴 시간"이 아니라 **무응답 시간**으로 잰다.
- *   계획서 문구는 "턴당 30초"지만, 이 하드웨어에서 총 시간으로 재면 정상
- *   동작도 죽는다 — 툴 결과 700토큰이 붙은 턴은 프리필만 5초, thinking까지
- *   포함하면 30초를 넘기는 일이 흔하다(§6 목표도 에이전트 1턴 25초다).
- *   무응답 기준이면 "실제로 멈춘 경우"만 잡으면서 상한 정신은 지킨다.
- *   프리필 침묵의 최댓값은 2,600토큰 기준 약 20초라 30초 안에 들어온다.
+ * ★ 모델 응답은 시간 제한 없이 기다린다. CPU 추론 중 침묵은 실패가 아니다.
+ *   사용자의 중단은 즉시 전달하며 브라우저 도구 실행에는 별도 제한을 둔다.
  *
  * ★ 이 파일은 chrome API도 fetch도 직접 부르지 않는다. 전부 주입받는다.
  *   그래야 확장을 띄우지 않고 루프의 종료 조건을 단위 테스트할 수 있다.
@@ -40,7 +35,6 @@ import {
 /* ── 상수 (계획서 5-2) ─────────────────────────────────── */
 
 export const MAX_TURNS = 8;
-export const IDLE_TIMEOUT_MS = 30_000;
 export const MAX_SAME_TOOL = 3;
 /** 툴 실행 자체의 상한. DOM 조작은 즉시 끝나야 정상이다. */
 export const TOOL_TIMEOUT_MS = 15_000;
@@ -81,7 +75,6 @@ export type StopReason =
   | 'max-turns'
   | 'repeat-guard'
   | 'tool-failed'
-  | 'timeout'
   | 'aborted'
   | 'error';
 
@@ -140,7 +133,6 @@ export type AgentEvent =
 
 export interface AgentOptions {
   maxTurns?: number;
-  idleTimeoutMs?: number;
   maxSameTool?: number;
   toolTimeoutMs?: number;
   toolResultTokens?: number;
@@ -155,7 +147,6 @@ export async function runAgentLoop(
   opts: AgentOptions = {},
 ): Promise<AgentOutcome> {
   const maxTurns = opts.maxTurns ?? MAX_TURNS;
-  const idleMs = opts.idleTimeoutMs ?? IDLE_TIMEOUT_MS;
   const maxSame = opts.maxSameTool ?? MAX_SAME_TOOL;
   const toolMs = opts.toolTimeoutMs ?? TOOL_TIMEOUT_MS;
   const resultTokens = opts.toolResultTokens ?? TOOL_RESULT_TOKENS;
@@ -186,7 +177,7 @@ export async function runAgentLoop(
     turn += 1;
     deps.onEvent?.({ type: 'turn-start', turn });
 
-    // ── 모델 호출 (무응답 30초 감시) ──
+    // ── 모델 호출 (사용자 중단까지 응답 대기) ──
     //
     // ★ content는 턴마다 새로 받는다. 누적하면 도구를 부르기 전에 흘린
     //   "확인해 보겠습니다" 같은 문장이 최종 답변 앞에 붙어 남는다.
@@ -194,36 +185,26 @@ export async function runAgentLoop(
     let turnContent = '';
     let turnThinking = '';
 
-    const guard = idleGuard(idleMs, opts.signal);
+    const signal = opts.signal ?? new AbortController().signal;
     let result: TurnResult;
     try {
       result = await abortable(deps.chat(
         messages,
         {
           onToken: (t) => {
-            guard.bump();
             turnContent += t;
           },
           onThinking: (t) => {
-            guard.bump();
             turnThinking += t;
           },
         },
-        guard.signal,
-      ), guard.signal);
+        signal,
+      ), signal);
     } catch (e) {
       if (opts.signal?.aborted) return done('aborted');
       content = turnContent || content;
       thinking = joinThinking(thinking, turnThinking);
-      if (guard.timedOut) {
-        return done(
-          'timeout',
-          `${Math.round(idleMs / 1000)}초 동안 응답이 없어 중단했습니다.`,
-        );
-      }
       throw e;
-    } finally {
-      guard.dispose();
     }
 
     perf = result.perf ?? perf;

@@ -1,5 +1,7 @@
 import { abortable, deadlineSignal } from '@/lib/async';
 import type { StructuredDocumentList } from '@/lib/onnara/document-list';
+import type { AttachmentItem, AttachmentScan } from '@/lib/onnara/attachments';
+import type { DocumentListLocation } from '@/lib/onnara/document-navigation';
 
 /**
  * 계약 ② — Side Panel ↔ Service Worker ↔ Content Script 3자 통신 규약.
@@ -44,6 +46,8 @@ export interface AppError {
   message: string;
   /** 사용자에게 보여줄 해결 방법. 없으면 UI가 기본 문구를 쓴다. */
   hint?: string;
+  /** HOST_PERMISSION_REQUIRED일 때 추가로 허용받아야 하는 주소. 없으면 현재 탭 주소를 요청한다. */
+  origins?: string[];
 }
 
 /* ── 페이지 추출 결과 ──────────────────────────────────── */
@@ -51,6 +55,7 @@ export interface AppError {
 export type ExtractMethod = 'readability' | 'innerText' | 'youtube-caption' | 'onnara-document-list';
 
 export interface ExtractedPage {
+  attachments?: AttachmentScan;
   url: string;
   title: string;
   /** ★ 이미 토큰 예산 내로 절단된 상태로 전달된다. 수신 측에서 다시 자르지 않는다. */
@@ -70,6 +75,8 @@ export interface ExtractedPage {
   /** iframe에서 선택된 결과라면 실제 추출 프레임을 기록한다. */
   sourceFrameId?: number;
   sourceFrameUrl?: string;
+  /** 사이트 권한이 없어 읽지 못한 하위 프레임 주소. 본문이 다른 호스트의 뷰어에 있을 때 채워진다. */
+  blockedFrameUrls?: string[];
 }
 
 /* ── 페이지 액션 (Phase 5 에이전트) ─────────────────────── */
@@ -150,8 +157,16 @@ export interface RequestControl {
 }
 
 export type PanelToSW = (
+  /** title이 있으면 목록에서 그 문서를 백그라운드로 열고, 없으면 현재 상세 화면의 첨부를 받는다. */
+  | { type: 'DOWNLOAD_ATTACHMENTS'; tabId: number; title?: string; keepWorkTab?: boolean }
   | { type: 'EXTRACT_PAGE'; tabId: number; budgetTokens: number }
-  | { type: 'READ_DOCUMENT'; tabId: number; title: string; budgetTokens: number }
+  /**
+   * withAttachments: 본문을 읽은 같은 상세 화면에서 첨부도 받는다(문서를 두 번 열지 않는다).
+   * keepWorkTab: 여러 문서를 이어서 처리할 때 복제한 목록 탭을 닫지 않고 다음 문서에 재사용한다.
+   */
+  | { type: 'READ_DOCUMENT'; tabId: number; title: string; budgetTokens: number; withAttachments?: boolean; keepWorkTab?: boolean }
+  /** keepWorkTab으로 남겨 둔 작업 탭을 닫는다. 여러 문서 처리가 끝나면 반드시 보낸다. */
+  | { type: 'RELEASE_WORK_TAB'; tabId: number }
   | { type: 'CAPTURE_SCREENSHOT'; tabId: number }
   | { type: 'EXEC_ACTION'; tabId: number; action: PageAction }
   | { type: 'LIST_TABS' }
@@ -162,6 +177,17 @@ export type PanelToSW = (
 
 /* ── Service Worker → Panel ────────────────────────────── */
 
+export interface AttachmentDownloadResult {
+  name: string;
+  /** complete: 저장 완료 · in_progress: 브라우저가 아직 받는 중 · not_started: 눌렀지만 다운로드가 생기지 않음 */
+  status: 'complete' | 'in_progress' | 'not_started' | 'failed';
+  message?: string;
+  /** 브라우저 다운로드 ID. 답변의 링크가 이 ID로 파일을 열거나 폴더를 보여 준다. */
+  downloadId?: number;
+  /** 저장된 파일의 전체 경로. 완료된 경우에만 채워진다. */
+  path?: string;
+}
+
 export interface TabSummary {
   tabId: number;
   url: string;
@@ -170,9 +196,10 @@ export interface TabSummary {
 }
 
 export type SWToPanel =
+  | { type: 'ATTACHMENTS_DOWNLOADED'; results: AttachmentDownloadResult[] }
   | { type: 'ACTION_PREPARED'; token: string; label?: string }
   | { type: 'PAGE_EXTRACTED'; payload: ExtractedPage }
-  | { type: 'DOCUMENT_READ'; payload: ExtractedPage; requestedTitle: string }
+  | { type: 'DOCUMENT_READ'; payload: ExtractedPage; requestedTitle: string; attachments?: AttachmentDownloadResult[]; attachmentError?: AppError }
   | { type: 'SCREENSHOT'; dataUrl: string }
   | { type: 'ACTION_RESULT'; result: ActionResult }
   | { type: 'TABS'; tabs: TabSummary[] }
@@ -187,6 +214,10 @@ export type SWToContent = (
   | { type: 'CANCEL' }
   | { type: 'EXTRACT'; budgetTokens: number; purpose?: 'page' | 'document-detail'; preferredFrameId?: number; targetTitle?: string }
   | { type: 'OPEN_DOCUMENT'; title: string }
+  | { type: 'LOCATE_DOCUMENT'; title: string }
+  | { type: 'RESTORE_DOCUMENT_LIST'; location: DocumentListLocation }
+  | { type: 'SCAN_ATTACHMENTS' }
+  | { type: 'CLICK_ATTACHMENT'; index: number; name: string }
   | { type: 'ACT'; action: PageAction }
   | { type: 'PREPARE'; action: PageAction }
 ) & { control: RequestControl };
@@ -195,6 +226,10 @@ export type ContentToSW =
   | { type: 'PREPARED'; token: string; label?: string }
   | { type: 'EXTRACTED'; payload: ExtractedPage }
   | { type: 'OPENING_DOCUMENT'; title: string }
+  | { type: 'DOCUMENT_LOCATED'; location: DocumentListLocation }
+  | { type: 'DOCUMENT_LIST_RESTORED'; restored: boolean }
+  | { type: 'ATTACHMENTS_FOUND'; items: AttachmentItem[] }
+  | { type: 'ATTACHMENT_CLICKED'; clicked: boolean }
   | { type: 'ACTED'; result: ActionResult }
   | { type: 'FAILED'; error: AppError };
 

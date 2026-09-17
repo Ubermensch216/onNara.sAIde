@@ -192,7 +192,11 @@ export function requestedDocumentTitles(prompt: string, list: StructuredDocument
 }
 
 function searchable(value: string): string {
-  return value.toLowerCase().replace(/[\s\p{P}\p{S}]/gu, '');
+  return cleanText(value, Number.MAX_SAFE_INTEGER).normalize('NFC').toLowerCase().replace(/[\s\p{P}\p{S}]/gu, '');
+}
+
+export function sameDocumentTitle(left: string, right: string): boolean {
+  return cleanText(left).normalize('NFC') === cleanText(right).normalize('NFC');
 }
 
 /** 모델에게 고르게 하지 않고 현재 표의 제목과 사용자 문장을 결정적으로 대조한다. */
@@ -224,14 +228,20 @@ export function findDocumentOpenTarget(title: string, root: ParentNode = documen
   const wanted = searchable(title);
   const matches: HTMLElement[] = [];
   for (const container of root.querySelectorAll(CONTAINER_SELECTOR)) {
+    if (!isAvailable(container)) continue;
+    const titleIndex = rowsOf(container).slice(0, 5)
+      .map(row => cellsOf(row).findIndex(cell => fieldForHeader(elementText(cell)) === 'title'))
+      .find(index => index >= 0);
     for (const row of rowsOf(container)) {
+      if (!isAvailable(row)) continue;
       const cells = cellsOf(row);
       const nativeTitle = row.querySelector<HTMLInputElement>('input[name="chkDocTitle"]');
       const titleCell = cells.find(cell => searchable(elementText(cell)) === wanted) ??
-        (nativeTitle && searchable(nativeTitle.value) === wanted ? nativeTitle.closest('td') : null);
+        (nativeTitle && searchable(nativeTitle.value) === wanted && titleIndex !== undefined ? cells[titleIndex] : null);
       if (!titleCell) continue;
-      const interactive = [...titleCell.querySelectorAll<HTMLElement>('a, button, [role="link"], [onclick], [ondblclick]')]
-        .find(element => searchable(elementText(element)) === wanted || searchable(elementText(element)).includes(wanted));
+      const candidates = [...titleCell.querySelectorAll<HTMLElement>('a, button, [role="link"], [onclick], [ondblclick]')].filter(isAvailable);
+      const interactive = candidates.find(element => searchable(elementText(element)) === wanted || searchable(elementText(element)).includes(wanted)) ??
+        (nativeTitle && searchable(nativeTitle.value) === wanted && candidates.length === 1 ? candidates[0] : undefined);
       const target = interactive ?? (titleCell as HTMLElement);
       if (isAvailable(target)) matches.push(target);
     }

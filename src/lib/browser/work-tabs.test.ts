@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { duplicateWorkTab, panelTab, workTabs } from './work-tabs';
+import { duplicateWorkTab, forgetWorkTab, noteNavigationTarget, panelTab, tabsSpawnedBy, workTabs } from './work-tabs';
 
 afterEach(() => { workTabs.clear(); vi.unstubAllGlobals(); });
 
@@ -33,4 +33,17 @@ it('복제가 실패해도 탭 이벤트 처리를 재개한다', async () => {
   } });
   await expect(duplicateWorkTab(1)).rejects.toThrow('duplicate failed');
   expect(await panelTab(1)).toMatchObject({ id: 1 });
+});
+
+it('새 창 팝업의 활성화 이벤트가 window.open 이벤트보다 먼저 와도 패널에 전달하지 않는다', async () => {
+  workTabs.add(20);
+  vi.stubGlobal('chrome', { tabs: { get: vi.fn(async (id: number) => ({ id, active: true })) } });
+  const activation = panelTab(30);
+  noteNavigationTarget({ sourceTabId: 20, tabId: 30 });
+  noteNavigationTarget({ sourceTabId: 30, tabId: 31 });
+  expect(await activation).toBeNull();
+  expect(tabsSpawnedBy(20)).toEqual([30, 31]);
+  for (const id of [20, 30, 31]) forgetWorkTab(id);
+  expect(tabsSpawnedBy(20)).toEqual([]);
+  expect(await panelTab(30)).toMatchObject({ id: 30 });
 });

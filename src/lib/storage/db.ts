@@ -23,6 +23,8 @@ export interface Conversation {
 
 export interface StoredMessage {
   id: number;
+  /** Links a stopped streaming bubble to its eventual saved record. */
+  clientId?: string;
   conversationId: number;
   role: 'user' | 'assistant' | 'system';
   content: string;
@@ -102,8 +104,7 @@ export async function findForTab(
     .reverse()
     .sortBy('updatedAt');
 
-  const prev = existing[0];
-  return prev && sameDocument(prev.originUrl, url) ? prev : null;
+  return existing.find(conversation => sameDocument(conversation.originUrl, url)) ?? null;
 }
 
 /**
@@ -170,6 +171,15 @@ export async function updateMessage(
   patch: Partial<StoredMessage>,
 ): Promise<void> {
   await db.messages.update(id, patch);
+}
+
+/** Delete only the selected message belonging to this conversation. */
+export async function deleteMessage(conversationId: number, id: number | string): Promise<void> {
+  await db.transaction('rw', db.messages, db.conversations, async () => {
+    await db.messages.where('conversationId').equals(conversationId)
+      .filter(message => typeof id === 'number' ? message.id === id : message.clientId === id).delete();
+    await db.conversations.update(conversationId, { updatedAt: Date.now() });
+  });
 }
 
 export async function deleteMessagesFrom(

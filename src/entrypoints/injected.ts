@@ -16,7 +16,10 @@ import { requiresApproval, type RequestControl } from '@/lib/messaging/protocol'
  */
 
 import { Readability } from '@mozilla/readability';
+import { clickAttachment, listAttachments, scanAttachments } from '@/lib/onnara/attachments';
+import { captureDocumentListLocation, restoreDocumentListLocation } from '@/lib/onnara/document-navigation';
 import { fitToBudget } from '@/lib/extract/budget';
+import { collectDocumentText } from '@/lib/extract/document-text';
 import {
   extractStructuredDocumentList,
   findDocumentOpenTarget,
@@ -40,7 +43,7 @@ import type {
 /** 재주입 가드용 전역 플래그. */
 declare global {
   interface Window {
-    __saideInjected?: true;
+    __saideInjected?: () => boolean;
   }
 }
 
@@ -50,8 +53,12 @@ const cancelled = new Map<string, number>();
 export default defineUnlistedScript(() => {
   // background는 요청마다 executeScript를 호출한다(이미 주입됐는지 알 수 없으므로).
   // 가드가 없으면 리스너가 중첩되어 같은 요청에 여러 번 응답하게 된다.
-  if (window.__saideInjected) return;
-  window.__saideInjected = true;
+  // 확장을 다시 불러와도 열려 있던 페이지에는 이전 인스턴스의 전역 값이 남는다.
+  // 단순 true 플래그면 새 스크립트가 리스너를 등록하지 못해 페이지를 새로 고칠 때까지 모든 읽기가 실패한다.
+  // 이전 인스턴스의 런타임이 아직 유효할 때만 재주입을 건너뛴다.
+  if (window.__saideInjected?.()) return;
+  const runtime = chrome.runtime;
+  window.__saideInjected = () => { try { return Boolean(runtime?.id); } catch { return false; } };
 
   chrome.runtime.onMessage.addListener((msg: SWToContent, sender, sendResponse) => {
     if (sender.id !== chrome.runtime.id || !msg || !validControl(msg.control)) return false;
@@ -71,8 +78,24 @@ export default defineUnlistedScript(() => {
         } else if (msg.type === 'EXTRACT') {
           sendResponse({
             type: 'EXTRACTED',
-            payload: await extractPage(msg.budgetTokens),
+            payload: await extractPage(msg.budgetTokens, msg.purpose),
           } satisfies ContentToSW);
+        } else if (msg.type === 'LOCATE_DOCUMENT') {
+          const location = captureDocumentListLocation(msg.title);
+          sendResponse(location
+            ? { type: 'DOCUMENT_LOCATED', location } satisfies ContentToSW
+            : { type: 'FAILED', error: { code: 'UNKNOWN', message: `현재 목록에서 문서를 하나로 식별할 수 없습니다: ${msg.title}` } } satisfies ContentToSW);
+        } else if (msg.type === 'SCAN_ATTACHMENTS') {
+          sendResponse({ type: 'ATTACHMENTS_FOUND', items: listAttachments() } satisfies ContentToSW);
+        } else if (msg.type === 'CLICK_ATTACHMENT') {
+          const found = listAttachments().some(item => item.index === msg.index && item.name === msg.name);
+          sendResponse({ type: 'ATTACHMENT_CLICKED', clicked: found } satisfies ContentToSW);
+          // 문서 열기와 같이 응답 포트를 먼저 닫아야 같은 프레임 이동·폼 전송에도 응답이 보존된다.
+          if (found) setTimeout(() => {
+            if (Date.now() < msg.control.deadline && !cancelled.has(msg.control.id)) clickAttachment(msg.index, msg.name);
+          }, 0);
+        } else if (msg.type === 'RESTORE_DOCUMENT_LIST') {
+          sendResponse({ type: 'DOCUMENT_LIST_RESTORED', restored: restoreDocumentListLocation(msg.location) } satisfies ContentToSW);
         } else if (msg.type === 'OPEN_DOCUMENT') {
           const target = findDocumentOpenTarget(msg.title);
           if (!target) {
@@ -83,7 +106,9 @@ export default defineUnlistedScript(() => {
           } else {
             sendResponse({ type: 'OPENING_DOCUMENT', title: msg.title } satisfies ContentToSW);
             // 응답 포트가 닫힌 뒤 실행해야 같은 프레임 이동에도 성공 응답이 보존된다.
-            setTimeout(() => openDocumentTarget(target), 0);
+            setTimeout(() => {
+              if (Date.now() < msg.control.deadline && !cancelled.has(msg.control.id)) openDocumentTarget(target);
+            }, 0);
           }
         } else if (msg.type === 'ACT' && validAction(msg.action)) {
           sendResponse({
@@ -104,7 +129,7 @@ export default defineUnlistedScript(() => {
 
 /* ── 추출 ──────────────────────────────────────────────── */
 
-async function extractPage(budgetTokens: number): Promise<ExtractedPage> {
+async function extractPage(budgetTokens: number, purpose: 'page' | 'document-detail' = 'page'): Promise<ExtractedPage> {
   let raw = '';
   let method: ExtractMethod = 'readability';
   const structuredData = extractStructuredDocumentList();
@@ -113,6 +138,10 @@ async function extractPage(budgetTokens: number): Promise<ExtractedPage> {
   if (structuredData) {
     raw = serializeDocumentList(structuredData);
     method = 'onnara-document-list';
+  } else if (purpose === 'document-detail') {
+    // 문서 상세는 리더 모드로 거르지 않고 보이는 본문 전체(같은 출처 하위 프레임 포함)를 읽는다.
+    raw = collectDocumentText();
+    method = 'innerText';
   }
 
   // ① 유튜브는 Readability로 아무것도 못 건진다. 자막을 먼저 시도한다.
@@ -156,6 +185,7 @@ async function extractPage(budgetTokens: number): Promise<ExtractedPage> {
     method,
     extractedAt: Date.now(),
     structuredData: structuredData ?? undefined,
+    attachments: scanAttachments(),
   };
 }
 

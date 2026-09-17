@@ -27,6 +27,12 @@ it('동시 부분 저장이 다른 필드의 변경을 잃지 않는다', async 
   await Promise.all([saveSettings({ model: 'test:model' }), saveSettings({ theme: 'dark' }), saveSettings({ locale: 'en' })]);
   expect(await loadSettings()).toMatchObject({ model: 'test:model', theme: 'dark', locale: 'en' });
 });
+it('이전 버전에 저장된 LLM 무응답 제한은 다시 적용하지 않는다', async () => {
+  data['saide.settings'] = { model: 'test:model', agentIdleTimeoutMs: 30_000 };
+  const settings = await loadSettings();
+  expect(settings.model).toBe('test:model');
+  expect(settings).not.toHaveProperty('agentIdleTimeoutMs');
+});
 it('Web Locks가 있으면 확장 문서 간 공유 잠금을 사용한다', async () => {
   const request = vi.fn(async (_name, work) => work());
   vi.stubGlobal('navigator', { locks: { request } });

@@ -77,3 +77,17 @@ it('온나라 받은문서 표를 행·열 구조로 추출한다', async () => 
     },
   });
 });
+
+it('확장을 다시 불러와 이전 런타임이 무효가 되면 열린 페이지에 다시 주입해 리스너를 등록한다', () => {
+  const oldRuntime = chrome.runtime as { id?: string };
+  const addListener = vi.fn();
+  injected.main();
+  expect(addListener).not.toHaveBeenCalled();
+  // 새 런타임이 붙었더라도 이전 인스턴스의 리스너는 무효가 된 런타임에 묶여 있다.
+  vi.stubGlobal('chrome', { runtime: { id: 'ext', onMessage: { addListener } } });
+  injected.main();
+  expect(addListener).not.toHaveBeenCalled();
+  oldRuntime.id = undefined;
+  injected.main();
+  expect(addListener).toHaveBeenCalledTimes(1);
+});

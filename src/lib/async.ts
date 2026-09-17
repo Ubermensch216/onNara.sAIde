@@ -21,18 +21,3 @@ export function deadlineSignal(ms: number, outer?: AbortSignal) {
     dispose() { clearTimeout(timer); outer?.removeEventListener('abort', abort); },
   };
 }
-
-/** Byte-level inactivity bound; a long but progressing generation may continue. */
-export function idleSignal(ms: number, outer?: AbortSignal) {
-  const controller = new AbortController();
-  const abort = () => controller.abort(outer?.reason);
-  let timer: ReturnType<typeof setTimeout>;
-  const touch = () => {
-    clearTimeout(timer);
-    if (!controller.signal.aborted) timer = setTimeout(() => controller.abort(new DOMException('Response timed out', 'TimeoutError')), ms);
-  };
-  if (outer?.aborted) abort();
-  else outer?.addEventListener('abort', abort, { once: true });
-  touch();
-  return { signal: controller.signal, touch, dispose() { clearTimeout(timer); outer?.removeEventListener('abort', abort); } };
-}
