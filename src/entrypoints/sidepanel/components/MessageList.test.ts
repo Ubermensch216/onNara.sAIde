@@ -71,3 +71,12 @@ it('답변 안의 다운로드 링크를 누르면 페이지 이동 없이 해�
   expect(external.defaultPrevented).toBe(false);
   expect(onDownloadLink).toHaveBeenCalledTimes(1);
 });
+
+it('AI 답변과 자동화 실행 결과에 서로 다른 출처 표시를 붙인다', async () => {
+  const mixed: UiMessage[] = [
+    { id: 1, conversationId: 1, role: 'assistant', content: '요약입니다', createdAt: 1 },
+    { id: 2, conversationId: 1, role: 'assistant', content: '첨부 1건을 내려받았습니다', origin: 'automation', createdAt: 2 },
+  ];
+  await act(() => root.render(createElement(MessageList, { messages: mixed, dark: false, showThinking: false, deleteDisabled: false, onDelete })));
+  expect([...document.querySelectorAll('.origin-badge')].map(badge => badge.textContent)).toEqual(['AI 생성 · 검토 필요', '자동화 실행 기록']);
+});

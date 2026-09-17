@@ -1,6 +1,10 @@
 import { abortable } from '@/lib/async';
 import { isAttachmentDownloadRequest } from '@/lib/onnara/attachments';
 import { downloadDocumentAttachments, formatAttachmentReport, releaseWorkTab } from '@/lib/onnara/download';
+import { enqueueAutomation, recordAutomation, workTabLock, type AutomationJob } from '@/lib/automation/jobs';
+import { exportDocumentList, isListExportRequest } from '@/lib/automation/export-list';
+import { ACTION_CARD_SCHEMA, actionCardInstruction, isActionCardRequest, parseActionCard, renderActionCard } from '@/lib/ai/action-card';
+import { describeResult } from '@/lib/onnara/download';
 /**
  * 채팅 상태. 계획서 §5 Phase 2–3
  *
@@ -396,10 +400,23 @@ async function submit(set: Set, get: Get, text: string, settings: Settings, epoc
 
     const report = async (content: string) => {
       if (!owns() || get().abort?.signal.aborted) return;
-      const message = { conversationId: conv.id, role: 'assistant' as const, content, createdAt: Date.now() };
+      // 자동화 실행 결과는 AI 답변과 구분해 표시한다.
+      const message = { conversationId: conv.id, role: 'assistant' as const, content, origin: 'automation' as const, createdAt: Date.now() };
       const reportId = await addMessage(message);
       ownSet(s => ({ messages: [...s.messages, { ...message, id: reportId }] }));
     };
+    // "목록을 엑셀로 내보내줘"는 AI 생성 없이 자동화 작업으로 처리한다.
+    if (isListExportRequest(trimmed)) {
+      if (pageTabId === null) { ownSet({ error: TAB_MISSING_ERROR }); return; }
+      const page = await get().attachPage(pageTabId, settings, true);
+      if (!page || !owns()) return;
+      ownSet({ documentProgress: '문서 목록을 파일로 저장하는 중 (자동화 탭에서도 볼 수 있습니다)' });
+      const { finished } = enqueueAutomation({ kind: 'export-list', label: page.structuredData?.listName ?? page.title, origin: 'chat',
+        run: signal => exportDocumentList(page, signal) });
+      const job = await finished;
+      await report(formatExportReport(job));
+      return;
+    }
     // "요약하고 첨부도 받아줘"처럼 둘 다 요청하면 다운로드만 하고 끝내지 않는다. 요약 경로에서 문서마다 함께 처리한다.
     const wantsDownload = isAttachmentDownloadRequest(trimmed);
     const withAttachments = wantsDownload && isDocumentSummaryRequest(trimmed);
@@ -424,6 +441,7 @@ async function submit(set: Set, get: Get, text: string, settings: Settings, epoc
         role: 'assistant' as const,
         content: localAnswer,
         notice: '온나라 문서 목록을 화면의 표 구조에서 읽어 작성했습니다.',
+        origin: 'automation' as const,
         createdAt: Date.now() + 1,
       };
       const assistantId = await addMessage(assistantMsg);
@@ -490,7 +508,8 @@ async function prepareDocumentSummary(
   /** 있으면 요약과 함께 첨부도 받고 그 결과를 이 함수로 답변에 남긴다. */
   reportAttachments?: (content: string) => Promise<void>,
 ): Promise<boolean> {
-  if (!isDocumentSummaryRequest(text)) return true;
+  const actionMode = isActionCardRequest(text);
+  if (!isDocumentSummaryRequest(text) && !actionMode) return true;
   if (tabId === null) { set({ error: TAB_MISSING_ERROR }); return false; }
   const state = get();
   const signal = state.abort?.signal;
@@ -506,6 +525,12 @@ async function prepareDocumentSummary(
       await downloadDocumentAttachments({ tabId, page: listPage, prompt: text, signal,
         progress: documentProgress => set({ documentProgress }), report: reportAttachments });
       if (signal.aborted || view !== epochs.view) return false;
+    }
+    // 이미 연 상세 화면이면 그 화면으로 카드를 만든다.
+    if (actionMode) {
+      set({ documentProgress: 'AI가 핵심·조치사항을 정리하고 원문과 대조하는 중입니다. CPU에서는 수 분 걸릴 수 있습니다.' });
+      await runActionCard(set, get, settings, listPage.title, listPage);
+      return false;
     }
     return true;
   }
@@ -535,14 +560,15 @@ async function prepareDocumentSummary(
   let batching = true;
   const withAttachments = Boolean(reportAttachments);
   // 첨부를 함께 받으면 한 건이어도 문서별 보고가 필요하므로 배치 경로로 처리한다.
-  const batch = titles.length > 1 || withAttachments;
+  const batch = titles.length > 1 || withAttachments || actionMode;
   // 여러 문서는 복제한 목록 탭 하나를 끝까지 재사용한다(문서마다 목록 복원을 반복하지 않는다).
   const keepWorkTab = titles.length > 1;
   try {
     for (const [index, title] of titles.entries()) {
     if (signal?.aborted || epoch !== epochs.attachment) return false;
     set({ extracting: true, streaming: true, startedAt: Date.now(), expectedPrefillSec: 0, abort: controller, documentProgress: `${index + 1}/${titles.length}번째 문서 본문을 읽는 중 · ${title}` });
-    const response = await sendToSW({
+    // 자동화 탭 작업과 같은 온나라 작업 탭을 쓰므로 잠금을 거친다. AI 생성은 잠금 밖에서 한다.
+    const response = await workTabLock(() => sendToSW({
       type: 'READ_DOCUMENT',
       tabId,
       title,
@@ -550,7 +576,7 @@ async function prepareDocumentSummary(
       ...(withAttachments ? { withAttachments } : {}),
       ...(keepWorkTab ? { keepWorkTab } : {}),
       control: { id: '', deadline: 0, expectedUrl: state.currentUrl || undefined },
-    }, signal, withAttachments ? 170_000 : 120_000);
+    }, signal, withAttachments ? 170_000 : 120_000));
     if (epoch !== epochs.attachment || signal?.aborted) return false;
     if (response.type === 'ERROR') {
       // 권한 문제는 나머지 문서도 똑같이 실패한다. 계속 돌리지 않고 바로 멈춰 권한 허용 버튼을 보여 준다.
@@ -574,11 +600,16 @@ async function prepareDocumentSummary(
         ...(typeof patch === 'function' ? patch(current) : patch),
         ...(batching ? { streaming: true, abort: controller } : {}),
       }));
-      await runGeneration(batchSet, batchGet, { ...settings, thinkMode: 'off' });
+      if (actionMode) await runActionCard(batchSet, get, settings, title, response.payload);
+      else await runGeneration(batchSet, batchGet, { ...settings, thinkMode: 'off' });
       if (signal?.aborted) return false;
       if (get().error) failures.push(`${title}: ${get().error!.message}`);
       // 요약 바로 아래에 같은 문서의 첨부 다운로드 결과를 남긴다.
-      if (reportAttachments) await reportAttachments(formatAttachmentReport(title, { results: response.attachments, error: response.attachmentError }));
+      if (reportAttachments) {
+        recordAutomation({ kind: 'download-attachments', label: title,
+          ...(response.attachments ? { files: response.attachments } : {}), ...(response.attachmentError ? { error: response.attachmentError } : {}) });
+        await reportAttachments(formatAttachmentReport(title, { results: response.attachments, error: response.attachmentError }));
+      }
     }
     }
     if (failures.length) set({ error: { code: 'UNKNOWN', message: `일부 문서를 처리하지 못했습니다.\n${failures.join('\n')}` } });
@@ -592,7 +623,7 @@ async function prepareDocumentSummary(
     return false;
   } finally {
     batching = false;
-    if (keepWorkTab) void releaseWorkTab(tabId);
+    if (keepWorkTab) void workTabLock(() => releaseWorkTab(tabId));
     if (epoch === epochs.attachment) set({ extracting: false });
   }
 }
@@ -605,6 +636,12 @@ async function prepareDocumentSummary(
  *   문서마다 "명시되어 있지 않습니다"만 늘어놓는다. 형식은 사용자 요청과 문서
  *   자체의 구성을 따르게 한다.
  */
+/** 목록 내보내기 결과를 답변 문구로 만든다. */
+export function formatExportReport(job: AutomationJob): string {
+  if (job.error) return `${job.label}\n목록 내보내기 실패: ${job.error.message}`;
+  return `${job.label}\n${job.summary ?? '목록을 저장했습니다.'} 경로를 누르면 파일이 열리고, "폴더 열기"를 누르면 저장 위치가 탐색기로 열립니다.\n${(job.files ?? []).map(describeResult).join('\n')}`;
+}
+
 export function documentBatchInstruction(title: string, request: string, attachmentsHandled = false): string {
   return [
     `첨부된 페이지 내용은 문서 '${title}'의 상세 화면이다. 이 문서 한 건의 본문을 직접 읽고 사용자 요청에 답하라.`,
@@ -688,6 +725,42 @@ function freshAttachment(
 
 const STALE_NOTICE =
   '페이지가 바뀌어 이전 본문을 떼어냈습니다. 현재 페이지 내용은 참조하지 않았습니다.';
+
+/**
+ * 핵심·조치사항 카드(S01). JSON 스키마로만 답하게 하고, 원문 대조 결과를 붙여 보여 준다.
+ * 토큰 스트림은 JSON이라 화면에 흘리지 않고 진행 표시만 한다.
+ */
+async function runActionCard(set: Set, get: Get, settings: Settings, title: string, page: ExtractedPage) {
+  const conv = get().conversation;
+  if (!conv) return;
+  const abort = get().abort ?? new AbortController();
+  const startedAt = Date.now();
+  const context = buildContext([{ role: 'user', content: actionCardInstruction(title) }], settings.numCtx, toAttachment(page, null));
+  const placeholder: UiMessage = { id: `streaming-${crypto.randomUUID()}`, conversationId: conv.id, role: 'assistant', content: '', createdAt: startedAt, streaming: true };
+  set(s => ({ messages: [...s.messages, placeholder], streaming: true, startedAt, expectedPrefillSec: uncachedPrefillSeconds(null, context), abort, error: null }));
+  let raw = '';
+  try {
+    const perf = await abortable(streamChat(settings.endpoint, {
+      model: settings.model, messages: context, stream: true, think: false, keep_alive: settings.keepAlive,
+      format: ACTION_CARD_SCHEMA as unknown as Record<string, unknown>,
+      // 사실 추출이므로 표현의 다양성이 필요 없다.
+      options: { temperature: 0, num_ctx: settings.numCtx },
+    }, { onToken: token => { raw += token; } }, abort.signal), abort.signal);
+    abort.signal.throwIfAborted();
+    const card = parseActionCard(raw);
+    if (!card) throw new Error('AI 응답을 핵심·조치사항 형식으로 읽지 못했습니다. 다시 요청해 보세요.');
+    const content = renderActionCard(title, card, page.text);
+    const id = await addMessage({ conversationId: conv.id, clientId: String(placeholder.id), role: 'assistant', content, perf: perf ?? undefined, createdAt: startedAt });
+    set(s => ({
+      messages: s.messages.map(m => m.id === placeholder.id ? { ...m, id, content, perf: perf ?? undefined, streaming: false } : m),
+      streaming: false, startedAt: null, abort: null, lastContext: null,
+    }));
+  } catch (e) {
+    const err = e instanceof OllamaError ? e : null;
+    const aborted = err?.code === 'ABORTED' || abort.signal.aborted;
+    set(s => ({ messages: s.messages.filter(m => m.id !== placeholder.id), streaming: false, startedAt: null, abort: null, error: aborted ? null : toAppError(err, e) }));
+  }
+}
 
 async function runGeneration(set: Set, get: Get, settings: Settings) {
   const conv = get().conversation;

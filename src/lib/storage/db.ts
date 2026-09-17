@@ -45,6 +45,8 @@ export interface StoredMessage {
    *   스키마 버전을 올리지 않아도 되는 비인덱스 필드다.
    */
   steps?: AgentStep[];
+  /** 'automation'이면 AI가 생성한 글이 아니라 자동화 실행 결과다. 없으면 AI 답변으로 본다. 비인덱스 필드. */
+  origin?: 'automation';
   createdAt: number;
 }
 

@@ -93,6 +93,13 @@ function Message({
         <AgentSteps steps={msg.steps} live={Boolean(msg.streaming)} />
       )}
 
+      {/* AI가 쓴 글은 검토가 필요하고, 자동화 결과는 실제로 일어난 일이다. 읽는 사람이 바로 구분하게 한다. */}
+      {!empty && (
+        <div className={`origin-badge ${msg.origin === 'automation' ? 'automation' : 'ai'}`}>
+          {msg.origin === 'automation' ? t('msg.originAutomation') : t('msg.originAi')}
+        </div>
+      )}
+
       {empty && msg.streaming ? (
         <Typing />
       ) : (

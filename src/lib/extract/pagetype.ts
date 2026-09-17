@@ -59,15 +59,16 @@ export function suggestedOrder(kind: PageKind): string[] {
   switch (kind) {
     case 'video':
       // 자막이 있으면 요약이 잘 먹는다. 없으면 화면 캡처가 대안이다.
-      return ['summary', 'three-lines', 'screen', 'ask', 'translate-page'];
+      return ['summary', 'three-lines', 'screen', 'ask', 'translate-page', 'actions'];
     case 'code':
       // 코드 페이지에서 번역은 거의 쓸 일이 없다. 맨 뒤로 민다.
-      return ['summary', 'ask', 'three-lines', 'screen', 'translate-page'];
+      return ['summary', 'ask', 'three-lines', 'screen', 'translate-page', 'actions'];
     case 'doc':
       // 읽는 글이다. 외국어 문서를 만나는 곳도 여기라 번역을 앞으로 올린다.
-      return ['summary', 'three-lines', 'translate-page', 'ask', 'screen'];
+      return ['summary', 'three-lines', 'translate-page', 'ask', 'screen', 'actions'];
     default:
-      return ['summary', 'three-lines', 'translate-page', 'ask', 'screen'];
+      // 온나라 업무 화면은 여기에 속한다. 요약 다음에 공문 카드를 둔다(요약이 첫 번째라는 원칙은 유지).
+      return ['summary', 'actions', 'three-lines', 'translate-page', 'ask', 'screen'];
   }
 }
 

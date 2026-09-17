@@ -99,6 +99,16 @@ export function buildPageTranslation(lang?: string): string {
 
 export const PAGE_PRESETS: Preset[] = [
   {
+    // 공문 카드(S01). 목록이면 체크한 문서마다, 상세 화면이면 지금 문서로 만든다.
+    id: 'actions',
+    label: '핵심·조치사항',
+    slash: '/actions',
+    aliases: ['/조치'],
+    hint: '공문의 할 일·제출물·기한을 원문과 대조해 정리합니다',
+    needs: 'page',
+    build: () => '선택한 문서의 핵심·조치사항을 정리해줘',
+  },
+  {
     id: 'summary',
     label: '이 페이지 요약',
     slash: '/summary',

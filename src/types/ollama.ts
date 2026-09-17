@@ -76,6 +76,8 @@ export interface ChatRequest {
   /** 기본 "10m". 16GB 머신에서 6.9GB 상주라 30분은 과하다. */
   keep_alive?: string;
   tools?: ToolSchema[];
+  /** 구조화 출력용 JSON 스키마. 소형 모델의 형식 이탈을 막는다(핵심·조치사항 카드). */
+  format?: Record<string, unknown>;
   options?: ChatOptions;
 }
 

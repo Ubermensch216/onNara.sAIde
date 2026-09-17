@@ -11,7 +11,8 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  flex: none;
+  flex: 0 1 auto;
+  min-width: 0;
 }
 
 .msgs {
@@ -600,3 +601,172 @@
   background: var(--danger-soft);
   color: var(--danger);
 }
+
+/* ── AI 도우미 · 자동화 탭 ──
+ * 두 탭만 둔다. 좁은 사이드패널에서 세 개 이상은 글자가 잘린다.
+ * 자동화는 초록(--ok) 계열로 구분해, 결과 표시(출처 배지)와 같은 색 언어를 쓴다.
+ */
+
+.view-tabs {
+  flex: none;
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.view-tab {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 0 7px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--fg-muted);
+  border-bottom: 2px solid transparent;
+}
+
+.view-tab:hover { color: var(--fg); }
+.view-tab.on { color: var(--accent); border-bottom-color: var(--accent); }
+.view-tab.auto.on { color: var(--ok); border-bottom-color: var(--ok); }
+
+.view-tab-count {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--ok);
+  background: var(--ok-soft);
+  border-radius: 999px;
+  padding: 1px 6px;
+}
+
+.origin-badge {
+  align-self: flex-start;
+  font-size: 10.5px;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+
+.origin-badge.ai { color: var(--accent); background: var(--accent-soft); }
+.origin-badge.automation { color: var(--ok); background: var(--ok-soft); }
+
+/* ── 자동화 탭 ── */
+
+.auto {
+  height: 100%;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  font-size: 12.5px;
+}
+
+.auto-target {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.auto-target-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.auto-target-text span { color: var(--fg-muted); }
+.auto-ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.auto-error { color: var(--danger) !important; }
+
+.auto-actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 8px;
+}
+
+.auto-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  text-align: left;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--fg);
+}
+
+.auto-card:hover:not(:disabled) { border-color: var(--ok); background: var(--ok-soft); }
+.auto-card:disabled { cursor: default; }
+.auto-card:disabled .auto-card-title { color: var(--fg-muted); }
+.auto-card-title { font-weight: 600; font-size: 13px; }
+.auto-card-desc { color: var(--fg-muted); font-size: 11.5px; line-height: 1.45; }
+
+.auto-jobs { display: flex; flex-direction: column; gap: 6px; }
+
+.auto-jobs-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 600;
+  color: var(--fg-muted);
+}
+
+.auto-empty, .auto-foot { color: var(--fg-muted); margin: 0; }
+.auto-foot { font-size: 11.5px; }
+
+.auto-job-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+
+.auto-job {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.auto-job-head { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.auto-job-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.auto-status {
+  flex: none;
+  font-size: 10.5px;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 1px 6px;
+  color: var(--fg-muted);
+  background: var(--surface-2);
+}
+
+.auto-job.running .auto-status { color: var(--accent); background: var(--accent-soft); }
+.auto-job.done .auto-status { color: var(--ok); background: var(--ok-soft); }
+.auto-job.failed .auto-status { color: var(--danger); background: var(--danger-soft); }
+
+.auto-origin { flex: none; font-size: 10.5px; color: var(--fg-muted); }
+.auto-job-error { color: var(--danger); line-height: 1.45; }
+.auto-job-summary { color: var(--fg-muted); }
+
+.auto-files { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.auto-file { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.auto-file-failed { color: var(--fg-muted); }
+
+.auto-path, .auto-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  text-align: left;
+  font-size: inherit;
+}
+
+.auto-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.auto-link { flex: none; font-size: 11.5px; }
+.auto-path:hover, .auto-link:hover { text-decoration: underline; }

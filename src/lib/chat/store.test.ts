@@ -533,3 +533,57 @@ it('요약과 첨부 다운로드를 함께 요청하면 문서마다 한 번 �
   expect(answers[3]).toContain('첨부 파일을 찾지 못했습니다');
   expect(useChat.getState().error).toBeNull();
 });
+
+it('AI 대화의 목록 내보내기 요청은 모델을 부르지 않고 자동화 작업으로 저장한 뒤 결과를 남긴다', async () => {
+  const common = { url: 'https://onnara.test/main', title: '받은문서', text: '목록', charCount: 100,
+    truncated: false, keptRatio: 1, estimatedTokens: 30, method: 'onnara-document-list' as const, extractedAt: Date.now() };
+  vi.stubGlobal('chrome', {
+    runtime: { sendMessage: vi.fn(async () => ({ type: 'PAGE_EXTRACTED', payload: { ...common, structuredData: {
+      kind: 'onnara-document-list', listName: '받은문서', columns: [], rows: [{ title: '문서 A' }], selectedTitles: [],
+    } } })) },
+    downloads: { download: vi.fn(async () => 9), search: vi.fn(async () => [{ id: 9, state: 'complete', filename: 'C:\Downloads\받은문서.csv' }]) },
+    storage: { local: { get: vi.fn(async () => ({})), set: vi.fn(async () => undefined) } },
+  });
+  URL.createObjectURL = vi.fn(() => 'blob:csv');
+  URL.revokeObjectURL = vi.fn();
+  const generate = vi.spyOn(stream, 'streamChat');
+  await useChat.getState().openForTab(1, common.url);
+  await useChat.getState().send('받은문서 목록을 엑셀로 내보내줘', DEFAULT_SETTINGS);
+  expect(generate).not.toHaveBeenCalled();
+  const answer = useChat.getState().messages.find(message => message.role === 'assistant')!;
+  expect(answer.origin).toBe('automation');
+  expect(answer.content).toContain('(#saide-download=open:9)');
+  expect(useChat.getState().streaming).toBe(false);
+});
+
+it('핵심·조치사항 요청은 문서마다 JSON 스키마로 생성하고 원문과 대조한 카드를 남긴다', async () => {
+  const common = { url: 'https://onnara.test/main', title: '받은문서', text: '목록', charCount: 100,
+    truncated: false, keptRatio: 1, estimatedTokens: 30, method: 'innerText' as const, extractedAt: Date.now() };
+  const body = '2. 참석자 명단을 붙임 서식에 작성하여 2026. 9. 30.(수)까지 감사담당관으로 제출하여 주시기 바랍니다.';
+  vi.stubGlobal('chrome', { runtime: { sendMessage: vi.fn(async (message: { type: string; title?: string }) => {
+    if (message.type === 'EXTRACT_PAGE') return { type: 'PAGE_EXTRACTED', payload: { ...common, structuredData: {
+      kind: 'onnara-document-list', listName: '받은문서', columns: [], rows: [{ title: '워크숍 알림' }, { title: '통계 알림' }], selectedTitles: ['워크숍 알림', '통계 알림'],
+    } } };
+    if (message.type !== 'READ_DOCUMENT') return { type: 'ACTIVE_TAB', tab: null };
+    return { type: 'DOCUMENT_READ', requestedTitle: message.title, payload: { ...common, title: message.title, text: message.title === '워크숍 알림' ? body : '통계를 알립니다.' } };
+  }) } });
+  const formats: unknown[] = [];
+  vi.spyOn(stream, 'streamChat').mockImplementation(async (_endpoint, request, handlers) => {
+    formats.push(request.format);
+    const workshop = request.messages.some(message => message.content.includes('참석자 명단'));
+    handlers.onToken?.(workshop
+      ? JSON.stringify({ summary: '명단 제출 요청', actions: [{ task: '참석자 명단 제출', evidence: '참석자 명단을 붙임 서식에 작성하여 2026. 9. 30.(수)까지 감사담당관으로 제출' }], deliverables: ['참석자 명단'], deadlines: [], contact: '' })
+      : '죄송합니다, JSON으로 답할 수 없습니다');
+    return null;
+  });
+  await useChat.getState().openForTab(1, common.url);
+  await useChat.getState().send('선택한 문서의 핵심·조치사항을 정리해줘', DEFAULT_SETTINGS);
+  expect(formats).toHaveLength(2);
+  expect(formats[0]).toMatchObject({ type: 'object', required: expect.arrayContaining(['actions', 'deadlines']) });
+  const cards = useChat.getState().messages.filter(message => message.role === 'assistant');
+  expect(cards).toHaveLength(1);
+  expect(cards[0]!.content).toContain('참석자 명단 제출 (원문 확인)');
+  expect(cards[0]!.content).toContain('AI가 빠뜨려 코드가 찾음');
+  expect(useChat.getState().error?.message).toContain('통계 알림');
+  expect(useChat.getState().streaming).toBe(false);
+});

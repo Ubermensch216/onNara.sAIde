@@ -53,6 +53,18 @@ import { ConversationMenu } from './components/ConversationMenu';
 import { PageContextChip } from './components/PageContextChip';
 import { PageActions } from './components/PageActions';
 import { ScreenshotChip } from './components/ScreenshotChip';
+import { AutomationPanel } from './components/AutomationPanel';
+import { useAutomation } from '@/lib/automation/jobs';
+import type { DownloadLinkAction } from '@/lib/downloads/links';
+import type { AppError } from '@/lib/messaging/protocol';
+
+type View = 'ai' | 'automation';
+const VIEW_KEY = 'saide.view';
+
+/** 마지막으로 연 탭은 이 브라우저에서만 기억한다. 저장소를 못 쓰면 AI 도우미로 시작한다. */
+function initialView(): View {
+  try { return localStorage.getItem(VIEW_KEY) === 'automation' ? 'automation' : 'ai'; } catch { return 'ai'; }
+}
 
 export default function App() {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
@@ -73,10 +85,21 @@ export default function App() {
    * 기본 꺼짐인 이유는 비용이다 — 툴 8종 설명이 매 턴 프리필에 들어간다.
    */
   const [agentMode, setAgentMode] = useState(false);
+  /**
+   * AI 도우미(판단·생성)와 자동화(온나라 화면의 정해진 동작)를 탭으로 나눈다.
+   * 결과를 믿는 방식이 다르기 때문이다 — AI는 검토가 필요하고, 자동화는 실행 기록이 남는다.
+   */
+  const [view, setView] = useState<View>(initialView);
+  const [automationError, setAutomationError] = useState<AppError | null>(null);
+  const runningJobs = useAutomation(state => state.jobs.filter(job => job.status === 'queued' || job.status === 'running').length);
   const warmedFor = useRef('');
 
   const t = useT();
   const chat = useChat();
+
+  useEffect(() => {
+    try { localStorage.setItem(VIEW_KEY, view); } catch { /* 기억하지 못해도 동작에는 지장 없다 */ }
+  }, [view]);
 
   /* ── 설정 ── */
   useEffect(() => {
@@ -505,6 +528,28 @@ export default function App() {
         </button>
       </header>
 
+      <nav className="view-tabs" role="tablist" aria-label={t('view.tabs')}>
+        <button type="button" role="tab" aria-selected={view === 'ai'} className={`view-tab ${view === 'ai' ? 'on' : ''}`} onClick={() => setView('ai')}>
+          {t('view.ai')}
+        </button>
+        <button type="button" role="tab" aria-selected={view === 'automation'} className={`view-tab auto ${view === 'automation' ? 'on' : ''}`} onClick={() => setView('automation')}>
+          {t('view.automation')}
+          {runningJobs > 0 && <span className="view-tab-count">{t('view.running', { n: runningJobs })}</span>}
+        </button>
+      </nav>
+
+      {view === 'automation' ? (
+        <>
+          {automationError && (
+            <ErrorBanner error={automationError} model={settings.model} onClose={() => setAutomationError(null)} onAction={handleErrorAction} />
+          )}
+          <main className="app-main">
+            <AutomationPanel tab={tab} onDownloadLink={(action, downloadId) => openDownload(action, downloadId, setAutomationError)} />
+          </main>
+        </>
+      ) : (
+      <>
+
       <HealthBanner health={health} model={settings.model} onRetry={refresh} />
       {warming && <WarmupProgress seconds={MEASURED_COLD_LOAD_SEC} />}
 
@@ -539,11 +584,7 @@ export default function App() {
             showThinking={settings.thinkMode !== 'off'}
             deleteDisabled={chat.streaming || chat.loading}
             onDelete={chat.removeMessage}
-            onDownloadLink={(action, downloadId) => {
-              // 클릭 중 첫 동작으로 호출해야 chrome.downloads.open의 사용자 제스처 조건을 만족한다.
-              void runDownloadLink(action, downloadId).catch((error: unknown) =>
-                chat.setError({ code: 'UNKNOWN', message: error instanceof Error ? error.message : String(error) }));
-            }}
+            onDownloadLink={(action, downloadId) => openDownload(action, downloadId, chat.setError)}
           />
         )}
       </main>
@@ -653,6 +694,9 @@ export default function App() {
         />
       </div>
 
+      </>
+      )}
+
       {menuOpen && (
         <ConversationMenu
           currentId={chat.conversation?.id ?? null}
@@ -668,6 +712,12 @@ export default function App() {
       )}
     </div>
   );
+}
+
+/** 답변·자동화 기록의 파일 링크. 클릭 중 첫 동작으로 호출해야 chrome.downloads.open의 사용자 제스처 조건을 만족한다. */
+function openDownload(action: DownloadLinkAction, downloadId: number, onError: (error: AppError) => void) {
+  void runDownloadLink(action, downloadId).catch((error: unknown) =>
+    onError({ code: 'UNKNOWN', message: error instanceof Error ? error.message : String(error) }));
 }
 
 /* ── 진행 표시 ─────────────────────────────────────────── */

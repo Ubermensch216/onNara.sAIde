@@ -1,6 +1,7 @@
 import { sendToSW, type AppError, type AttachmentDownloadResult, type ExtractedPage } from '@/lib/messaging/protocol';
 import { requestedDocumentTitles } from './document-list';
 import { downloadLink, escapeMarkdownText } from '@/lib/downloads/links';
+import { cancelAutomation, enqueueAutomation, workTabLock, type AutomationJob } from '@/lib/automation/jobs';
 
 /** 서비스 워커 요청 한도(180초)보다 약간 짧게 둔다. 한 문서의 첨부를 모두 받는 시간이다. */
 const DOCUMENT_DOWNLOAD_TIMEOUT_MS = 170_000;
@@ -15,6 +16,7 @@ const STATUS_LABEL: Record<AttachmentDownloadResult['status'], string> = {
 /**
  * 목록 화면이면 요청한 문서를 백그라운드 작업 탭에서 열어 첨부를 받고,
  * 상세 화면이면 현재 화면의 첨부를 받는다. 실제 클릭·감지는 서비스 워커가 한다.
+ * AI 대화에서 요청하든 자동화 탭에서 누르든 같은 작업 대기열을 거친다.
  */
 export async function downloadDocumentAttachments(options: {
   tabId: number; page: ExtractedPage; prompt: string; signal: AbortSignal;
@@ -24,32 +26,54 @@ export async function downloadDocumentAttachments(options: {
   const { tabId, page, prompt, signal, progress, report } = options;
   const titles: Array<string | undefined> = page.structuredData ? requestedDocumentTitles(prompt, page.structuredData) : [undefined];
   if (!titles.length) throw new Error('첨부를 받을 문서를 체크하거나 문서 제목 또는 전체 문서를 지정하세요.');
-  // 여러 문서면 복제한 목록 탭을 문서마다 새로 만들지 않고 이어서 쓴다. 끝나면 반드시 닫는다.
+  progress(`첨부 파일을 찾아 내려받는 중 · 문서 ${titles.length}건 (진행 상황은 자동화 탭에서도 볼 수 있습니다)`);
+  await queueAttachmentDownloads({ tabId, page, titles, origin: 'chat', signal,
+    onFinished: async (job, index) => {
+      progress(`${index + 1}/${titles.length}번째 문서 첨부 처리 완료 · ${job.label}`);
+      await report(formatAttachmentReport(job.label, { results: job.files, error: job.error }));
+    } });
+}
+
+/**
+ * 문서마다 첨부 다운로드 작업을 대기열에 넣고 순서대로 끝날 때까지 기다린다.
+ * 여러 문서면 복제한 목록 탭을 이어서 쓰고, 모두 끝나면(취소 포함) 닫는다.
+ */
+export async function queueAttachmentDownloads(options: {
+  tabId: number; page: ExtractedPage; titles: Array<string | undefined>;
+  origin: 'automation' | 'chat'; signal?: AbortSignal;
+  onFinished?: (job: AutomationJob, index: number) => Promise<void> | void;
+}): Promise<AutomationJob[]> {
+  const { tabId, page, titles, origin, signal, onFinished } = options;
   const keepWorkTab = titles.filter(Boolean).length > 1;
-  try {
-    for (const [index, title] of titles.entries()) {
-      signal.throwIfAborted();
-      const label = title ?? page.title;
-      progress(`${index + 1}/${titles.length}번째 문서의 첨부 파일을 찾아 내려받는 중 · ${label}`);
+  // 앞 문서의 파일이 아직 내려받는 중이면 동시 다운로드를 피하려고 뒤 문서는 실행하지 않는다.
+  let stalled = false;
+  const pending = titles.map(title => enqueueAutomation({
+    kind: 'download-attachments', label: title ?? page.title, origin,
+    run: async jobSignal => {
+      if (stalled) return { error: { code: 'UNKNOWN', message: '앞 문서의 다운로드가 아직 끝나지 않아 실행하지 않았습니다. 다운로드가 끝난 뒤 다시 요청하세요.' } };
       const response = await sendToSW({
         type: 'DOWNLOAD_ATTACHMENTS', tabId, ...(title ? { title, keepWorkTab } : {}),
         control: { id: '', deadline: 0, expectedUrl: page.url },
-      }, signal, DOCUMENT_DOWNLOAD_TIMEOUT_MS);
-      signal.throwIfAborted();
-      if (response.type === 'ERROR') {
-        await report(formatAttachmentReport(label, { error: response.error }));
-        continue;
-      }
-      if (response.type !== 'ATTACHMENTS_DOWNLOADED') {
-        await report(`${label}\n첨부 다운로드 결과를 받지 못했습니다.`);
-        continue;
-      }
-      await report(formatAttachmentReport(label, { results: response.results }));
-      // 진행 중인 파일이 있으면 동시 다운로드를 피하려고 다음 문서로 넘어가지 않는다.
-      if (response.results.some(result => result.status === 'in_progress')) return;
+      }, jobSignal, DOCUMENT_DOWNLOAD_TIMEOUT_MS);
+      if (response.type === 'ERROR') return { error: response.error };
+      if (response.type !== 'ATTACHMENTS_DOWNLOADED') return { error: { code: 'UNKNOWN', message: '첨부 다운로드 결과를 받지 못했습니다.' } };
+      if (response.results.some(result => result.status === 'in_progress')) stalled = true;
+      return { files: response.results };
+    },
+  }));
+  const cancel = () => { for (const { id } of pending) cancelAutomation(id); };
+  signal?.addEventListener('abort', cancel, { once: true });
+  const jobs: AutomationJob[] = [];
+  try {
+    for (const [index, { finished }] of pending.entries()) {
+      const job = await finished;
+      jobs.push(job);
+      if (!signal?.aborted) await onFinished?.(job, index);
     }
+    return jobs;
   } finally {
-    if (keepWorkTab) await releaseWorkTab(tabId);
+    signal?.removeEventListener('abort', cancel);
+    if (keepWorkTab) await workTabLock(() => releaseWorkTab(tabId));
   }
 }
 
