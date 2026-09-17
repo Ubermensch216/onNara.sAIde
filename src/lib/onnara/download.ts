@@ -26,7 +26,7 @@ export async function downloadDocumentAttachments(options: {
   const { tabId, page, prompt, signal, progress, report } = options;
   const titles: Array<string | undefined> = page.structuredData ? requestedDocumentTitles(prompt, page.structuredData) : [undefined];
   if (!titles.length) throw new Error('첨부를 받을 문서를 체크하거나 문서 제목 또는 전체 문서를 지정하세요.');
-  progress(`첨부 파일을 찾아 내려받는 중 · 문서 ${titles.length}건 (진행 상황은 자동화 탭에서도 볼 수 있습니다)`);
+  progress(`첨부 파일을 찾아 내려받는 중 · 문서 ${titles.length}건 (진행 상황은 도구 탭에서도 볼 수 있습니다)`);
   await queueAttachmentDownloads({ tabId, page, titles, origin: 'chat', signal,
     onFinished: async (job, index) => {
       progress(`${index + 1}/${titles.length}번째 문서 첨부 처리 완료 · ${job.label}`);

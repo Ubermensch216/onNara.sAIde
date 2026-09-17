@@ -357,8 +357,8 @@ const ko = {
 
   /* ── AI·자동화 구분 ── */
   'view.tabs': '기능 구분',
-  'view.ai': 'AI 도우미',
-  'view.automation': '자동화',
+  'view.ai': 'AI',
+  'view.automation': '도구',
   'view.running': '{n}건 실행 중',
   'msg.originAi': 'AI 생성 · 검토 필요',
   'msg.originAutomation': '자동화 실행 기록',
@@ -734,8 +734,8 @@ const en = {
 
   /* ── AI and automation ── */
   'view.tabs': 'Feature type',
-  'view.ai': 'AI assistant',
-  'view.automation': 'Automation',
+  'view.ai': 'AI',
+  'view.automation': 'Tools',
   'view.running': '{n} running',
   'msg.originAi': 'AI-generated · review needed',
   'msg.originAutomation': 'Automation record',

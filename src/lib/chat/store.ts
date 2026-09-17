@@ -410,7 +410,7 @@ async function submit(set: Set, get: Get, text: string, settings: Settings, epoc
       if (pageTabId === null) { ownSet({ error: TAB_MISSING_ERROR }); return; }
       const page = await get().attachPage(pageTabId, settings, true);
       if (!page || !owns()) return;
-      ownSet({ documentProgress: '문서 목록을 파일로 저장하는 중 (자동화 탭에서도 볼 수 있습니다)' });
+      ownSet({ documentProgress: '문서 목록을 파일로 저장하는 중 (도구 탭에서도 볼 수 있습니다)' });
       const { finished } = enqueueAutomation({ kind: 'export-list', label: page.structuredData?.listName ?? page.title, origin: 'chat',
         run: signal => exportDocumentList(page, signal) });
       const job = await finished;

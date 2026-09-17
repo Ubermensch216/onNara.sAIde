@@ -38,8 +38,8 @@ describe('카탈로그 완결성', () => {
   });
 
   it('한국어 카탈로그에 영어만 있는 항목이 없다', () => {
-    // 번역을 깜빡하고 영어를 그대로 둔 항목을 잡는다. 고유명사는 예외.
-    const allowLatin = new Set<MessageKey>(['msg.coldStart']);
+    // 번역을 깜빡하고 영어를 그대로 둔 항목을 잡는다. 고유명사와, 한국어 화면에서도 'AI'로 쓰기로 정한 탭 이름은 예외.
+    const allowLatin = new Set<MessageKey>(['msg.coldStart', 'view.ai']);
     for (const k of Object.keys(MESSAGES.ko) as MessageKey[]) {
       if (allowLatin.has(k)) continue;
       expect(/[가-힣]/.test(MESSAGES.ko[k]), k).toBe(true);
