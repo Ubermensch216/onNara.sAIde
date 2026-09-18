@@ -23,6 +23,7 @@ import { collectDocumentText } from '@/lib/extract/document-text';
 import { findPdfUrls, readPdfSources } from '@/lib/extract/pdf-source';
 import {
   extractStructuredDocumentList,
+  describeOpenFailure,
   describeOpenTarget,
   findDocumentOpenTarget,
   openDocumentTarget,
@@ -87,7 +88,14 @@ export default defineUnlistedScript(() => {
           const location = captureDocumentListLocation(msg.title);
           sendResponse(location
             ? { type: 'DOCUMENT_LOCATED', location } satisfies ContentToSW
-            : { type: 'FAILED', error: { code: 'UNKNOWN', message: `현재 목록에서 문서를 하나로 식별할 수 없습니다: ${msg.title}` } } satisfies ContentToSW);
+            : {
+                type: 'FAILED',
+                error: {
+                  code: 'UNKNOWN',
+                  message: `현재 목록에서 문서를 하나로 식별할 수 없습니다: ${msg.title}`,
+                  hint: describeOpenFailure(msg.title),
+                },
+              } satisfies ContentToSW);
         } else if (msg.type === 'SCAN_ATTACHMENTS') {
           sendResponse({ type: 'ATTACHMENTS_FOUND', items: listAttachments() } satisfies ContentToSW);
         } else if (msg.type === 'CLICK_ATTACHMENT') {
@@ -117,7 +125,7 @@ export default defineUnlistedScript(() => {
           if (!target) {
             sendResponse({
               type: 'FAILED',
-              error: { code: 'UNKNOWN', message: `목록에서 문서를 하나로 식별할 수 없습니다: ${msg.title}` },
+              error: { code: 'UNKNOWN', message: `목록에서 문서를 하나로 식별할 수 없습니다: ${msg.title}`, hint: describeOpenFailure(msg.title) },
             } satisfies ContentToSW);
           } else {
             sendResponse({ type: 'OPENING_DOCUMENT', title: msg.title, target: describeOpenTarget(target) } satisfies ContentToSW);

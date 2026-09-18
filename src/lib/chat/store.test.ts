@@ -565,3 +565,30 @@ it('핵심·조치사항 요청은 문서마다 JSON 스키마로 생성하고 �
   expect(useChat.getState().error?.message).toContain('통계 알림');
   expect(useChat.getState().streaming).toBe(false);
 });
+
+it('문서를 바꿔 세션을 다시 여는 중에 보낸 요약 요청도 버리지 않고 새 문서 대화에서 처리한다', async () => {
+  // 패널은 탭이 바뀌면 openForTab을 기다리지 않고 부른다(App.tsx). 그 사이 사용자가 보낸 요청이 사라지면
+  // 화면에서는 "지시를 무시한 것"으로 보이고, 한 번 더 보내야 동작한다.
+  const page = { title: '문서', text: '문서 본문', charCount: 100, truncated: false, keptRatio: 1, estimatedTokens: 30, method: 'innerText' as const, extractedAt: Date.now() };
+  vi.stubGlobal('chrome', { runtime: { sendMessage: vi.fn(async (message: { type: string; tabId?: number }) =>
+    message.type === 'EXTRACT_PAGE' ? { type: 'PAGE_EXTRACTED', payload: { ...page, url: 'https://onnara.test/doc-b' } } : { type: 'ACTIVE_TAB', tab: null }) } });
+  const generate = vi.spyOn(stream, 'streamChat').mockImplementation(async (_endpoint, _request, handlers) => {
+    handlers.onToken?.('요약 결과');
+    return null;
+  });
+
+  await useChat.getState().openForTab(1, 'https://onnara.test/doc-a');
+  await useChat.getState().send('앞 문서를 요약해줘', DEFAULT_SETTINGS);
+  const firstConversation = useChat.getState().conversation!.id;
+  generate.mockClear();
+
+  // 사용자가 다른 문서를 선택했다. 패널이 대화를 갈아끼우는 동안 곧바로 요약을 지시한다.
+  void useChat.getState().openForTab(1, 'https://onnara.test/doc-b');
+  await useChat.getState().send('선택한 문서를 요약해줘', DEFAULT_SETTINGS);
+
+  expect(generate).toHaveBeenCalledTimes(1);
+  expect(useChat.getState().messages.map(message => message.content)).toContain('선택한 문서를 요약해줘');
+  expect(useChat.getState().conversation!.id).not.toBe(firstConversation);
+  expect(useChat.getState().conversation!.originUrl).toBe('https://onnara.test/doc-b');
+  expect(useChat.getState().streaming).toBe(false);
+});

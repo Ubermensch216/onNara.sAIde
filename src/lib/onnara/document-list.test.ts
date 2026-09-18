@@ -2,6 +2,7 @@
 import { beforeEach, expect, it } from 'vitest';
 import {
   buildDocumentTitleTable,
+  describeOpenFailure,
   extractStructuredDocumentList,
   findDocumentOpenTarget,
   isDocumentListTableRequest,
@@ -124,4 +125,56 @@ it('sameDocumentTitle은 공백, 괄호/인용부호 및 접두사 차이가 있
   expect(sameDocumentTitle(title2, title2WithPrefix)).toBe(true);
 
   expect(sameDocumentTitle(title1, title2)).toBe(false);
+});
+
+/* ── 문서 열기 대상을 하나로 못 고르던 사례 ── */
+
+it('머리글 앞에 숨은 행이 있어도 제목 열을 찾아 숨은 전체 제목으로 문서를 연다', () => {
+  // 목록 위쪽의 검색 조건 행이 숨겨져 있으면 예전에는 제목 열 번호를 찾지 못해 열기에 실패했다.
+  document.body.innerHTML = `<table>
+    ${'<tr style="display:none"><td colspan="3">숨은 틀 행</td></tr>'.repeat(5)}
+    <tr><th>선택</th><th>제목</th><th>상태</th></tr>
+    <tr>
+      <td><input type="checkbox" checked><input type="hidden" name="chkDocTitle" value="감사결과에 대한 재심의 신청 및 조치계획 보고"></td>
+      <td><a href="javascript:void(0)" onclick="openDoc()">감사결과에 대한 재심의 신청 및 조치계…</a></td>
+      <td>접수</td>
+    </tr>
+  </table>`;
+  expect(extractStructuredDocumentList()?.selectedTitles).toEqual(['감사결과에 대한 재심의 신청 및 조치계획 보고']);
+  expect(findDocumentOpenTarget('감사결과에 대한 재심의 신청 및 조치계획 보고')?.getAttribute('onclick')).toBe('openDoc()');
+});
+
+it('같은 제목이 여러 행에 있으면 사용자가 체크한 행을 연다', () => {
+  document.body.innerHTML = `<table>
+    <tr><th>선택</th><th>제목</th><th>상태</th></tr>
+    <tr><td><input type="checkbox"></td><td><a onclick="openFirst()">감사결과에 대한 재심의 신청 및 조치계획 보고</a></td><td>반려</td></tr>
+    <tr><td><input type="checkbox" checked></td><td><a onclick="openSecond()">감사결과에 대한 재심의 신청 및 조치계획 보고</a></td><td>접수</td></tr>
+  </table>`;
+  expect(findDocumentOpenTarget('감사결과에 대한 재심의 신청 및 조치계획 보고')?.getAttribute('onclick')).toBe('openSecond()');
+});
+
+it('제목이 서로 다른 문서에 걸치면 임의로 열지 않고 이유를 알려 준다', () => {
+  document.body.innerHTML = `<table>
+    <tr><th>선택</th><th>제목</th><th>상태</th></tr>
+    <tr><td><input type="checkbox"></td><td><a onclick="openA()">감사결과에 대한 재심의 신청 및 조치계획 보고 1차</a></td><td>접수</td></tr>
+    <tr><td><input type="checkbox"></td><td><a onclick="openB()">감사결과에 대한 재심의 신청 및 조치계획 보고 2차</a></td><td>접수</td></tr>
+  </table>`;
+  expect(findDocumentOpenTarget('감사결과에 대한 재심의 신청 및 조치계획 보고')).toBeNull();
+  expect(describeOpenFailure('감사결과에 대한 재심의 신청 및 조치계획 보고')).toContain('제목이 겹치는 행이 2건');
+});
+
+it('목록에 없는 제목이면 현재 목록 제목을 예로 들어 안내한다', () => {
+  const hint = describeOpenFailure('없는 문서 제목');
+  expect(hint).toContain('일치하는 행이 없습니다');
+  expect(hint).toContain('감사결과 처분요구 이행실태 특정감사 자료 제출');
+});
+
+it('작업 탭에서 제목이 더 짧게 줄어 보여도 같은 문서로 보고 연다', () => {
+  // 복제한 작업 탭은 폭이 달라 목록 제목을 원본보다 짧게 줄여 그린다. 숨은 전체 제목이 없는 목록에서는
+  // 글자가 정확히 같지 않아 예전에는 문서를 열지 못했다.
+  document.body.innerHTML = `<table>
+    <tr><th>선택</th><th>제목</th><th>상태</th></tr>
+    <tr><td><input type="checkbox"></td><td><a onclick="openDoc()">감사결과에 대한 재심의 신청 및 조치계…</a></td><td>접수</td></tr>
+  </table>`;
+  expect(findDocumentOpenTarget('감사결과에 대한 재심의 신청 및 조치계획 보고')?.getAttribute('onclick')).toBe('openDoc()');
 });

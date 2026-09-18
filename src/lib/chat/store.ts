@@ -151,6 +151,27 @@ export function createChatSession() {
     tasks.add(task);
     try { await task; } finally { tasks.delete(task); }
   }
+
+  /**
+   * 대화를 갈아끼우는 중(loading)인지 알려 주는 약속.
+   *
+   * ★ 패널은 탭이 바뀌면 openForTab을 기다리지 않고 호출한다(App.tsx).
+   *   그 사이에 사용자가 보낸 요청을 그냥 버리면, 화면에서는 "지시를 무시했다"로 보이고
+   *   한 번 더 보내야 동작한다. 버리지 말고 복원이 끝나기를 기다린다.
+   */
+  let restoring: Promise<void> = Promise.resolve();
+  function during<T>(work: Promise<T>): Promise<T> {
+    restoring = work.then(() => undefined, () => undefined);
+    return work;
+  }
+  /** 화면 상태가 안정될 때까지 기다린다. 기다리는 동안 또 갈아끼우면 그것도 기다린다. */
+  async function settled(): Promise<void> {
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const current = restoring;
+      await current;
+      if (restoring === current) return;
+    }
+  }
   return createStore<ChatState>((set, get) => ({
     conversation: null,
     loading: false,
@@ -176,21 +197,25 @@ export function createChatSession() {
       const epoch = ++epochs.view;
       ++epochs.attachment;
       set({ loading: true, extracting: false, conversation: null, pending: null, messages: [], page: null, screenshot: null, currentUrl: url, error: null, lastContext: null, agentSteps: [] });
-      try {
-        const conversation = await findForTab(tabId, url);
-        const messages = conversation ? await listMessages(conversation.id) : [];
-        if (epoch === epochs.view) set({ conversation, pending: conversation ? null : { tabId, url }, messages, loading: false });
-      } catch (error) { if (epoch === epochs.view) set({ loading: false, error: toAppError(null, error) }); }
+      await during((async () => {
+        try {
+          const conversation = await findForTab(tabId, url);
+          const messages = conversation ? await listMessages(conversation.id) : [];
+          if (epoch === epochs.view) set({ conversation, pending: conversation ? null : { tabId, url }, messages, loading: false });
+        } catch (error) { if (epoch === epochs.view) set({ loading: false, error: toAppError(null, error) }); }
+      })());
     },
     async openConversation(conversation) {
       get().stop();
       const epoch = ++epochs.view;
       ++epochs.attachment;
       set({ loading: true, extracting: false, page: null, screenshot: null, messages: [], pending: null, conversation: null, agentSteps: [], lastContext: null, error: null });
-      try {
-        const messages = await listMessages(conversation.id);
-        if (epoch === epochs.view) set({ conversation, messages, loading: false });
-      } catch (error) { if (epoch === epochs.view) set({ loading: false, error: toAppError(null, error) }); }
+      await during((async () => {
+        try {
+          const messages = await listMessages(conversation.id);
+          if (epoch === epochs.view) set({ conversation, messages, loading: false });
+        } catch (error) { if (epoch === epochs.view) set({ loading: false, error: toAppError(null, error) }); }
+      })());
     },
 
     /**
@@ -273,9 +298,12 @@ export function createChatSession() {
     detachScreenshot: () => { ++epochs.attachment; set({ screenshot: null, lastContext: null, extracting: false }); },
 
     async send(text, settings) {
+      // 대화를 갈아끼우는 중이면 그 복원이 끝난 뒤에 보낸다(요청을 조용히 버리지 않는다).
+      await settled();
       await track(submit(set, get, text, settings, epochs));
     },
     async sendAgent(text, settings, tab) {
+      await settled();
       await track(submit(set, get, text, settings, epochs, tab));
     },
 

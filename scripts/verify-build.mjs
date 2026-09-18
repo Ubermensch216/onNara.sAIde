@@ -1,4 +1,4 @@
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import assert from 'node:assert/strict';
 
 const dir = '.output/edge-mv3';
@@ -10,7 +10,12 @@ assert.equal(manifest.short_name, '온나라 sAIde');
 assert.ok(manifest.permissions.includes('webNavigation'), 'iframe discovery requires webNavigation');
 assert.ok(!manifest.content_scripts?.length, 'Content scripts must remain on-demand');
 assert.deepEqual(manifest.host_permissions, ['http://localhost:11434/*', 'http://127.0.0.1:11434/*']);
-for (const file of [manifest.background.service_worker, manifest.side_panel.default_path, manifest.options_ui.page, 'injected.js', ...Object.values(manifest.icons)]) {
+// 본문이 PDF 뷰어로 표시되는 문서를 읽으려면 오프스크린 문서와 pdf.js 워커가 함께 실려야 한다.
+assert.ok(manifest.permissions.includes('offscreen'), 'PDF body reading requires the offscreen permission');
+for (const file of [manifest.background.service_worker, manifest.side_panel.default_path, manifest.options_ui.page, 'injected.js', 'offscreen.html', ...Object.values(manifest.icons)]) {
   assert.ok(existsSync(`${dir}/${file}`), `Missing build artifact: ${file}`);
 }
+assert.ok(readdirSync(`${dir}/assets`).some(file => /^pdf\.worker.*\.mjs$/.test(file)), 'Missing pdf.js worker asset');
+// 글꼴을 넣지 않은 한글 PDF는 이 CMap이 없으면 한 글자도 읽지 못한다.
+assert.ok(readdirSync(`${dir}/cmaps`).includes('UniKS-UCS2-H.bcmap'), 'Missing Korean CMap files');
 console.log('Edge MV3 manifest and referenced build artifacts verified.');

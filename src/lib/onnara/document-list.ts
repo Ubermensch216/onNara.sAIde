@@ -78,6 +78,29 @@ function cellsOf(row: Element): Element[] {
   });
 }
 
+/**
+ * 표에서 문서 목록으로 볼 수 있는 행.
+ *
+ * ★ 목록 추출과 "문서 열기" 대상 찾기가 **같은 함수**로 행과 머리글을 봐야 한다.
+ *   한쪽만 숨은 행을 걸러내면 열 번호가 어긋나, 목록에는 있는 문서를 열지 못한다.
+ */
+function listRows(container: Element): Element[] {
+  return rowsOf(container).filter(isAvailable);
+}
+
+/** 제목 열이 있는 머리글 행을 찾는다. 위쪽 몇 줄에 검색 조건 행이 있는 목록이 있어 앞부분을 훑는다. */
+function findHeader(rows: Element[]): { index: number; columns: DocumentListColumn[] } | null {
+  for (let index = 0; index < Math.min(rows.length, 5); index++) {
+    const columns = cellsOf(rows[index]!).map((cell, sourceIndex) => {
+      const label = elementText(cell);
+      const key = fieldForHeader(label);
+      return key ? { key, label, sourceIndex } : null;
+    }).filter((column): column is DocumentListColumn => Boolean(column));
+    if (columns.some(column => column.key === 'title') && columns.length >= 2) return { index, columns };
+  }
+  return null;
+}
+
 function listName(root: ParentNode, container: Element): string {
   const caption = container.querySelector('caption');
   const aria = container.getAttribute('aria-label');
@@ -95,25 +118,12 @@ export function extractStructuredDocumentList(root: ParentNode = document): Stru
 
   for (const container of root.querySelectorAll(CONTAINER_SELECTOR)) {
     if (!isAvailable(container)) continue;
-    const rows = rowsOf(container).filter(isAvailable);
+    const rows = listRows(container);
     if (rows.length < 2) continue;
 
-    let headerIndex = -1;
-    let columns: DocumentListColumn[] = [];
-    for (let index = 0; index < Math.min(rows.length, 5); index++) {
-      const candidate = cellsOf(rows[index]!);
-      const mapped = candidate.map((cell, sourceIndex) => {
-        const label = elementText(cell);
-        const key = fieldForHeader(label);
-        return key ? { key, label, sourceIndex } : null;
-      }).filter((column): column is DocumentListColumn => Boolean(column));
-      if (mapped.some(column => column.key === 'title') && mapped.length >= 2) {
-        headerIndex = index;
-        columns = mapped;
-        break;
-      }
-    }
-    if (headerIndex < 0) continue;
+    const header = findHeader(rows);
+    if (!header) continue;
+    const { index: headerIndex, columns } = header;
 
     const data: StructuredDocumentList['rows'] = [];
     const selectedTitles: string[] = [];
@@ -233,31 +243,91 @@ export function matchDocumentTitle(prompt: string, list: StructuredDocumentList)
   return { status: 'none', candidates: titles };
 }
 
-/** 제목이 들어 있는 표 셀에서 실제 열기 동작을 가진 요소를 찾는다. */
-export function findDocumentOpenTarget(title: string, root: ParentNode = document): HTMLElement | null {
+interface OpenCandidate {
+  target: HTMLElement;
+  /** 그 행이 실제로 가리키는 문서 제목. 후보가 여럿일 때 같은 문서인지 가리는 기준이다. */
+  rowTitle: string;
+  /** 제목이 정확히 일치했는가(줄임·꼬리표 때문에 부분만 겹친 경우와 구분). */
+  exact: boolean;
+  checked: boolean;
+}
+
+/** 제목이 들어 있는 표 셀에서 실제 열기 동작을 가진 요소를 모은다. */
+export function findDocumentOpenCandidates(title: string, root: ParentNode = document): OpenCandidate[] {
   const wanted = searchable(title);
-  const matches: HTMLElement[] = [];
+  if (!wanted) return [];
+  const candidates: OpenCandidate[] = [];
   for (const container of root.querySelectorAll(CONTAINER_SELECTOR)) {
     if (!isAvailable(container)) continue;
-    const titleIndex = rowsOf(container).slice(0, 5)
-      .map(row => cellsOf(row).findIndex(cell => fieldForHeader(elementText(cell)) === 'title'))
-      .find(index => index >= 0);
-    for (const row of rowsOf(container)) {
-      if (!isAvailable(row)) continue;
+    const rows = listRows(container);
+    const titleIndex = findHeader(rows)?.columns.find(column => column.key === 'title')?.sourceIndex;
+    for (const row of rows) {
       const cells = cellsOf(row);
       const nativeTitle = row.querySelector<HTMLInputElement>('input[name="chkDocTitle"]');
-      const titleCell = cells.find(cell => searchable(elementText(cell)) === wanted) ??
-        (nativeTitle && searchable(nativeTitle.value) === wanted && titleIndex !== undefined ? cells[titleIndex] : null);
+      const nativeMatched = Boolean(nativeTitle && searchable(nativeTitle.value) === wanted);
+      const exactCell = cells.find(cell => searchable(elementText(cell)) === wanted) ??
+        (nativeMatched && titleIndex !== undefined ? cells[titleIndex] : undefined);
+      // 화면이 긴 제목을 줄이거나 [긴급]·첨부 표시를 덧붙이면 칸 글자가 제목과 정확히 같지 않다.
+      const partialCell = exactCell ? undefined : overlappingCell(cells, titleIndex, wanted);
+      const titleCell = exactCell ?? partialCell;
       if (!titleCell) continue;
-      const candidates = [...titleCell.querySelectorAll<HTMLElement>('a, button, [role="link"], [onclick], [ondblclick]')].filter(isAvailable);
-      const interactive = pickOpenLink(candidates, wanted, Boolean(nativeTitle && searchable(nativeTitle.value) === wanted));
+      const links = [...titleCell.querySelectorAll<HTMLElement>('a, button, [role="link"], [onclick], [ondblclick]')].filter(isAvailable);
+      const interactive = pickOpenLink(links, wanted, nativeMatched);
       // 제목 칸에 누를 요소가 없으면 행 전체에 열기 동작을 거는 목록이 있다.
       const rowAction = !interactive && row.matches('[onclick], [ondblclick]') ? row as HTMLElement : undefined;
       const target = interactive ?? rowAction ?? (titleCell as HTMLElement);
-      if (isAvailable(target)) matches.push(target);
+      if (!isAvailable(target)) continue;
+      candidates.push({
+        target,
+        rowTitle: cleanText(nativeTitle?.value) || elementText(titleCell),
+        exact: Boolean(exactCell),
+        checked: Boolean(row.querySelector('input[type="checkbox"]:checked, [role="checkbox"][aria-checked="true"]')),
+      });
     }
   }
-  return matches.length === 1 ? matches[0]! : null;
+  return candidates;
+}
+
+/**
+ * 제목 칸 후보 중 하나를 고른다.
+ *
+ * ★ 예전에는 후보가 둘 이상이면 무조건 포기했다. 그런데 온나라 목록은 머리글 표와 본문 표를
+ *   따로 그리거나 같은 문서를 두 번 접수해 같은 제목이 여러 행에 나오는 일이 있다.
+ *   가리키는 문서가 같으면 사용자가 체크한 행을, 없으면 첫 행을 연다.
+ *   제목이 서로 다른 문서에 걸쳤을 때만 임의로 열지 않는다.
+ */
+function chooseOpenCandidate(candidates: OpenCandidate[]): OpenCandidate | null {
+  const exact = candidates.filter(candidate => candidate.exact);
+  const pool = exact.length ? exact : candidates;
+  if (!pool.length) return null;
+  if (new Set(pool.map(candidate => searchable(candidate.rowTitle))).size > 1) return null;
+  return pool.find(candidate => candidate.checked) ?? pool[0]!;
+}
+
+export function findDocumentOpenTarget(title: string, root: ParentNode = document): HTMLElement | null {
+  return chooseOpenCandidate(findDocumentOpenCandidates(title, root))?.target ?? null;
+}
+
+/** 열 문서를 하나로 고르지 못한 이유. 오류 안내에 붙여 어디를 확인할지 알려 준다. */
+export function describeOpenFailure(title: string, root: ParentNode = document): string {
+  const candidates = findDocumentOpenCandidates(title, root);
+  if (candidates.length > 1) {
+    const titles = [...new Set(candidates.map(candidate => candidate.rowTitle))].slice(0, 3).join(' / ');
+    return `제목이 겹치는 행이 ${candidates.length}건입니다: ${titles}`;
+  }
+  const list = extractStructuredDocumentList(root);
+  if (!list?.rows.length) return '현재 화면에서 문서 목록 표를 찾지 못했습니다. 목록 화면에서 다시 요청하세요.';
+  const samples = list.rows.slice(0, 3).flatMap(row => row.title ? [row.title] : []).join(' / ');
+  return `목록 ${list.rows.length}건 중 제목이 일치하는 행이 없습니다. 현재 목록 제목 예: ${samples}`;
+}
+
+/** 제목 칸이 제목의 일부만 담고 있을 때 쓰는 느슨한 대조. 다른 문서까지 걸리지 않도록 길이를 제한한다. */
+function overlappingCell(cells: Element[], titleIndex: number | undefined, wanted: string): Element | undefined {
+  const overlaps = (value: string) => value.length >= 6 && wanted.length >= 6 &&
+    value.length <= wanted.length * 3 && (value.includes(wanted) || wanted.includes(value));
+  const byColumn = titleIndex !== undefined ? cells[titleIndex] : undefined;
+  if (byColumn && overlaps(searchable(elementText(byColumn)))) return byColumn;
+  return cells.find(cell => overlaps(searchable(elementText(cell))));
 }
 
 /**
