@@ -691,6 +691,7 @@ export default function App() {
           currentId={chat.conversation?.id ?? null}
           onPick={pickConversation}
           onClose={() => setMenuOpen(false)}
+          onRenamed={(id, title) => useChat.renameConversation(id, title)}
           onDeleted={(id) => {
             useChat.forgetConversation(id);
             if (chat.conversation?.id === id) {

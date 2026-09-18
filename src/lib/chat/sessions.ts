@@ -113,6 +113,14 @@ export function createChatSessions(makeSession: () => StoreApi<ChatState>) {
     await session.ready;
   }
 
+  /** 저장소에서 제목을 바꾼 뒤, 그 대화를 들고 있는 세션의 화면 표시도 맞춘다. */
+  function renameConversation(id: number, title: string) {
+    for (const { store } of sessions) {
+      const conversation = store.getState().conversation;
+      if (conversation?.id === id) store.setState({ conversation: { ...conversation, title } });
+    }
+  }
+
   function forgetConversation(id: number) {
     for (let index = sessions.length - 1; index >= 0; index--) {
       const session = sessions[index]!;
@@ -128,6 +136,7 @@ export function createChatSessions(makeSession: () => StoreApi<ChatState>) {
   show(active);
   return Object.assign(view, {
     forgetConversation,
+    renameConversation,
     isBusy: () => sessions.some(({ store }) => store.getState().streaming || store.getState().extracting),
     dispose: () => {
       ++selection;

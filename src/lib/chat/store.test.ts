@@ -700,3 +700,86 @@ it('체크한 문서가 없으면 읽지 않고 무엇을 해야 하는지 알�
   expect(useChat.getState().error).toMatchObject({ message: expect.stringContaining('문서를 체크한 뒤') });
   expect(useChat.getState().error!.hint).toContain('/요약 전체');
 });
+
+/* ── 문서를 바꿔 이어서 대화하기 ── */
+
+it('새 문서를 읽으면 앞 문서에 대한 문답은 화면에만 남고 모델 문맥에서는 빠진다', async () => {
+  const common = { url: 'https://onnara.test/main', title: '받은문서', text: '목록', charCount: 100,
+    truncated: false, keptRatio: 1, estimatedTokens: 30, method: 'innerText' as const, extractedAt: Date.now() };
+  let selected = ['문서 A'];
+  vi.stubGlobal('chrome', { runtime: { sendMessage: vi.fn(async (message: { type: string; title?: string }) => {
+    if (message.type === 'EXTRACT_PAGE') return { type: 'PAGE_EXTRACTED', payload: { ...common, structuredData: {
+      kind: 'onnara-document-list', listName: '받은문서', columns: [], rows: [{ title: '문서 A' }, { title: '문서 B' }],
+      selectedTitles: selected,
+    } } };
+    if (message.type !== 'READ_DOCUMENT') return { type: 'ACTIVE_TAB', tab: null };
+    return { type: 'DOCUMENT_READ', requestedTitle: message.title, payload: { ...common, title: message.title, text: `${message.title}의 본문` } };
+  }) } });
+  const generate = vi.spyOn(stream, 'streamChat').mockImplementation(async (_endpoint, _request, handlers) => {
+    handlers.onToken?.('답변');
+    return null;
+  });
+
+  await useChat.getState().openForTab(1, common.url);
+  await useChat.getState().runCommand('/읽기', 'read', '', DEFAULT_SETTINGS);
+  await useChat.getState().send('문서 A의 기한은?', DEFAULT_SETTINGS);
+  expect(generate.mock.calls.at(-1)![1].messages.some(message => message.content.includes('문서 A의 본문'))).toBe(true);
+
+  // 사용자가 온나라에서 다른 문서를 체크하고 다시 읽는다.
+  selected = ['문서 B'];
+  await useChat.getState().runCommand('/읽기', 'read', '', DEFAULT_SETTINGS);
+  await useChat.getState().send('이 문서의 기한은?', DEFAULT_SETTINGS);
+
+  const context = generate.mock.calls.at(-1)![1].messages;
+  expect(context.some(message => message.content.includes('문서 B의 본문'))).toBe(true);
+  expect(context.some(message => message.content.includes('문서 A의 본문'))).toBe(false);
+  expect(context.some(message => message.content.includes('문서 A의 기한은?'))).toBe(false);
+  // 화면 기록은 지우지 않는다.
+  expect(useChat.getState().messages.map(message => message.content)).toContain('문서 A의 기한은?');
+});
+
+it('본문 칩의 ×로 본문을 떼면 그 문서에 대한 문답도 모델 문맥에서 빠진다', async () => {
+  const page = { url: 'https://onnara.test/doc', title: '문서 A', text: '문서 A의 본문', charCount: 20,
+    truncated: false, keptRatio: 1, estimatedTokens: 10, method: 'innerText' as const, extractedAt: Date.now() };
+  vi.stubGlobal('chrome', { runtime: { sendMessage: vi.fn(async () => ({ type: 'PAGE_EXTRACTED', payload: page })) } });
+  const generate = vi.spyOn(stream, 'streamChat').mockImplementation(async (_endpoint, _request, handlers) => {
+    handlers.onToken?.('답변');
+    return null;
+  });
+
+  await useChat.getState().openForTab(1, page.url);
+  await useChat.getState().attachPage(1, DEFAULT_SETTINGS, true);
+  await useChat.getState().send('이 문서의 기한은?', DEFAULT_SETTINGS);
+  useChat.getState().detachPage();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  await useChat.getState().send('오늘 날씨 얘기나 하자', DEFAULT_SETTINGS);
+
+  const context = generate.mock.calls.at(-1)![1].messages;
+  expect(context.some(message => message.content.includes('문서 A의 본문'))).toBe(false);
+  expect(context.some(message => message.content.includes('이 문서의 기한은?'))).toBe(false);
+  expect(context.at(-1)!.content).toBe('오늘 날씨 얘기나 하자');
+});
+
+it('문맥 경계는 저장돼 대화를 다시 열어도 유지된다', async () => {
+  const page = { url: 'https://onnara.test/doc', title: '문서 A', text: '문서 A의 본문', charCount: 20,
+    truncated: false, keptRatio: 1, estimatedTokens: 10, method: 'innerText' as const, extractedAt: Date.now() };
+  vi.stubGlobal('chrome', { runtime: { sendMessage: vi.fn(async () => ({ type: 'PAGE_EXTRACTED', payload: page })) } });
+  const generate = vi.spyOn(stream, 'streamChat').mockImplementation(async (_endpoint, _request, handlers) => {
+    handlers.onToken?.('답변');
+    return null;
+  });
+
+  await useChat.getState().openForTab(1, page.url);
+  await useChat.getState().send('첫 질문', DEFAULT_SETTINGS);
+  useChat.getState().detachPage();
+  await new Promise(resolve => setTimeout(resolve, 0));
+
+  // 패널을 닫았다 다시 연 상황
+  useChat.dispose();
+  useChat = createChatSessions(createChatSession);
+  await useChat.getState().openForTab(1, page.url);
+  expect(useChat.getState().messages.map(message => message.content)).toContain('첫 질문');
+  await useChat.getState().send('다음 질문', DEFAULT_SETTINGS);
+  const context = generate.mock.calls.at(-1)![1].messages;
+  expect(context.some(message => message.content === '첫 질문')).toBe(false);
+});

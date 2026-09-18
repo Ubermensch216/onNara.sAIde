@@ -140,6 +140,10 @@ const ko = {
   /* ── 대화 목록 ── */
   'conv.empty': '저장된 대화가 없습니다.',
   'conv.deleteOne': '{title} 삭제',
+  'conv.rename': '제목 수정',
+  'conv.renameOne': '{title} 제목 수정',
+  'conv.renameSave': '제목 저장',
+  'conv.renameCancel': '제목 수정 취소',
   'conv.confirmDelete': '“{title}” 대화를 삭제할까요? 삭제 후 복구할 수 없습니다.',
   'conv.localHost': '로컬',
   'conv.unknownHost': '알 수 없음',
@@ -520,6 +524,10 @@ const en = {
 
   'conv.empty': 'No saved conversations.',
   'conv.deleteOne': 'Delete {title}',
+  'conv.rename': 'Rename',
+  'conv.renameOne': 'Rename {title}',
+  'conv.renameSave': 'Save title',
+  'conv.renameCancel': 'Cancel renaming',
   'conv.confirmDelete': 'Delete “{title}”? This cannot be undone.',
   'conv.localHost': 'local',
   'conv.unknownHost': 'unknown',

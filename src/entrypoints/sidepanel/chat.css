@@ -587,19 +587,46 @@
   margin-top: 1px;
 }
 
-.conv-del {
+/* 제목 수정·삭제 버튼. 좁은 패널이라 아이콘만 두고 이름은 툴팁·aria-label로 준다. */
+.conv-act {
   flex: none;
-  width: 24px;
-  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
   border-radius: 6px;
   font-size: 17px;
   line-height: 1;
   color: var(--fg-muted);
 }
 
-.conv-del:hover {
+.conv-act:hover {
+  background: var(--surface-2);
+  color: var(--fg);
+}
+
+.conv-act.ok:hover {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.conv-act.del:hover {
   background: var(--danger-soft);
   color: var(--danger);
+}
+
+/* 목록에서 그 자리 그대로 고친다. 제목 줄과 같은 크기라 편집 중에도 줄이 흔들리지 않는다. */
+.conv-edit {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--surface);
+  font-size: 13px;
+  font-weight: 600;
 }
 
 /* ── AI 도우미 · 자동화 탭 ──

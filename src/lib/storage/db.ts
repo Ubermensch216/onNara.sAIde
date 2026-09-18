@@ -19,6 +19,13 @@ export interface Conversation {
   originUrl: string;
   createdAt: number;
   updatedAt: number;
+  /**
+   * 모델에 넣기 시작할 시점(ms). 이보다 앞선 메시지는 화면에는 남지만 문맥에는 넣지 않는다.
+   *
+   * ★ 문서를 바꿔 새로 읽으면 앞 문서에 대한 문답은 더 이상 근거가 아니다. 그대로 두면
+   *   작은 모델이 지난 문서 이야기를 섞고, 좁은 문맥(num_ctx)도 그만큼 잡아먹는다.
+   */
+  contextFrom?: number;
 }
 
 export interface StoredMessage {

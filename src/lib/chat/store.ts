@@ -106,6 +106,11 @@ export interface ChatState {
   abort: AbortController | null;
   /** 직전 요청의 컨텍스트. 접두사 캐시 적중분을 계산하는 데 쓴다. */
   lastContext: ChatMessage[] | null;
+  /**
+   * 모델에 넣을 대화의 시작 시점(ms). 그 앞의 메시지는 화면에만 남는다.
+   * 문서를 새로 읽을 때마다 여기로 경계를 옮겨, 앞 문서 이야기가 새 문서 답변에 섞이지 않게 한다.
+   */
+  contextFrom: number;
 
   /* ── 에이전트 (Phase 5) ── */
 
@@ -188,6 +193,7 @@ export function createChatSession() {
     error: null,
     abort: null,
     lastContext: null,
+    contextFrom: 0,
     agentSteps: [],
     agentTurn: 0,
     pendingApproval: null,
@@ -202,7 +208,8 @@ export function createChatSession() {
         try {
           const conversation = await findForTab(tabId, url);
           const messages = conversation ? await listMessages(conversation.id) : [];
-          if (epoch === epochs.view) set({ conversation, pending: conversation ? null : { tabId, url }, messages, loading: false });
+          if (epoch === epochs.view) set({ conversation, pending: conversation ? null : { tabId, url }, messages, loading: false,
+            contextFrom: conversation?.contextFrom ?? 0 });
         } catch (error) { if (epoch === epochs.view) set({ loading: false, error: toAppError(null, error) }); }
       })());
     },
@@ -214,7 +221,7 @@ export function createChatSession() {
       await during((async () => {
         try {
           const messages = await listMessages(conversation.id);
-          if (epoch === epochs.view) set({ conversation, messages, loading: false });
+          if (epoch === epochs.view) set({ conversation, messages, loading: false, contextFrom: conversation.contextFrom ?? 0 });
         } catch (error) { if (epoch === epochs.view) set({ loading: false, error: toAppError(null, error) }); }
       })());
     },
@@ -295,7 +302,8 @@ export function createChatSession() {
       }
     },
 
-    detachPage: () => { ++epochs.attachment; set({ page: null, lastContext: null, extracting: false }); },
+    // 본문을 떼는 것은 "이 문서 이야기는 그만"이라는 뜻이다. 그 문서에 대한 문답도 문맥에서 뺀다.
+    detachPage: () => { ++epochs.attachment; set({ page: null, lastContext: null, extracting: false }); void moveContextBoundary(set, get); },
     detachScreenshot: () => { ++epochs.attachment; set({ screenshot: null, lastContext: null, extracting: false }); },
 
     async send(text, settings) {
@@ -344,7 +352,7 @@ export function createChatSession() {
         if (conversation) await deleteConversation(conversation.id);
         set({ conversation: null,
           pending: conversation ? { tabId: conversation.tabId, url: conversation.originUrl } : pending,
-          messages: [], page: null, screenshot: null, lastContext: null,
+          messages: [], page: null, screenshot: null, lastContext: null, contextFrom: 0,
           agentSteps: [], agentTurn: 0, expectedPrefillSec: 0,
         });
       } catch (error) { set({ error: toAppError(null, error) }); }
@@ -406,6 +414,25 @@ type Set = (
   partial: Partial<ChatState> | ((s: ChatState) => Partial<ChatState>),
 ) => void;
 type Get = () => ChatState;
+
+/**
+ * 문맥 경계를 지금으로 옮긴다. 이 시점보다 앞선 문답은 화면에만 남고 모델에는 가지 않는다.
+ *
+ * ★ 문서를 새로 읽을 때마다 부른다. 앞 문서 요약이 다음 문서 답변에 섞이면 사용자는
+ *   무엇을 근거로 한 답인지 알 수 없고, 좁은 문맥(num_ctx 4096)도 그만큼 잡아먹는다.
+ */
+async function moveContextBoundary(set: Set, get: Get, at = Date.now()): Promise<void> {
+  set({ contextFrom: at, lastContext: null });
+  const conversation = get().conversation;
+  if (!conversation) return;
+  set({ conversation: { ...conversation, contextFrom: at } });
+  await db.conversations.update(conversation.id, { contextFrom: at }).catch(() => undefined);
+}
+
+/** 모델에 넣을 대화. 경계 이전 메시지는 뺀다. */
+function contextMessages(state: ChatState): UiMessage[] {
+  return state.contextFrom ? state.messages.filter(message => message.createdAt >= state.contextFrom) : state.messages;
+}
 
 function guardedSet(set: Set, owns: () => boolean): Set {
   return patch => { if (owns()) set(patch); };
@@ -496,7 +523,11 @@ async function runDocumentCommand(
   try {
     const conv = await ensureConversation(ownSet, get, trimmed, owns);
     if (!conv || !owns()) return;
-    const userMsg = { conversationId: conv.id, role: 'user' as const, content: trimmed, createdAt: Date.now() };
+    // 문서를 새로 다루는 명령이다. 여기서부터가 새 문맥이다 — 앞 문서 문답은 모델에 보내지 않는다.
+    const startedAt = Date.now();
+    await moveContextBoundary(ownSet, get, startedAt);
+    if (!owns()) return;
+    const userMsg = { conversationId: conv.id, role: 'user' as const, content: trimmed, createdAt: startedAt };
     const id = await addMessage(userMsg);
     if (!owns()) return;
     ownSet(s => ({ messages: [...s.messages, { ...userMsg, id }] }));
@@ -593,7 +624,8 @@ function describeCurrentScreen(page: ExtractedPage): string {
 function describeAttachedDocuments(page: ExtractedPage | null, titles: string[]): string {
   const names = titles.length ? titles.map((title, index) => `${index + 1}. ${title}`).join('\n') : page?.title ?? '';
   return [`문서 ${titles.length || 1}건의 본문을 읽어 대화에 붙였습니다.`, names,
-    '이제 슬래시 없이 그냥 물어보세요. 예: "기한이 빠른 순서로 정리해줘"'].filter(Boolean).join('\n');
+    '이제 슬래시 없이 그냥 물어보세요. 예: "기한이 빠른 순서로 정리해줘"',
+    '앞서 다룬 문서에 대한 대화는 더 이상 참고하지 않습니다. 본문을 떼려면 본문 칩의 ×를 누르세요.'].filter(Boolean).join('\n');
 }
 
 /**
@@ -882,7 +914,7 @@ async function runGeneration(set: Set, get: Get, settings: Settings) {
   const { page, screenshot, stale } = freshAttachment(set, get);
 
   const context = buildContext(
-    get().messages,
+    contextMessages(get()),
     settings.numCtx,
     toAttachment(page, screenshot),
   );
