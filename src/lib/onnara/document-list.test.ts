@@ -1,18 +1,14 @@
 // @vitest-environment jsdom
 import { beforeEach, expect, it } from 'vitest';
 import {
-  buildDocumentTitleTable,
   describeOpenFailure,
   extractStructuredDocumentList,
   findDocumentOpenTarget,
-  isDocumentListTableRequest,
-  isDocumentSummaryRequest,
-  matchDocumentTitle,
-  requestedDocumentTitles,
   sameDocumentTitle,
   openDocumentTarget,
   serializeDocumentList,
 } from './document-list';
+import { commandTargets } from './commands';
 
 beforeEach(() => {
   document.body.innerHTML = `
@@ -27,29 +23,14 @@ beforeEach(() => {
     </table>`;
 });
 
-it('체크 문서만 선택하고 전체 요청은 현재 표시된 모든 행을 선택한다', () => {
+it('명령 대상은 체크한 문서이고, "전체"를 붙이면 화면의 모든 문서다', () => {
   document.querySelector<HTMLInputElement>('input[type="checkbox"]')!.checked = true;
   const list = extractStructuredDocumentList()!;
-  expect(requestedDocumentTitles('이 문서들의 내용을 요약해줘', list)).toEqual([list.rows[0]!.title]);
-  expect(requestedDocumentTitles('전체 문서를 읽고 요약해줘', list)).toEqual(list.rows.map(row => row.title));
+  expect(commandTargets(list)).toEqual([list.rows[0]!.title]);
+  expect(commandTargets(list, '전체')).toEqual(list.rows.map(row => row.title));
   document.querySelector<HTMLInputElement>('input[type="checkbox"]')!.checked = false;
-  expect(requestedDocumentTitles('선택한 문서를 요약해줘', extractStructuredDocumentList()!)).toEqual([]);
-});
-
-it('요약 요청에서 따옴표로 지정한 제목을 목록과 대조한다', () => {
-  const list = extractStructuredDocumentList()!;
-  const prompt = "'감사결과 처분요구 이행실태 특정감사 자료 제출' 문서를 읽고 핵심을 요약해줘.";
-  expect(isDocumentSummaryRequest(prompt)).toBe(true);
-  expect(matchDocumentTitle(prompt, list)).toEqual({
-    status: 'matched',
-    title: '감사결과 처분요구 이행실태 특정감사 자료 제출',
-  });
+  expect(commandTargets(extractStructuredDocumentList()!)).toEqual([]);
   expect(findDocumentOpenTarget('감사결과 처분요구 이행실태 특정감사 자료 제출')?.tagName).toBe('A');
-});
-
-it('제목이 일치하지 않으면 임의의 문서를 선택하지 않는다', () => {
-  const result = matchDocumentTitle('없는 제목의 문서를 요약해줘', extractStructuredDocumentList()!);
-  expect(result.status).toBe('none');
 });
 
 it('제목 링크는 클릭하고 일반 제목 셀은 더블클릭한다', () => {
@@ -78,15 +59,6 @@ it('받은문서 표의 헤더와 모든 표시 행을 구조화한다', () => {
     ],
   });
   expect(serializeDocumentList(list!)).toContain('현재 화면 표시 문서: 2건');
-});
-
-it('사용자 요청을 판별하고 Markdown 안전한 제목 표를 만든다', () => {
-  const prompt = '받은문서 메뉴에 리스트업된 모든 문서의 제목을 읽어서 테이블로 만들어줘.';
-  expect(isDocumentListTableRequest(prompt)).toBe(true);
-  const answer = buildDocumentTitleTable(prompt, extractStructuredDocumentList()!);
-  expect(answer).toContain('| 1 | 감사결과 처분요구 이행실태 특정감사 자료 제출 |');
-  expect(answer).toContain('| 2 | 제목에 \\| 기호가 있는 문서 |');
-  expect(answer).toContain('현재 화면에 렌더링된 목록 기준');
 });
 
 it.each([
@@ -178,3 +150,4 @@ it('작업 탭에서 제목이 더 짧게 줄어 보여도 같은 문서로 보�
   </table>`;
   expect(findDocumentOpenTarget('감사결과에 대한 재심의 신청 및 조치계획 보고')?.getAttribute('onclick')).toBe('openDoc()');
 });
+

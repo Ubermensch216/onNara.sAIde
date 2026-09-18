@@ -1,3 +1,4 @@
+import { DOCUMENT_COMMANDS } from '@/lib/onnara/commands';
 /**
  * 프롬프트 프리셋. 계획서 §5 Phase 3-4 / 3-6 / 4-3 / 4-4
  *
@@ -6,7 +7,8 @@
  */
 
 /** 프리셋이 요구하는 첨부물 */
-export type PresetNeeds = 'none' | 'page' | 'screen' | 'selection';
+/** 'documents'는 온나라 목록 명령이다. 나머지는 우클릭 메뉴의 선택 텍스트 프리셋에 쓴다. */
+export type PresetNeeds = 'none' | 'documents' | 'page' | 'screen' | 'selection';
 
 export interface Preset {
   id: string;
@@ -59,113 +61,6 @@ const LANGUAGE_ALIASES: Record<string, string> = {
  *   "/translate 영어로", "/translate 영어로 번역해줘"가 전부 빗나간다.
  *   조사와 "번역" 꼬리를 떼고 본다.
  */
-export function resolveLanguage(raw: string): string | null {
-  let t = raw.trim();
-  if (!t) return null;
-
-  t = t.replace(/번역(해\s*줘|해\s*주세요|해|하기|해줘)?/g, '').trim();
-  t = t.replace(/(으로|로|into|to)$/i, '').trim();
-  if (!t) return null;
-
-  const hit = LANGUAGE_ALIASES[t.toLowerCase()];
-  if (hit) return hit;
-
-  // 표에 없는 이름. 언어 이름치고 지나치게 길면 언어가 아니라고 본다.
-  return t.length <= 20 ? t : null;
-}
-
-/** 언어를 지정하지 않았을 때. 예전 선택 텍스트 번역과 같은 왕복 규칙을 쓴다. */
-const TRANSLATE_FALLBACK = '한국어로 번역해줘. 본문이 이미 한국어라면 영어로 번역해줘.';
-
-/**
- * 페이지 번역 프롬프트.
- *
- * ★ 본문을 여기에 다시 넣지 않는다. 본문은 이미 컨텍스트 앞쪽 고정 블록의
- *   <page_content>에 있고, 그 블록은 대화 내내 바이트 단위로 같아서 KV 캐시가
- *   재사용된다(실측 7,684ms → 183ms). 여기서 본문을 한 번 더 실으면 그 이득을
- *   버리는 데다 2,000토큰을 두 번 프리필한다.
- */
-export function buildPageTranslation(lang?: string): string {
-  const target = resolveLanguage(lang ?? '');
-  return [
-    `위 <page_content>의 내용을 ${target ? `${target}로 번역해줘.` : TRANSLATE_FALLBACK}`,
-    '제목부터 시작해 본문 순서대로 옮기고, 문단 구분은 원문 그대로 유지한다.',
-    '번역문만 출력한다. 원문을 다시 적거나 요약·설명·감상을 덧붙이지 않는다.',
-    '고유명사·인명·수치는 임의로 바꾸지 않는다. 원문에 없는 내용을 채워 넣지 않는다.',
-  ].join('\n');
-}
-
-/* ── 페이지 액션 ───────────────────────────────────────── */
-
-export const PAGE_PRESETS: Preset[] = [
-  {
-    // 공문 카드(S01). 목록이면 체크한 문서마다, 상세 화면이면 지금 문서로 만든다.
-    id: 'actions',
-    label: '핵심·조치사항',
-    slash: '/actions',
-    aliases: ['/조치'],
-    hint: '공문의 할 일·제출물·기한을 원문과 대조해 정리합니다',
-    needs: 'page',
-    build: () => '선택한 문서의 핵심·조치사항을 정리해줘',
-  },
-  {
-    id: 'summary',
-    label: '이 페이지 요약',
-    slash: '/summary',
-    hint: '페이지 본문을 읽고 요약합니다',
-    needs: 'page',
-    build: () =>
-      '이 페이지의 내용을 요약해줘. 무엇에 대한 글인지 먼저 한 줄로 말하고, 그다음 주요 내용을 정리해줘.',
-  },
-  {
-    id: 'three-lines',
-    label: '핵심 3줄',
-    slash: '/three',
-    aliases: ['/3'],
-    hint: '핵심만 세 문장으로',
-    needs: 'page',
-    build: () => '이 페이지의 핵심을 정확히 3줄로 정리해줘. 각 줄은 한 문장으로.',
-  },
-  {
-    /**
-     * ★ 번역은 출력이 입력만큼 길다. numCtx 4096에 본문 2,000토큰을 넣으면
-     *   남는 출력 공간이 2,000토큰 안팎이라 긴 기사는 뒤가 잘릴 수 있다.
-     *   pageTokenBudget을 줄이거나 numCtx를 올리는 게 해법이고, 그건 설정이다.
-     */
-    id: 'translate-page',
-    label: '이 페이지 번역',
-    slash: '/translate',
-    aliases: ['/번역', '/tr'],
-    hint: '/translate 영어 처럼 언어를 지정합니다',
-    needs: 'page',
-    takesArg: true,
-    build: (lang) => buildPageTranslation(lang),
-  },
-  {
-    id: 'ask',
-    label: '이 페이지에 대해 질문',
-    hint: '페이지를 붙여 두고 이어서 물어봅니다',
-    needs: 'page',
-    // 질문은 사용자가 직접 입력한다. 페이지만 붙여 두는 프리셋.
-    build: () => '',
-  },
-  {
-    /**
-     * 화면 캡처는 본문 추출이 실패하는 페이지에서 쓴다.
-     * 실측 262토큰 / 4.5초로 본문(2,000토큰)보다 8배 싸다 — 계획서 §0.8.
-     */
-    id: 'screen',
-    label: '화면 보고 설명',
-    slash: '/screenshot',
-    // 사용자가 어느 쪽을 칠지 알 수 없다. 둘 다 받는다.
-    aliases: ['/screen', '/capture', '/shot'],
-    hint: '차트·대시보드처럼 글로 안 읽히는 화면에',
-    needs: 'screen',
-    build: () =>
-      '이 화면에 무엇이 보이는지 설명해줘. 그림이나 차트가 있으면 무엇을 나타내는지도 알려줘.',
-  },
-];
-
 /* ── 선택 텍스트 액션 (컨텍스트 메뉴 + 슬래시) ─────────── */
 
 /**
@@ -219,7 +114,7 @@ export const SELECTION_PRESETS: Preset[] = [
   },
 ];
 
-export const ALL_PRESETS = [...PAGE_PRESETS, ...SELECTION_PRESETS];
+export const ALL_PRESETS = SELECTION_PRESETS;
 
 export function findPreset(id: string): Preset | undefined {
   return ALL_PRESETS.find((p) => p.id === id);
@@ -250,14 +145,21 @@ export interface CustomPreset {
   needs: PresetNeeds;
 }
 
+/**
+ * 슬래시 명령은 온나라 문서등록대장 목록을 다루는 명령만 둔다.
+ *
+ * ★ 예전에는 웹페이지 본문을 다루는 명령(/summary, /translate 등)이 있었다. 온나라 업무는
+ *   목록(제목)을 보며 지시하는 일이라 쓰이지 않았고, 문장으로 하는 요청과 역할이 겹쳤다.
+ *   지금은 정형화된 작업만 슬래시로, 나머지 문장은 모두 일반 대화로 간다.
+ */
 export function builtinCommands(): SlashCommand[] {
-  return ALL_PRESETS.filter((p) => p.slash).map((p) => ({
-    slash: p.slash!,
-    label: p.label,
-    hint: p.hint ?? '',
-    presetId: p.id,
-    needs: p.needs,
-    aliases: p.aliases,
+  return DOCUMENT_COMMANDS.map((command) => ({
+    slash: command.slash,
+    label: command.label,
+    hint: command.hint,
+    presetId: command.id,
+    needs: 'documents' as const,
+    aliases: command.aliases,
   }));
 }
 

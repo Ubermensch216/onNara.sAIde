@@ -1,5 +1,4 @@
 import { sendToSW, type AppError, type AttachmentDownloadResult, type ExtractedPage } from '@/lib/messaging/protocol';
-import { requestedDocumentTitles } from './document-list';
 import { downloadLink, escapeMarkdownText } from '@/lib/downloads/links';
 import { cancelAutomation, enqueueAutomation, workTabLock, type AutomationJob } from '@/lib/automation/jobs';
 
@@ -19,13 +18,13 @@ const STATUS_LABEL: Record<AttachmentDownloadResult['status'], string> = {
  * AI 대화에서 요청하든 자동화 탭에서 누르든 같은 작업 대기열을 거친다.
  */
 export async function downloadDocumentAttachments(options: {
-  tabId: number; page: ExtractedPage; prompt: string; signal: AbortSignal;
+  /** 대상 문서 제목. 상세 화면 한 건이면 [undefined]다. */
+  tabId: number; page: ExtractedPage; titles: Array<string | undefined>; signal: AbortSignal;
   progress: (message: string) => void;
   report: (message: string) => Promise<void>;
 }): Promise<void> {
-  const { tabId, page, prompt, signal, progress, report } = options;
-  const titles: Array<string | undefined> = page.structuredData ? requestedDocumentTitles(prompt, page.structuredData) : [undefined];
-  if (!titles.length) throw new Error('첨부를 받을 문서를 체크하거나 문서 제목 또는 전체 문서를 지정하세요.');
+  const { tabId, page, titles, signal, progress, report } = options;
+  if (!titles.length) throw new Error('첨부를 받을 문서를 온나라 목록에서 체크하세요.');
   progress(`첨부 파일을 찾아 내려받는 중 · 문서 ${titles.length}건 (진행 상황은 도구 탭에서도 볼 수 있습니다)`);
   await queueAttachmentDownloads({ tabId, page, titles, origin: 'chat', signal,
     onFinished: async (job, index) => {

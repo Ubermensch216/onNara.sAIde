@@ -25,12 +25,10 @@ import {
   customCommands,
   expandCommand,
   findPreset,
-  PAGE_PRESETS,
   type CustomPreset,
   type SlashCommand,
 } from '@/lib/prompts/presets';
 import { loadCustomPresets, onCustomPresetsChanged } from '@/lib/storage/presets';
-import { detectPageKind, kindHint, suggestedOrder } from '@/lib/extract/pagetype';
 import { requestAllUrls, requestCaptureAccess, requestHostAccess, requestOriginsAccess } from '@/lib/permissions';
 import { runDownloadLink } from '@/lib/downloads/links';
 import { estimateTtfbSeconds } from '@/lib/storage/settings';
@@ -52,6 +50,7 @@ import { Composer } from './components/Composer';
 import { ConversationMenu } from './components/ConversationMenu';
 import { PageContextChip } from './components/PageContextChip';
 import { PageActions } from './components/PageActions';
+import { findDocumentCommand, type DocumentCommandId } from '@/lib/onnara/commands';
 import { ScreenshotChip } from './components/ScreenshotChip';
 import { AutomationPanel } from './components/AutomationPanel';
 import { useAutomation } from '@/lib/automation/jobs';
@@ -339,29 +338,17 @@ export default function App() {
   };
 
   /**
-   * 페이지 빠른 작업 실행 — 권한 확보 → 첨부 → 프리셋 문구 전송.
+   * 문서등록대장 목록 명령 실행(버튼·슬래시 공통).
    *
-   * needs가 'screen'이면 본문 대신 화면을 캡처한다. 실측 262토큰/4.5초로
-   * 본문(2,000토큰/15초)보다 싸므로, 글로 안 읽히는 화면에서는 이쪽이 낫다.
+   * ★ 권한 요청이 첫 동작이어야 한다. 앞에 await가 끼면 사용자 제스처가 사라져
+   *   크롬이 사이트 접근 요청을 거부한다(permissions.ts).
    */
-  const runPageAction = async (presetId: string) => {
+  const runDocumentCommand = async (command: DocumentCommandId, args = '') => {
     if (!tab || chat.streaming) return;
-    const preset = PAGE_PRESETS.find((p) => p.id === presetId);
-    if (!preset) return;
-
-    // 캡처와 본문 읽기는 요구 권한이 다르다.
-    const granted =
-      preset.needs === 'screen' ? await ensureCapture() : await ensureAccess(tab.url);
-    if (!granted) return;
-
-    const attached =
-      preset.needs === 'screen'
-        ? await chat.attachScreenshot(tab.tabId)
-        : await chat.attachPage(tab.tabId, settings);
-    if (!attached) return; // 실패 사유는 store가 error에 넣는다
-
-    const text = preset.build();
-    if (text) void chat.send(text, settings);
+    if (!(await ensureAccess(tab.url))) return;
+    const slash = findDocumentCommand(command)?.slash ?? '';
+    const typed = args.trim() ? `${slash} ${args.trim()}` : slash;
+    await chat.runCommand(typed, command, args, settings);
   };
 
   /**
@@ -435,17 +422,20 @@ export default function App() {
       return;
     }
 
-    // 페이지·화면이 필요한 커맨드는 먼저 첨부를 확보한다.
+    // 목록 명령은 무엇을 할지 명령 id가 정한다. 문장으로 다시 짐작하지 않는다.
+    if (cmd.needs === 'documents') {
+      await runDocumentCommand(cmd.presetId as DocumentCommandId, rest);
+      return;
+    }
+
+    // 사용자가 만든 프리셋은 페이지·화면을 요구할 수 있다. 먼저 첨부를 확보한다.
     if (cmd.needs === 'page' || cmd.needs === 'screen') {
       if (!tab) return;
-      const granted =
-        cmd.needs === 'screen' ? await ensureCapture() : await ensureAccess(tab.url);
+      const granted = cmd.needs === 'screen' ? await ensureCapture() : await ensureAccess(tab.url);
       if (!granted) return;
-
-      const ok =
-        cmd.needs === 'screen'
-          ? await chat.attachScreenshot(tab.tabId)
-          : await chat.attachPage(tab.tabId, settings);
+      const ok = cmd.needs === 'screen'
+        ? await chat.attachScreenshot(tab.tabId)
+        : await chat.attachPage(tab.tabId, settings);
       if (!ok) return;
     }
 
@@ -488,12 +478,6 @@ export default function App() {
 
   const attachEstimate = estimateTtfbSeconds(settings.pageTokenBudget + 300);
   const attachSec = Math.max(1, Math.round(attachEstimate));
-
-  // 페이지 유형별 제안 (Phase 4-5). URL만으로 판단한다 —
-  // 본문을 읽어야 아는 분류는 그 자체로 프리필 15초를 물게 된다.
-  const pageKind = detectPageKind(tab?.url ?? '');
-  const presetOrder = suggestedOrder(pageKind);
-  const hint = kindHint(pageKind);
 
   // 대화가 시작된 뒤에도 페이지를 붙일 수 있어야 한다.
   const showAttach = !chat.page && canReadPage && chat.messages.length > 0;
@@ -579,12 +563,8 @@ export default function App() {
             canReadPage={canReadPage}
             tab={tab}
             extracting={chat.extracting}
-            attached={Boolean(chat.page || chat.screenshot)}
-            estimatedSec={attachEstimate}
             blocked={blocked}
-            order={presetOrder}
-            kindHint={hint}
-            onRun={runPageAction}
+            onRun={runDocumentCommand}
           />
         ) : (
           <MessageList
@@ -825,11 +805,7 @@ function EmptyState({
   canReadPage,
   tab,
   extracting,
-  attached,
-  estimatedSec,
   blocked,
-  order,
-  kindHint,
   onRun,
 }: {
   health: HealthReport;
@@ -837,12 +813,8 @@ function EmptyState({
   canReadPage: boolean;
   tab: TabSummary | null;
   extracting: boolean;
-  attached: boolean;
-  estimatedSec: number;
   blocked: boolean;
-  order: string[];
-  kindHint: string | null;
-  onRun: (id: string) => void;
+  onRun: (command: DocumentCommandId) => void;
 }) {
   const t = useT();
   return (
@@ -856,15 +828,7 @@ function EmptyState({
       </p>
 
       {canReadPage ? (
-        <PageActions
-          disabled={blocked}
-          extracting={extracting}
-          attached={attached}
-          estimatedSec={estimatedSec}
-          order={order}
-          kindHint={kindHint}
-          onRun={onRun}
-        />
+        <PageActions disabled={blocked} extracting={extracting} onRun={onRun} />
       ) : (
         tab && (
           <div className="pageactions-hint restricted">{t('panel.restrictedHint')}</div>

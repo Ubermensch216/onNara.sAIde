@@ -1,8 +1,7 @@
 import { abortable } from '@/lib/async';
-import { isAttachmentDownloadRequest } from '@/lib/onnara/attachments';
 import { downloadDocumentAttachments, formatAttachmentReport, releaseWorkTab } from '@/lib/onnara/download';
 import { recordAutomation, workTabLock } from '@/lib/automation/jobs';
-import { ACTION_CARD_SCHEMA, actionCardInstruction, isActionCardRequest, parseActionCard, renderActionCard } from '@/lib/ai/action-card';
+import { ACTION_CARD_SCHEMA, actionCardInstruction, parseActionCard, renderActionCard } from '@/lib/ai/action-card';
 /**
  * 채팅 상태. 계획서 §5 Phase 2–3
  *
@@ -39,6 +38,7 @@ import {
   type Attachment,
 } from '@/lib/chat/context';
 import { isRestrictedUrl, sameDocument, sendToSW } from '@/lib/messaging/protocol';
+import { fitToBudget } from '@/lib/extract/budget';
 import type { ApprovalRequest, AppError, ExtractedPage } from '@/lib/messaging/protocol';
 import type { Settings } from '@/lib/storage/settings';
 import { AGENT_TOOLS } from '@/lib/agent/tools';
@@ -46,12 +46,11 @@ import { createBrowserTools } from '@/lib/agent/executor';
 import { runAgentLoop, type AgentStep, type TurnResult } from '@/lib/agent/loop';
 import { buildAgentSystem } from '@/lib/prompts/agent';
 import {
-  buildDocumentTitleTable,
-  isDocumentListTableRequest,
-  isDocumentSummaryRequest,
-  matchDocumentTitle,
-  requestedDocumentTitles,
-} from '@/lib/onnara/document-list';
+  commandTargets,
+  defaultInstruction,
+  findDocumentCommand,
+  type DocumentCommandId,
+} from '@/lib/onnara/commands';
 
 /** 에이전트가 조작할 탭. 제목까지 필요하다 — 승인 카드와 모델 안내에 쓴다. */
 export interface AgentTab {
@@ -129,6 +128,8 @@ export interface ChatState {
   detachPage: () => void;
   detachScreenshot: () => void;
   send: (text: string, settings: Settings) => Promise<void>;
+  /** 문서등록대장 목록 명령(슬래시 명령) 실행. 무엇을 할지는 문장이 아니라 명령 id가 정한다. */
+  runCommand: (text: string, command: DocumentCommandId, args: string, settings: Settings) => Promise<void>;
   /** 에이전트 모드 전송 (Phase 5). 툴을 붙여 최대 8턴까지 돈다. */
   sendAgent: (text: string, settings: Settings, tab: AgentTab) => Promise<void>;
   /** 승인 카드의 응답. false면 실행하지 않는다. */
@@ -302,6 +303,10 @@ export function createChatSession() {
       await settled();
       await track(submit(set, get, text, settings, epochs));
     },
+    async runCommand(text, command, args, settings) {
+      await settled();
+      await track(runDocumentCommand(set, get, text, command, args, settings, epochs));
+    },
     async sendAgent(text, settings, tab) {
       await settled();
       await track(submit(set, get, text, settings, epochs, tab));
@@ -421,48 +426,6 @@ async function submit(set: Set, get: Get, text: string, settings: Settings, epoc
     if (!owns()) return;
     ownSet(s => ({ messages: [...s.messages, { ...userMsg, id }] }));
 
-    const pageTabId = await resolvePageTab(ownSet, get);
-    if (!owns()) return;
-
-    const report = async (content: string) => {
-      if (!owns() || get().abort?.signal.aborted) return;
-      // 자동화 실행 결과는 AI 답변과 구분해 표시한다.
-      const message = { conversationId: conv.id, role: 'assistant' as const, content, origin: 'automation' as const, createdAt: Date.now() };
-      const reportId = await addMessage(message);
-      ownSet(s => ({ messages: [...s.messages, { ...message, id: reportId }] }));
-    };
-    // "요약하고 첨부도 받아줘"처럼 둘 다 요청하면 다운로드만 하고 끝내지 않는다. 요약 경로에서 문서마다 함께 처리한다.
-    const wantsDownload = isAttachmentDownloadRequest(trimmed);
-    const withAttachments = wantsDownload && isDocumentSummaryRequest(trimmed);
-    if (wantsDownload && !withAttachments) {
-      const signal = get().abort!.signal;
-      if (pageTabId === null) { ownSet({ error: TAB_MISSING_ERROR }); return; }
-      const page = await get().attachPage(pageTabId, settings, true);
-      if (!page || !owns() || signal.aborted) return;
-      await downloadDocumentAttachments({ tabId: pageTabId, page, prompt: trimmed, signal,
-        progress: documentProgress => ownSet({ documentProgress }), report });
-      return;
-    }
-
-    await refreshDocumentListIfRequested(get, text, settings, pageTabId);
-    if (!owns()) return;
-    if (!await prepareDocumentSummary(ownSet, get, text, settings, epochs, pageTabId, withAttachments ? report : undefined) || !owns()) return;
-
-    const localAnswer = buildDocumentTitleTable(trimmed, get().page?.structuredData);
-    if (localAnswer) {
-      const assistantMsg = {
-        conversationId: conv.id,
-        role: 'assistant' as const,
-        content: localAnswer,
-        notice: '온나라 문서 목록을 화면의 표 구조에서 읽어 작성했습니다.',
-        origin: 'automation' as const,
-        createdAt: Date.now() + 1,
-      };
-      const assistantId = await addMessage(assistantMsg);
-      if (owns()) ownSet(s => ({ messages: [...s.messages, { ...assistantMsg, id: assistantId }] }));
-      return;
-    }
-
     await requireCapabilities(settings.endpoint, settings.model, [...(tab ? ['tools'] : []), ...(get().screenshot ? ['vision'] : [])], get().abort?.signal);
     if (!owns()) return;
     if (tab) await runAgent(ownSet, get, settings, tab);
@@ -507,136 +470,275 @@ export async function resolvePageTab(set: Set, get: Get): Promise<number | null>
   return tabId;
 }
 
-async function refreshDocumentListIfRequested(get: Get, text: string, settings: Settings, tabId: number | null): Promise<void> {
-  if (!isDocumentListTableRequest(text)) return;
-  if (tabId !== null) await get().attachPage(tabId, settings, true);
-}
-
-async function prepareDocumentSummary(
+/**
+ * 문서등록대장 목록 명령 실행. lib/onnara/commands.ts의 정의를 실제 동작으로 옮긴다.
+ *
+ * ★ 무엇을 할지는 명령 id가 정한다. 문장에서 의도를 짐작하지 않는다.
+ *   슬래시 없는 문장은 submit()으로 가서 대화 문맥만으로 답한다.
+ *
+ * ★ 실행 직전에 화면을 다시 읽는다. 목록의 체크 상태는 패널 밖에서 바뀐다.
+ */
+async function runDocumentCommand(
   set: Set,
   get: Get,
   text: string,
+  command: DocumentCommandId,
+  args: string,
   settings: Settings,
   epochs: SessionEpochs,
-  tabId: number | null,
-  /** 있으면 요약과 함께 첨부도 받고 그 결과를 이 함수로 답변에 남긴다. */
-  reportAttachments?: (content: string) => Promise<void>,
-): Promise<boolean> {
-  const actionMode = isActionCardRequest(text);
-  if (!isDocumentSummaryRequest(text) && !actionMode) return true;
-  if (tabId === null) { set({ error: TAB_MISSING_ERROR }); return false; }
-  const state = get();
-  const signal = state.abort?.signal;
-  const view = epochs.view;
-
-  const listPage = await state.attachPage(tabId, settings, true);
-  if (signal?.aborted || view !== epochs.view) return false;
-  if (!listPage) return false;
-  const list = listPage?.structuredData;
-  // 일반 웹 문서(또는 이미 연 상세 화면)의 요약 요청은 기존 페이지 요약 경로에 맡긴다. 첨부는 지금 화면에서 먼저 받는다.
-  if (!list) {
-    if (reportAttachments && signal) {
-      await downloadDocumentAttachments({ tabId, page: listPage, prompt: text, signal,
-        progress: documentProgress => set({ documentProgress }), report: reportAttachments });
-      if (signal.aborted || view !== epochs.view) return false;
-    }
-    // 이미 연 상세 화면이면 그 화면으로 카드를 만든다.
-    if (actionMode) {
-      set({ documentProgress: 'AI가 핵심·조치사항을 정리하고 원문과 대조하는 중입니다. CPU에서는 수 분 걸릴 수 있습니다.' });
-      await runActionCard(set, get, settings, listPage.title, listPage);
-      return false;
-    }
-    return true;
-  }
-
-  const match = matchDocumentTitle(text, list);
-  const titles = requestedDocumentTitles(text, list);
-  if (!titles.length) {
-    const candidates = ('candidates' in match ? match.candidates : []).slice(0, 5).join(', ');
-    set({
-      error: {
-        code: 'UNKNOWN',
-        message: match.status === 'ambiguous'
-          ? '요청한 제목과 일치하는 문서가 여러 개입니다.'
-          : '요약할 문서를 찾지 못했습니다. 문서를 체크하거나 제목 또는 전체 문서를 지정하세요.',
-        hint: candidates ? `문서 제목을 더 정확히 입력하세요. 현재 후보: ${candidates}` : undefined,
-      },
-    });
-    return false;
-  }
-
-  const epoch = ++epochs.attachment;
-  set({ extracting: true, error: null });
-  const controller = state.abort;
-  const failures: string[] = [];
-  // 문서 사이에도 중단 버튼과 진행 표시를 유지하려고 생성 중 상태를 붙잡아 둔다.
-  // 배치가 끝난 뒤 도착하는 늦은 갱신(표시 지연 타이머 등)까지 붙잡으면 패널이 영원히 "읽는 중"으로 남는다.
-  let batching = true;
-  const withAttachments = Boolean(reportAttachments);
-  // 첨부를 함께 받으면 한 건이어도 문서별 보고가 필요하므로 배치 경로로 처리한다.
-  const batch = titles.length > 1 || withAttachments || actionMode;
-  // 여러 문서는 복제한 목록 탭 하나를 끝까지 재사용한다(문서마다 목록 복원을 반복하지 않는다).
-  const keepWorkTab = titles.length > 1;
+) {
+  const trimmed = text.trim();
+  if (!trimmed || get().streaming || get().loading) return;
+  const epoch = ++epochs.operation;
+  const owns = () => epoch === epochs.operation;
+  const ownSet = guardedSet(set, owns);
+  ownSet({ streaming: true, startedAt: Date.now(), abort: new AbortController(), error: null });
   try {
+    const conv = await ensureConversation(ownSet, get, trimmed, owns);
+    if (!conv || !owns()) return;
+    const userMsg = { conversationId: conv.id, role: 'user' as const, content: trimmed, createdAt: Date.now() };
+    const id = await addMessage(userMsg);
+    if (!owns()) return;
+    ownSet(s => ({ messages: [...s.messages, { ...userMsg, id }] }));
+
+    const tabId = await resolvePageTab(ownSet, get);
+    if (!owns()) return;
+    if (tabId === null) { ownSet({ error: TAB_MISSING_ERROR }); return; }
+    const signal = get().abort!.signal;
+
+    /** 모델이 만들지 않은 실행 결과. 답변과 구분해 표시한다. */
+    const report = async (content: string) => {
+      if (!owns() || signal.aborted) return;
+      const message = { conversationId: conv.id, role: 'assistant' as const, content, origin: 'automation' as const, createdAt: Date.now() };
+      const reportId = await addMessage(message);
+      ownSet(s => ({ messages: [...s.messages, { ...message, id: reportId }] }));
+    };
+
+    const page = await get().attachPage(tabId, settings, true);
+    if (!page || !owns() || signal.aborted) return;
+    const list = page.structuredData;
+
+    if (command === 'refresh') {
+      await report(describeCurrentScreen(page));
+      return;
+    }
+
+    // 목록 화면이면 체크한 문서가 대상이고, 상세 화면이면 지금 열려 있는 문서 한 건이다.
+    const titles = list ? commandTargets(list, args) : [];
+    if (list && !titles.length) {
+      ownSet({ error: { code: 'UNKNOWN', message: '대상 문서가 없습니다. 온나라 목록에서 문서를 체크한 뒤 다시 실행하세요.',
+        hint: `현재 목록에 ${list.rows.length}건이 있습니다. 모두 처리하려면 "${slashOf(command)} 전체"로 실행하세요.` } });
+      return;
+    }
+
+    if (command === 'attachments') {
+      await downloadDocumentAttachments({ tabId, page, titles: list ? titles : [undefined], signal,
+        progress: documentProgress => ownSet({ documentProgress }), report });
+      return;
+    }
+
+    if (command === 'read' || command === 'compare') {
+      // 상세 화면은 이미 붙인 본문을 그대로 쓴다.
+      if (list && !await readDocumentsTogether(ownSet, get, titles, settings, epochs, tabId, signal)) return;
+      if (!owns() || signal.aborted) return;
+      if (command === 'read') {
+        await report(describeAttachedDocuments(get().page, titles));
+        return;
+      }
+      const instruction = args.trim() || defaultInstruction('compare');
+      await requireCapabilities(settings.endpoint, settings.model, [], signal);
+      if (!owns()) return;
+      ownSet({ documentProgress: 'AI가 문서들을 함께 읽고 답하는 중입니다. CPU에서는 수 분 걸릴 수 있습니다.' });
+      await runGeneration(ownSet, instructionOnly(get, instruction), { ...settings, thinkMode: 'off' });
+      return;
+    }
+
+    // 문서별 처리(요약·조치사항)는 한 건씩 읽고 한 건씩 생성한다.
+    await requireCapabilities(settings.endpoint, settings.model, [], signal);
+    if (!owns()) return;
+    await runDocumentBatch(ownSet, get, {
+      command, settings, epochs, tabId,
+      titles: list ? titles : [page.title],
+      instruction: args.trim() || defaultInstruction(command),
+      detailPage: list ? null : page,
+      signal,
+    });
+  } catch (error) { ownSet({ error: toAppError(error instanceof OllamaError ? error : null, error) }); }
+  finally { ownSet({ streaming: false, abort: null, startedAt: null, documentProgress: null }); }
+}
+
+function slashOf(command: DocumentCommandId): string {
+  return findDocumentCommand(command)?.slash ?? '/요약';
+}
+
+/** 생성에 쓸 문맥을 지금 지시 한 줄로 좁힌다. 작은 모델에 여러 문서와 긴 대화를 함께 넣지 않는다. */
+function instructionOnly(get: Get, instruction: string): Get {
+  return () => ({
+    ...get(),
+    messages: get().messages.filter(message => message.role === 'user').slice(-1)
+      .map(message => ({ ...message, content: instruction })),
+  });
+}
+
+function describeCurrentScreen(page: ExtractedPage): string {
+  const list = page.structuredData;
+  if (!list) return `현재 화면: ${page.title}\n문서 목록 화면이 아니어서 지금 열려 있는 문서 한 건을 대상으로 합니다.`;
+  const selected = list.selectedTitles ?? [];
+  const lines = [`목록을 다시 읽었습니다 · ${list.listName}`, `현재 화면 ${list.rows.length}건 / 체크 ${selected.length}건`];
+  if (selected.length) lines.push(...selected.map((title, index) => `${index + 1}. ${title}`));
+  else lines.push('체크한 문서가 없습니다. 목록에서 문서를 체크한 뒤 명령을 실행하세요.');
+  return lines.join('\n');
+}
+
+function describeAttachedDocuments(page: ExtractedPage | null, titles: string[]): string {
+  const names = titles.length ? titles.map((title, index) => `${index + 1}. ${title}`).join('\n') : page?.title ?? '';
+  return [`문서 ${titles.length || 1}건의 본문을 읽어 대화에 붙였습니다.`, names,
+    '이제 슬래시 없이 그냥 물어보세요. 예: "기한이 빠른 순서로 정리해줘"'].filter(Boolean).join('\n');
+}
+
+/**
+ * 문서별 처리(/요약, /조치): 한 건 읽고 한 건 생성하기를 반복한다.
+ *
+ * ★ 여러 본문을 한꺼번에 CPU 모델에 넣지 않는다. 문서마다 문맥을 비우고 그 문서만 넣는다.
+ * ★ 여러 문서는 복제한 목록 탭 하나를 끝까지 재사용한다(문서마다 목록 복원을 반복하지 않는다).
+ */
+async function runDocumentBatch(set: Set, get: Get, options: {
+  command: 'summary' | 'actions';
+  settings: Settings;
+  epochs: SessionEpochs;
+  tabId: number;
+  titles: string[];
+  instruction: string;
+  /** 목록이 아니라 이미 열린 상세 화면이면 그 본문 */
+  detailPage: ExtractedPage | null;
+  signal: AbortSignal | undefined;
+}): Promise<void> {
+  const { command, settings, epochs, tabId, titles, instruction, detailPage, signal } = options;
+  const controller = get().abort;
+  const epoch = ++epochs.attachment;
+  const keepWorkTab = titles.length > 1;
+  const failures: string[] = [];
+  // 배치가 끝난 뒤 도착하는 늦은 갱신까지 붙잡으면 패널이 영원히 "읽는 중"으로 남는다.
+  let batching = true;
+  const generating = (index: number, title: string) => `${index + 1}/${titles.length}번째 문서 · ${title} · AI가 분석하는 중입니다. CPU에서는 수 분 걸릴 수 있습니다.`;
+  const generate = async (title: string, page: ExtractedPage) => {
+    const batchSet: Set = patch => set(current => ({
+      ...(typeof patch === 'function' ? patch(current) : patch),
+      ...(batching ? { streaming: true, abort: controller } : {}),
+    }));
+    if (command === 'actions') await runActionCard(batchSet, get, settings, title, page);
+    else await runGeneration(batchSet, instructionOnly(get, documentBatchInstruction(title, instruction)), { ...settings, thinkMode: 'off' });
+  };
+
+  set({ extracting: true, error: null });
+  try {
+    // 이미 열려 있는 상세 화면은 다시 열지 않고 그 본문으로 처리한다.
+    if (detailPage) {
+      set({ extracting: false, documentProgress: generating(0, detailPage.title) });
+      await generate(detailPage.title, detailPage);
+      return;
+    }
     for (const [index, title] of titles.entries()) {
-    if (signal?.aborted || epoch !== epochs.attachment) return false;
-    set({ extracting: true, streaming: true, startedAt: Date.now(), expectedPrefillSec: 0, abort: controller, documentProgress: `${index + 1}/${titles.length}번째 문서 본문을 읽는 중 · ${title}` });
-    // 자동화 탭 작업과 같은 온나라 작업 탭을 쓰므로 잠금을 거친다. AI 생성은 잠금 밖에서 한다.
-    const response = await workTabLock(() => sendToSW({
-      type: 'READ_DOCUMENT',
-      tabId,
-      title,
-      budgetTokens: settings.pageTokenBudget,
-      ...(withAttachments ? { withAttachments } : {}),
-      ...(keepWorkTab ? { keepWorkTab } : {}),
-      control: { id: '', deadline: 0, expectedUrl: state.currentUrl || undefined },
-    }, signal, withAttachments ? 170_000 : 120_000));
-    if (epoch !== epochs.attachment || signal?.aborted) return false;
-    if (response.type === 'ERROR') {
-      // 권한 문제는 나머지 문서도 똑같이 실패한다. 계속 돌리지 않고 바로 멈춰 권한 허용 버튼을 보여 준다.
-      if (titles.length === 1 || response.error.code === 'HOST_PERMISSION_REQUIRED') {
-        set({ error: failures.length ? { ...response.error, hint: `${response.error.hint ?? ''} 앞서 실패한 문서: ${failures.join(' / ')}`.trim() } : response.error });
-        return false;
+      if (signal?.aborted || epoch !== epochs.attachment) return;
+      set({ extracting: true, streaming: true, startedAt: Date.now(), expectedPrefillSec: 0, abort: controller,
+        documentProgress: `${index + 1}/${titles.length}번째 문서 본문을 읽는 중 · ${title}` });
+      // 자동화 탭 작업과 같은 온나라 작업 탭을 쓰므로 잠금을 거친다. AI 생성은 잠금 밖에서 한다.
+      const response = await workTabLock(() => sendToSW({
+        type: 'READ_DOCUMENT', tabId, title, budgetTokens: settings.pageTokenBudget,
+        ...(keepWorkTab ? { keepWorkTab } : {}),
+        control: { id: '', deadline: 0, expectedUrl: get().currentUrl || undefined },
+      }, signal, 120_000));
+      if (epoch !== epochs.attachment || signal?.aborted) return;
+      if (response.type === 'ERROR') {
+        // 권한 문제는 나머지 문서도 똑같이 실패한다. 계속 돌리지 않고 바로 멈춰 권한 허용 버튼을 보여 준다.
+        if (titles.length === 1 || response.error.code === 'HOST_PERMISSION_REQUIRED') {
+          set({ error: failures.length ? { ...response.error, hint: `${response.error.hint ?? ''} 앞서 실패한 문서: ${failures.join(' / ')}`.trim() } : response.error });
+          return;
+        }
+        failures.push(`${title}: ${response.error.message}`);
+        continue;
       }
-      failures.push(`${title}: ${response.error.message}`);
-      continue;
-    }
-    if (response.type !== 'DOCUMENT_READ') {
-      set({ error: { code: 'UNKNOWN', message: '문서 본문 읽기 결과를 받지 못했습니다.' } });
-      return false;
-    }
-    set({ page: { ...response.payload, title }, screenshot: null, lastContext: null });
-    if (batch) {
-      set({ extracting: false, documentProgress: `${index + 1}/${titles.length}번째 문서 · AI가 읽은 내용을 분석하고 요약하는 중입니다. CPU에서는 수 분 걸릴 수 있습니다.` });
-      const batchGet: Get = () => ({ ...get(), messages: get().messages.filter(message => message.role === 'user').slice(-1).map(message => ({ ...message, content: documentBatchInstruction(title, text, withAttachments) })) });
-      // 한 문서씩 생성해 여러 본문을 CPU 모델에 한꺼번에 넣지 않는다.
-      const batchSet: Set = patch => set(current => ({
-        ...(typeof patch === 'function' ? patch(current) : patch),
-        ...(batching ? { streaming: true, abort: controller } : {}),
-      }));
-      if (actionMode) await runActionCard(batchSet, get, settings, title, response.payload);
-      else await runGeneration(batchSet, batchGet, { ...settings, thinkMode: 'off' });
-      if (signal?.aborted) return false;
+      if (response.type !== 'DOCUMENT_READ') {
+        set({ error: { code: 'UNKNOWN', message: '문서 본문 읽기 결과를 받지 못했습니다.' } });
+        return;
+      }
+      set({ page: { ...response.payload, title }, screenshot: null, lastContext: null,
+        extracting: false, documentProgress: generating(index, title) });
+      await generate(title, response.payload);
+      if (signal?.aborted) return;
       if (get().error) failures.push(`${title}: ${get().error!.message}`);
-      // 요약 바로 아래에 같은 문서의 첨부 다운로드 결과를 남긴다.
-      if (reportAttachments) {
-        recordAutomation({ kind: 'download-attachments', label: title,
-          ...(response.attachments ? { files: response.attachments } : {}), ...(response.attachmentError ? { error: response.attachmentError } : {}) });
-        await reportAttachments(formatAttachmentReport(title, { results: response.attachments, error: response.attachmentError }));
-      }
-    }
     }
     if (failures.length) set({ error: { code: 'UNKNOWN', message: `일부 문서를 처리하지 못했습니다.\n${failures.join('\n')}` } });
-    if (batch) return false;
-    set({ documentProgress: '1/1번째 문서 · AI가 읽은 내용을 분석하고 요약하는 중입니다. CPU에서는 수 분 걸릴 수 있습니다.' });
-    return true;
   } catch (error) {
     if (epoch === epochs.attachment && !signal?.aborted) set({ error: error instanceof Error && error.name === 'TimeoutError'
       ? { code: 'UNKNOWN', message: '문서 화면 읽기가 120초 안에 완료되지 않았습니다. AI 생성 전 단계의 시간 초과입니다.', hint: '복제 탭에서 원래 문서 목록이 복원되는지, 상세 본문이 표시되는지 확인이 필요합니다.' }
       : toAppError(null, error) });
-    return false;
   } finally {
     batching = false;
+    if (keepWorkTab) void workTabLock(() => releaseWorkTab(tabId));
+    if (epoch === epochs.attachment) set({ extracting: false });
+  }
+}
+
+/**
+ * 여러 문서를 견주어 보는 요청: 문서 본문을 모두 읽어 한 문맥에 붙인다.
+ *
+ * ★ 문서마다 따로 생성하면 "공통점을 찾아줘" 같은 요청이 문서별 요약으로 바뀐다.
+ *   대신 본문을 함께 붙여 두고, 사용자의 원래 문장 그대로 한 번만 답하게 한다.
+ * ★ 작은 모델의 문맥은 좁다. 문서 수만큼 본문 예산을 나눠 담는다.
+ */
+async function readDocumentsTogether(
+  set: Set,
+  get: Get,
+  titles: string[],
+  settings: Settings,
+  epochs: SessionEpochs,
+  tabId: number,
+  signal: AbortSignal | undefined,
+): Promise<boolean> {
+  const epoch = ++epochs.attachment;
+  const share = Math.max(400, Math.floor(settings.pageTokenBudget / titles.length));
+  const keepWorkTab = titles.length > 1;
+  const bodies: string[] = [];
+  const failures: string[] = [];
+  set({ extracting: true, error: null });
+  try {
+    for (const [index, title] of titles.entries()) {
+      if (signal?.aborted || epoch !== epochs.attachment) return false;
+      set({ documentProgress: `${index + 1}/${titles.length}번째 문서 본문을 읽는 중 · ${title}` });
+      const response = await workTabLock(() => sendToSW({
+        type: 'READ_DOCUMENT', tabId, title, budgetTokens: share,
+        ...(keepWorkTab ? { keepWorkTab } : {}),
+        control: { id: '', deadline: 0, expectedUrl: get().currentUrl || undefined },
+      }, signal, 120_000));
+      if (signal?.aborted || epoch !== epochs.attachment) return false;
+      if (response.type === 'ERROR') {
+        // 권한 문제는 나머지 문서도 똑같이 실패한다. 바로 멈춰 권한 허용 버튼을 보여 준다.
+        if (response.error.code === 'HOST_PERMISSION_REQUIRED') { set({ error: response.error }); return false; }
+        failures.push(`${title}: ${response.error.message}`);
+        continue;
+      }
+      if (response.type !== 'DOCUMENT_READ') { failures.push(`${title}: 문서 본문 읽기 결과를 받지 못했습니다.`); continue; }
+      bodies.push(`<document title="${title}">\n${response.payload.text}\n</document>`);
+    }
+    if (!bodies.length) {
+      set({ error: { code: 'UNKNOWN', message: `문서 본문을 읽지 못했습니다.\n${failures.join('\n')}` } });
+      return false;
+    }
+    const combined = bodies.join('\n\n');
+    const fitted = fitToBudget(combined, settings.pageTokenBudget);
+    set({
+      page: {
+        url: get().currentUrl, title: `문서 ${bodies.length}건`, text: fitted.text, charCount: combined.length,
+        truncated: fitted.truncated, keptRatio: fitted.keptRatio, estimatedTokens: fitted.estimatedTokens,
+        method: 'innerText', extractedAt: Date.now(),
+      },
+      screenshot: null, lastContext: null,
+      documentProgress: `문서 ${bodies.length}건을 함께 두고 AI가 답하는 중입니다. CPU에서는 수 분 걸릴 수 있습니다.`,
+      ...(failures.length ? { error: { code: 'UNKNOWN' as const, message: `일부 문서를 읽지 못했습니다.\n${failures.join('\n')}` } } : {}),
+    });
+    return true;
+  } finally {
     if (keepWorkTab) void workTabLock(() => releaseWorkTab(tabId));
     if (epoch === epochs.attachment) set({ extracting: false });
   }

@@ -162,12 +162,3 @@ export function renderActionCard(title: string, card: ActionCard, source: string
   }
   return lines.join('\n');
 }
-
-/**
- * "핵심·조치사항", "이 공문에서 해야 할 일" 같은 요청인가.
- * "오늘 할 일 정리해줘" 같은 일반 대화까지 온나라 화면을 읽지 않도록, "할 일"은 공문·문서와 함께 말할 때만 인정한다.
- */
-export function isActionCardRequest(prompt: string): boolean {
-  if (/조치\s*사항|핵심\s*[·.]?\s*조치|액션\s*아이템/.test(prompt)) return true;
-  return /(공문|문서)/.test(prompt) && /할\s*일/.test(prompt);
-}

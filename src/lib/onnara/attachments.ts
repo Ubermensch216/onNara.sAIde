@@ -3,11 +3,6 @@ export interface AttachmentScan { links: AttachmentLink[]; unsupported: number }
 /** 프레임 안에서 찾은 첨부 항목. url이 없으면 화면의 스크립트를 눌러야 받을 수 있다. */
 export interface AttachmentItem { index: number; name: string; url?: string }
 
-export function isAttachmentDownloadRequest(text: string): boolean {
-  const compact = text.replace(/\s/g, '');
-  return /첨부|붙임/.test(compact) && /다운|내려받|저장|받아(줘|주|와|라)|받기|download/i.test(compact);
-}
-
 const CANDIDATE_SELECTOR = 'a, button, [onclick], [role="button"], [role="link"]';
 const REGION_SELECTOR = [
   '[id*="attach" i]', '[class*="attach" i]', '[id*="atch" i]', '[class*="atch" i]',

@@ -27,7 +27,7 @@ it('선택한 여러 문서는 읽기와 AI 요약을 한 건씩 순서대로 �
   }) } });
   vi.spyOn(stream, 'streamChat').mockImplementation(async (_endpoint, request, handlers) => {
     order.push('generate');
-    expect(useChat.getState().documentProgress).toContain('AI가 읽은 내용을 분석하고 요약하는 중');
+    expect(useChat.getState().documentProgress).toContain('AI가 분석하는 중');
     expect(useChat.getState().documentProgress).toContain(order.length === 2 ? '1/2번째' : '2/2번째');
     expect(useChat.getState().extracting).toBe(false);
     expect(request.think).toBe(false);
@@ -41,7 +41,7 @@ it('선택한 여러 문서는 읽기와 AI 요약을 한 건씩 순서대로 �
     return null;
   });
   await useChat.getState().openForTab(1, common.url);
-  await useChat.getState().send('이 문서들의 내용을 요약해줘', DEFAULT_SETTINGS);
+  await useChat.getState().runCommand('/요약', 'summary', '', DEFAULT_SETTINGS);
   expect(order).toEqual(['read:문서 A', 'generate', 'read:문서 C', 'generate', 'release']);
   expect(useChat.getState().messages.filter(message => message.role === 'assistant')).toHaveLength(2);
   expect(useChat.getState().streaming).toBe(false);
@@ -61,7 +61,7 @@ it('기록에서 연 대화의 탭이 닫혔으면 지금 보고 있는 탭으�
     },
   });
   await useChat.getState().openConversation(conversation);
-  await useChat.getState().send('선택한 문서를 요약해줘', DEFAULT_SETTINGS);
+  await useChat.getState().runCommand('/요약', 'summary', '', DEFAULT_SETTINGS);
   expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'EXTRACT_PAGE', tabId: 7 }));
   expect(sendMessage.mock.calls.some(([message]) => message.tabId === 99)).toBe(false);
   expect((await storage.db.conversations.get(id))!.tabId).toBe(7);
@@ -75,7 +75,7 @@ it('연결된 탭도 현재 탭도 읽을 수 없으면 chrome:// 안내 대신 
     tabs: { get: vi.fn(async () => { throw new Error('No tab'); }), query: vi.fn(async () => [{ id: 3, url: 'edge://newtab/', active: true }]) },
   });
   await useChat.getState().openConversation((await storage.db.conversations.get(id))!);
-  await useChat.getState().send('선택한 문서에 첨부된 파일을 다운로드 해줘', DEFAULT_SETTINGS);
+  await useChat.getState().runCommand('/첨부', 'attachments', '', DEFAULT_SETTINGS);
   expect(sendMessage).not.toHaveBeenCalled();
   expect(useChat.getState().error).toMatchObject({ code: 'UNKNOWN', message: expect.stringContaining('탭을 찾을 수 없습니다') });
 });
@@ -261,7 +261,7 @@ it('같은 탭에서 다른 페이지를 왕복해도 진행 중인 요약과 �
   vi.stubGlobal('chrome', { runtime: { sendMessage: vi.fn(async (message: { type: string }) =>
     message.type === 'EXTRACT_PAGE'
       ? { type: 'PAGE_EXTRACTED', payload: { ...page, structuredData: {
-        kind: 'onnara-document-list', listName: '문서등록대장', columns: [], rows: [{ title }],
+        kind: 'onnara-document-list', listName: '문서등록대장', columns: [], rows: [{ title }], selectedTitles: [title],
       } } }
       : { type: 'DOCUMENT_READ', requestedTitle: title, payload: page }) } });
   vi.spyOn(stream, 'streamChat').mockImplementation(async (_endpoint, _request, handlers) => {
@@ -270,7 +270,7 @@ it('같은 탭에서 다른 페이지를 왕복해도 진행 중인 요약과 �
     return finished.promise;
   });
   await useChat.getState().openForTab(1, url);
-  const sending = useChat.getState().send(`'${title}' 문서를 요약해줘`, DEFAULT_SETTINGS);
+  const sending = useChat.getState().runCommand('/요약', 'summary', '', DEFAULT_SETTINGS);
   await started.promise;
   const original = useChat.getState();
   await useChat.getState().openForTab(1, 'https://onnara.test/other');
@@ -350,39 +350,8 @@ it('대화 목록에서 실행 중인 세션을 다시 열어도 중단하거나
   expect(stream.streamChat).toHaveBeenCalledTimes(1);
 });
 
-it('받은문서 제목 표 요청은 화면을 다시 읽고 모델 없이 Markdown 표로 답한다', async () => {
-  const sendMessage = vi.fn(async () => ({
-    type: 'PAGE_EXTRACTED',
-    payload: {
-      url: 'https://onnara.test/main',
-      title: '받은문서 · 온나라',
-      text: '행 1 | 제목=감사자료 제출\n행 2 | 제목=처분요구 자료 제출',
-      charCount: 44,
-      truncated: false,
-      keptRatio: 1,
-      estimatedTokens: 20,
-      method: 'onnara-document-list',
-      extractedAt: Date.now(),
-      structuredData: {
-        kind: 'onnara-document-list',
-        listName: '받은문서',
-        columns: [{ key: 'title', label: '제목', sourceIndex: 2 }],
-        rows: [{ title: '감사자료 제출' }, { title: '처분요구 자료 제출' }],
-      },
-    },
-  } satisfies SWToPanel));
-  vi.stubGlobal('chrome', { runtime: { sendMessage } });
-  vi.spyOn(stream, 'streamChat').mockResolvedValue(null);
-  await useChat.getState().openForTab(1, 'https://onnara.test/main');
-  await useChat.getState().send('받은문서 메뉴에 리스트업된 모든 문서의 제목을 읽어서 테이블로 만들어줘.', DEFAULT_SETTINGS);
-  const messages = useChat.getState().messages;
-  expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'EXTRACT_PAGE', tabId: 1 }));
-  expect(messages.at(-1)?.content).toContain('| 1 | 감사자료 제출 |');
-  expect(messages.at(-1)?.content).toContain('| 2 | 처분요구 자료 제출 |');
-  expect(stream.streamChat).not.toHaveBeenCalled();
-});
 
-it('목록에서 지정한 문서를 백그라운드로 읽은 뒤 그 본문을 모델 컨텍스트에 넣는다', async () => {
+it('체크한 문서를 백그라운드로 읽은 뒤 그 본문을 모델 컨텍스트에 넣는다', async () => {
   const title = '감사결과 처분요구 이행실태 특정감사 자료 제출';
   const sendMessage = vi.fn(async (message: { type: string }) => {
     if (message.type === 'EXTRACT_PAGE') return {
@@ -393,7 +362,7 @@ it('목록에서 지정한 문서를 백그라운드로 읽은 뒤 그 본문을
         method: 'onnara-document-list', extractedAt: Date.now(),
         structuredData: {
           kind: 'onnara-document-list', listName: '문서등록대장',
-          columns: [{ key: 'title', label: '제목', sourceIndex: 2 }], rows: [{ title }],
+          columns: [{ key: 'title', label: '제목', sourceIndex: 2 }], rows: [{ title }], selectedTitles: [title],
         },
       },
     } satisfies SWToPanel;
@@ -411,7 +380,7 @@ it('목록에서 지정한 문서를 백그라운드로 읽은 뒤 그 본문을
   vi.stubGlobal('chrome', { runtime: { sendMessage } });
   vi.spyOn(stream, 'streamChat').mockResolvedValue(null);
   await useChat.getState().openForTab(1, 'https://onnara.test/main');
-  await useChat.getState().send(`'${title}' 문서를 읽고 핵심 내용을 요약해줘.`, DEFAULT_SETTINGS);
+  await useChat.getState().runCommand('/요약', 'summary', '핵심 내용을 요약해줘', DEFAULT_SETTINGS);
 
   expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'READ_DOCUMENT', tabId: 1, title }));
   const request = vi.mocked(stream.streamChat).mock.calls[0]![1];
@@ -431,15 +400,15 @@ it('문서 읽기가 진행 중이면 질문과 처리 상태가 남고 실패 �
         charCount: 30, truncated: false, keptRatio: 1, estimatedTokens: 20,
         method: 'onnara-document-list', extractedAt: Date.now(),
         structuredData: { kind: 'onnara-document-list', listName: '문서등록대장',
-          columns: [{ key: 'title', label: '제목', sourceIndex: 0 }], rows: [{ title }] },
+          columns: [{ key: 'title', label: '제목', sourceIndex: 0 }], rows: [{ title }], selectedTitles: [title] },
       },
     } satisfies SWToPanel;
   });
   vi.stubGlobal('chrome', { runtime: { sendMessage } });
   vi.spyOn(stream, 'streamChat').mockResolvedValue(null);
   await useChat.getState().openForTab(1, 'https://onnara.test/main');
-  const prompt = `"${title}" 문서 내용을 요약해줘.`;
-  const pending = useChat.getState().send(prompt, DEFAULT_SETTINGS);
+  const prompt = '/요약';
+  const pending = useChat.getState().runCommand(prompt, 'summary', '', DEFAULT_SETTINGS);
   await started.promise;
   expect(useChat.getState()).toMatchObject({ streaming: true, extracting: true });
   expect(useChat.getState().messages.at(-1)?.content).toBe(prompt);
@@ -472,7 +441,7 @@ it('여러 문서 중 권한 오류가 나면 나머지 문서를 돌리지 않�
   }) } });
   const generate = vi.spyOn(stream, 'streamChat');
   await useChat.getState().openForTab(1, common.url);
-  await useChat.getState().send('선택한 문서를 각각 요약해줘', DEFAULT_SETTINGS);
+  await useChat.getState().runCommand('/요약', 'summary', '', DEFAULT_SETTINGS);
   expect(reads).toEqual(['문서 A']);
   expect(generate).not.toHaveBeenCalled();
   expect(useChat.getState().error).toMatchObject({ code: 'HOST_PERMISSION_REQUIRED', origins: ['https://viewer.onnara.test'] });
@@ -492,47 +461,13 @@ it('여러 문서 요약이 모두 끝나면 늦게 도착한 표시 갱신이 �
   // 마지막 토큰 직후 응답이 끝나 60ms 표시 지연 타이머가 남는 상황
   vi.spyOn(stream, 'streamChat').mockImplementation(async (_endpoint, _request, handlers) => { handlers.onToken?.('요약'); return null; });
   await useChat.getState().openForTab(1, common.url);
-  await useChat.getState().send('선택한 문서를 각각 요약해줘', DEFAULT_SETTINGS);
+  await useChat.getState().runCommand('/요약', 'summary', '', DEFAULT_SETTINGS);
   await new Promise(resolve => setTimeout(resolve, 150));
   expect(useChat.getState().streaming).toBe(false);
   expect(useChat.getState().abort).toBeNull();
   expect(useChat.getState().messages.filter(message => message.role === 'assistant').map(message => message.content)).toEqual(['요약', '요약']);
 });
 
-it('요약과 첨부 다운로드를 함께 요청하면 문서마다 한 번 열어 요약을 만들고 그 아래에 첨부 결과를 남긴다', async () => {
-  const common = { url: 'https://onnara.test/main', title: '받은문서', text: '목록', charCount: 100,
-    truncated: false, keptRatio: 1, estimatedTokens: 30, method: 'innerText' as const, extractedAt: Date.now() };
-  const calls: string[] = [];
-  vi.stubGlobal('chrome', { runtime: { sendMessage: vi.fn(async (message: { type: string; title?: string; withAttachments?: boolean }) => {
-    if (message.type === 'EXTRACT_PAGE') return { type: 'PAGE_EXTRACTED', payload: { ...common, structuredData: {
-      kind: 'onnara-document-list', listName: '받은문서', columns: [],
-      rows: [{ title: '문서 A' }, { title: '문서 B' }], selectedTitles: ['문서 A', '문서 B'],
-    } } };
-    calls.push(message.type === 'READ_DOCUMENT' ? `read:${message.title}:${message.withAttachments}` : message.type);
-    if (message.type !== 'READ_DOCUMENT') return { type: 'ACTIVE_TAB', tab: null };
-    return message.title === '문서 A'
-      ? { type: 'DOCUMENT_READ', requestedTitle: message.title, payload: { ...common, title: message.title, text: '문서 A 본문' },
-          attachments: [{ name: '붙임.hwpx', status: 'complete', downloadId: 5, path: String.raw`C:\Downloads\붙임.hwpx` }] }
-      : { type: 'DOCUMENT_READ', requestedTitle: message.title, payload: { ...common, title: message.title, text: '문서 B 본문' },
-          attachmentError: { code: 'UNKNOWN', message: '문서 화면에서 첨부 파일을 찾지 못했습니다.' } };
-  }) } });
-  vi.spyOn(stream, 'streamChat').mockImplementation(async (_endpoint, request, handlers) => {
-    calls.push('generate');
-    handlers.onToken?.(`요약: ${request.messages.some(message => message.content.includes('문서 A 본문')) ? 'A' : 'B'}`);
-    return null;
-  });
-  await useChat.getState().openForTab(1, common.url);
-  await useChat.getState().send('선택한 문서의 내용을 각각 요약하고, 첨부 파일도 모두 다운로드 해줘.', DEFAULT_SETTINGS);
-  expect(calls).toEqual(['read:문서 A:true', 'generate', 'read:문서 B:true', 'generate', 'RELEASE_WORK_TAB']);
-  const answers = useChat.getState().messages.filter(message => message.role === 'assistant').map(message => message.content);
-  expect(answers).toHaveLength(4);
-  expect(answers[0]).toBe('요약: A');
-  // 마크다운 링크 글자에서는 역슬래시를 이스케이프해 둔다(화면에는 원래 경로로 보인다).
-  expect(answers[1]).toContain(String.raw`[C:\\Downloads\\붙임.hwpx](#saide-download=open:5)`);
-  expect(answers[2]).toBe('요약: B');
-  expect(answers[3]).toContain('첨부 파일을 찾지 못했습니다');
-  expect(useChat.getState().error).toBeNull();
-});
 
 it('핵심·조치사항 요청은 문서마다 JSON 스키마로 생성하고 원문과 대조한 카드를 남긴다', async () => {
   const common = { url: 'https://onnara.test/main', title: '받은문서', text: '목록', charCount: 100,
@@ -555,7 +490,7 @@ it('핵심·조치사항 요청은 문서마다 JSON 스키마로 생성하고 �
     return null;
   });
   await useChat.getState().openForTab(1, common.url);
-  await useChat.getState().send('선택한 문서의 핵심·조치사항을 정리해줘', DEFAULT_SETTINGS);
+  await useChat.getState().runCommand('/조치', 'actions', '', DEFAULT_SETTINGS);
   expect(formats).toHaveLength(2);
   expect(formats[0]).toMatchObject({ type: 'object', required: expect.arrayContaining(['actions', 'deadlines']) });
   const cards = useChat.getState().messages.filter(message => message.role === 'assistant');
@@ -582,13 +517,186 @@ it('문서를 바꿔 세션을 다시 여는 중에 보낸 요약 요청도 버�
   const firstConversation = useChat.getState().conversation!.id;
   generate.mockClear();
 
-  // 사용자가 다른 문서를 선택했다. 패널이 대화를 갈아끼우는 동안 곧바로 요약을 지시한다.
+  // 사용자가 다른 문서를 선택했다. 패널이 대화를 갈아끼우는 동안 곧바로 질문을 보낸다.
   void useChat.getState().openForTab(1, 'https://onnara.test/doc-b');
-  await useChat.getState().send('선택한 문서를 요약해줘', DEFAULT_SETTINGS);
+  await useChat.getState().send('앞에서 본 내용을 정리해줘', DEFAULT_SETTINGS);
 
   expect(generate).toHaveBeenCalledTimes(1);
-  expect(useChat.getState().messages.map(message => message.content)).toContain('선택한 문서를 요약해줘');
+  expect(useChat.getState().messages.map(message => message.content)).toContain('앞에서 본 내용을 정리해줘');
   expect(useChat.getState().conversation!.id).not.toBe(firstConversation);
   expect(useChat.getState().conversation!.originUrl).toBe('https://onnara.test/doc-b');
   expect(useChat.getState().streaming).toBe(false);
+});
+
+it('이전 문서 대화로 돌아가는 중에 보낸 요청은 그 문서 대화에서 처리한다', async () => {
+  // 상세 화면이 팝업·iframe으로 열렸다 닫히면 탭 주소가 원래 목록으로 돌아온다. 그때 세션을 다시 고르는
+  // 동안(저장소 조회) 보낸 요청이 직전 세션으로 새면 사용자는 답이 엉뚱한 대화에 남는 것을 본다.
+  const page = { title: '문서', text: '문서 본문', charCount: 100, truncated: false, keptRatio: 1, estimatedTokens: 30, method: 'innerText' as const, extractedAt: Date.now() };
+  vi.stubGlobal('chrome', { runtime: { sendMessage: vi.fn(async (message: { type: string }) =>
+    message.type === 'EXTRACT_PAGE' ? { type: 'PAGE_EXTRACTED', payload: { ...page, url: 'https://onnara.test/list' } } : { type: 'ACTIVE_TAB', tab: null }) } });
+  vi.spyOn(stream, 'streamChat').mockImplementation(async (_endpoint, _request, handlers) => {
+    handlers.onToken?.('요약 결과');
+    return null;
+  });
+
+  await useChat.getState().openForTab(1, 'https://onnara.test/list');
+  await useChat.getState().send('앞 문서를 요약해줘', DEFAULT_SETTINGS);
+  const listConversation = useChat.getState().conversation!.id;
+  await useChat.getState().openForTab(1, 'https://onnara.test/detail');
+  expect(useChat.getState().messages).toHaveLength(0);
+
+  // 목록 화면으로 돌아오는 중에 곧바로 다음 질문을 보낸다.
+  void useChat.getState().openForTab(1, 'https://onnara.test/list');
+  await useChat.getState().send('앞에서 본 내용을 정리해줘', DEFAULT_SETTINGS);
+
+  expect(useChat.getState().conversation!.id).toBe(listConversation);
+  expect(useChat.getState().messages.map(message => message.content)).toContain('앞에서 본 내용을 정리해줘');
+  expect(await storage.listMessages(listConversation)).toHaveLength(4);
+});
+
+it('요약을 마친 뒤 두 문서의 공통점을 물으면 다시 요약하지 않고 앞 답변을 근거로 한 번만 답한다', async () => {
+  const common = { url: 'https://onnara.test/main', title: '받은문서', text: '목록', charCount: 100,
+    truncated: false, keptRatio: 1, estimatedTokens: 30, method: 'innerText' as const, extractedAt: Date.now() };
+  const sendMessage = vi.fn(async (message: { type: string; title?: string }) => {
+    if (message.type === 'EXTRACT_PAGE') return { type: 'PAGE_EXTRACTED', payload: { ...common, structuredData: {
+      kind: 'onnara-document-list', listName: '받은문서', columns: [], rows: [{ title: '감사 자료 제출' }, { title: '정보보안 점검 계획' }],
+      selectedTitles: ['감사 자료 제출', '정보보안 점검 계획'],
+    } } };
+    if (message.type !== 'READ_DOCUMENT') return { type: 'ACTIVE_TAB', tab: null };
+    return { type: 'DOCUMENT_READ', requestedTitle: message.title, payload: { ...common, title: message.title, text: `${message.title}의 본문` } };
+  });
+  vi.stubGlobal('chrome', { runtime: { sendMessage } });
+  const generate = vi.spyOn(stream, 'streamChat').mockImplementation(async (_endpoint, _request, handlers) => {
+    handlers.onToken?.('문서 요약');
+    return null;
+  });
+
+  await useChat.getState().openForTab(1, common.url);
+  await useChat.getState().runCommand('/요약', 'summary', '', DEFAULT_SETTINGS);
+  expect(sendMessage.mock.calls.filter(([message]) => message.type === 'READ_DOCUMENT')).toHaveLength(2);
+  generate.mockClear();
+  sendMessage.mockClear();
+
+  await useChat.getState().send('각 문서의 내용이 서로 다른 분야인데 그래도 공통점을 찾아줘', DEFAULT_SETTINGS);
+
+  // 문서를 다시 읽지 않고, 질문 그대로 한 번만 생성한다.
+  expect(sendMessage.mock.calls.filter(([message]) => message.type === 'READ_DOCUMENT')).toHaveLength(0);
+  expect(generate).toHaveBeenCalledTimes(1);
+  const context = generate.mock.calls.at(-1)![1].messages;
+  expect(context.at(-1)!.content).toContain('공통점을 찾아줘');
+  expect(context.some(message => message.content.includes('문서 요약'))).toBe(true);
+  expect(useChat.getState().messages.at(-1)!.role).toBe('assistant');
+});
+
+it('요약한 적 없는 상태에서 공통점을 물으면 문서들을 함께 읽어 한 번에 답한다', async () => {
+  const common = { url: 'https://onnara.test/main', title: '받은문서', text: '목록', charCount: 100,
+    truncated: false, keptRatio: 1, estimatedTokens: 30, method: 'innerText' as const, extractedAt: Date.now() };
+  const sendMessage = vi.fn(async (message: { type: string; title?: string; budgetTokens?: number }) => {
+    if (message.type === 'EXTRACT_PAGE') return { type: 'PAGE_EXTRACTED', payload: { ...common, structuredData: {
+      kind: 'onnara-document-list', listName: '받은문서', columns: [], rows: [{ title: '감사 자료 제출' }, { title: '정보보안 점검 계획' }],
+      selectedTitles: ['감사 자료 제출', '정보보안 점검 계획'],
+    } } };
+    if (message.type !== 'READ_DOCUMENT') return { type: 'ACTIVE_TAB', tab: null };
+    // 문서 여러 건을 한 문맥에 담아야 하므로 문서마다 예산을 나눠 쓴다.
+    expect(message.budgetTokens).toBe(Math.floor(DEFAULT_SETTINGS.pageTokenBudget / 2));
+    return { type: 'DOCUMENT_READ', requestedTitle: message.title, payload: { ...common, title: message.title, text: `${message.title}의 본문` } };
+  });
+  vi.stubGlobal('chrome', { runtime: { sendMessage } });
+  const generate = vi.spyOn(stream, 'streamChat').mockImplementation(async (_endpoint, _request, handlers) => {
+    handlers.onToken?.('두 문서 모두 감사 대응 업무입니다');
+    return null;
+  });
+
+  await useChat.getState().openForTab(1, common.url);
+  await useChat.getState().runCommand('/비교 공통점을 찾아줘', 'compare', '공통점을 찾아줘', DEFAULT_SETTINGS);
+
+  expect(sendMessage.mock.calls.filter(([message]) => message.type === 'READ_DOCUMENT').map(([message]) => message.title))
+    .toEqual(['감사 자료 제출', '정보보안 점검 계획']);
+  expect(generate).toHaveBeenCalledTimes(1);
+  const context = generate.mock.calls.at(-1)![1].messages;
+  expect(context.some(message => message.content.includes('감사 자료 제출의 본문'))).toBe(true);
+  expect(context.some(message => message.content.includes('정보보안 점검 계획의 본문'))).toBe(true);
+  expect(context.at(-1)!.content).toContain('공통점을 찾아줘');
+  expect(useChat.getState().messages.filter(message => message.role === 'assistant')).toHaveLength(1);
+  expect(useChat.getState().streaming).toBe(false);
+});
+
+/* ── 슬래시 명령과 일반 대화의 경계 ── */
+
+it('슬래시 없는 문장은 문서를 읽지 않고 대화 문맥만으로 답한다', async () => {
+  const sendMessage = vi.fn(async () => ({ type: 'ACTIVE_TAB', tab: null }));
+  vi.stubGlobal('chrome', { runtime: { sendMessage } });
+  const generate = vi.spyOn(stream, 'streamChat').mockImplementation(async (_endpoint, _request, handlers) => {
+    handlers.onToken?.('답변');
+    return null;
+  });
+  await useChat.getState().openForTab(1, 'https://onnara.test/main');
+  // 예전에는 "문서"·"내용" 같은 낱말로 의도를 짐작해 문서를 다시 읽고 문서별 요약으로 바꿔 버렸다.
+  await useChat.getState().send('앞 문서들의 내용을 비교해서 공통점을 정리해줘', DEFAULT_SETTINGS);
+  expect(sendMessage).not.toHaveBeenCalled();
+  expect(generate).toHaveBeenCalledTimes(1);
+  expect(generate.mock.calls[0]![1].messages.at(-1)!.content).toBe('앞 문서들의 내용을 비교해서 공통점을 정리해줘');
+});
+
+it('/읽기는 본문만 붙이고 모델을 부르지 않는다. 이어지는 질문이 그 본문을 문맥으로 쓴다', async () => {
+  const common = { url: 'https://onnara.test/main', title: '받은문서', text: '목록', charCount: 100,
+    truncated: false, keptRatio: 1, estimatedTokens: 30, method: 'innerText' as const, extractedAt: Date.now() };
+  vi.stubGlobal('chrome', { runtime: { sendMessage: vi.fn(async (message: { type: string; title?: string }) => {
+    if (message.type === 'EXTRACT_PAGE') return { type: 'PAGE_EXTRACTED', payload: { ...common, structuredData: {
+      kind: 'onnara-document-list', listName: '받은문서', columns: [], rows: [{ title: '문서 A' }, { title: '문서 B' }],
+      selectedTitles: ['문서 A', '문서 B'],
+    } } };
+    if (message.type !== 'READ_DOCUMENT') return { type: 'ACTIVE_TAB', tab: null };
+    return { type: 'DOCUMENT_READ', requestedTitle: message.title, payload: { ...common, title: message.title, text: `${message.title}의 본문` } };
+  }) } });
+  const generate = vi.spyOn(stream, 'streamChat').mockImplementation(async (_endpoint, _request, handlers) => {
+    handlers.onToken?.('두 문서 모두 감사 대응 업무입니다');
+    return null;
+  });
+
+  await useChat.getState().openForTab(1, common.url);
+  await useChat.getState().runCommand('/읽기', 'read', '', DEFAULT_SETTINGS);
+  expect(generate).not.toHaveBeenCalled();
+  expect(useChat.getState().messages.at(-1)!.content).toContain('본문을 읽어 대화에 붙였습니다');
+  expect(useChat.getState().page!.text).toContain('문서 A의 본문');
+
+  await useChat.getState().send('두 문서의 공통점을 정리해줘', DEFAULT_SETTINGS);
+  const context = generate.mock.calls.at(-1)![1].messages;
+  expect(context.some(message => message.content.includes('문서 B의 본문'))).toBe(true);
+  expect(context.at(-1)!.content).toBe('두 문서의 공통점을 정리해줘');
+});
+
+it('/새로고침은 모델 없이 현재 목록과 체크 상태를 알려 준다', async () => {
+  const common = { url: 'https://onnara.test/main', title: '받은문서', text: '목록', charCount: 100,
+    truncated: false, keptRatio: 1, estimatedTokens: 30, method: 'innerText' as const, extractedAt: Date.now() };
+  vi.stubGlobal('chrome', { runtime: { sendMessage: vi.fn(async () => ({ type: 'PAGE_EXTRACTED', payload: { ...common, structuredData: {
+    kind: 'onnara-document-list', listName: '받은문서', columns: [], rows: [{ title: '문서 A' }, { title: '문서 B' }],
+    selectedTitles: ['문서 B'],
+  } } })) } });
+  const generate = vi.spyOn(stream, 'streamChat');
+  await useChat.getState().openForTab(1, common.url);
+  await useChat.getState().runCommand('/새로고침', 'refresh', '', DEFAULT_SETTINGS);
+  expect(generate).not.toHaveBeenCalled();
+  const answer = useChat.getState().messages.at(-1)!;
+  expect(answer.content).toContain('현재 화면 2건 / 체크 1건');
+  expect(answer.content).toContain('1. 문서 B');
+});
+
+it('체크한 문서가 없으면 읽지 않고 무엇을 해야 하는지 알려 준다', async () => {
+  const common = { url: 'https://onnara.test/main', title: '받은문서', text: '목록', charCount: 100,
+    truncated: false, keptRatio: 1, estimatedTokens: 30, method: 'innerText' as const, extractedAt: Date.now() };
+  const sendMessage = vi.fn(async (message: { type: string }) => {
+    void message;
+    return { type: 'PAGE_EXTRACTED', payload: { ...common, structuredData: {
+      kind: 'onnara-document-list', listName: '받은문서', columns: [], rows: [{ title: '문서 A' }], selectedTitles: [],
+    } } };
+  });
+  vi.stubGlobal('chrome', { runtime: { sendMessage } });
+  const generate = vi.spyOn(stream, 'streamChat');
+  await useChat.getState().openForTab(1, common.url);
+  await useChat.getState().runCommand('/요약', 'summary', '', DEFAULT_SETTINGS);
+  expect(generate).not.toHaveBeenCalled();
+  expect(sendMessage.mock.calls.some(([message]) => message.type === 'READ_DOCUMENT')).toBe(false);
+  expect(useChat.getState().error).toMatchObject({ message: expect.stringContaining('문서를 체크한 뒤') });
+  expect(useChat.getState().error!.hint).toContain('/요약 전체');
 });

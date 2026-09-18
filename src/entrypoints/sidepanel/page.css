@@ -208,10 +208,6 @@
   color: var(--fg-muted);
 }
 
-.pageactions-hint.kind {
-  color: var(--accent);
-}
-
 /* ── 에이전트 (Phase 5) ─────────────────────────────────── */
 
 /*

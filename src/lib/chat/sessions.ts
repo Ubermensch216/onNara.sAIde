@@ -12,16 +12,43 @@ export function createChatSessions(makeSession: () => StoreApi<ChatState>) {
   let unsubscribe = () => {};
   let selection = 0;
 
+  /**
+   * 화면에 보일 세션을 고르는 중인지 알려 주는 약속.
+   *
+   * ★ 문서를 바꾸면 패널은 세션 선택을 기다리지 않고 다음 동작을 받는다. 저장소 조회가 끝나기 전에
+   *   보낸 요청을 그대로 실행하면 직전 세션(화면에서 사라진 대화)으로 들어가, 사용자에게는
+   *   "지시를 무시했다"로 보인다. 선택이 끝난 뒤 지금 보이는 세션에서 실행한다.
+   */
+  let switching: Promise<void> = Promise.resolve();
+  function remember(work: Promise<void>): Promise<void> {
+    switching = work.then(() => undefined, () => undefined);
+    return work;
+  }
+  /**
+   * 세션 선택이 끝나기를 기다린다.
+   *
+   * ★ 새 입력을 보내는 send 계열에만 쓴다. 첨부·삭제·초기화는 사용자가 지금 보고 누른 세션에서
+   *   바로 실행해야 한다 — 기다리는 사이 세션이 바뀌면 엉뚱한 대화에 적용된다.
+   */
+  async function settled(): Promise<void> {
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const current = switching;
+      await current;
+      if (switching === current) return;
+    }
+  }
+
   // Stable actions are necessary for event listeners installed when the panel mounts.
   const actions = {
-    openForTab,
-    openConversation,
+    openForTab: (...args: Parameters<ChatState['openForTab']>) => remember(openForTab(...args)),
+    openConversation: (...args: Parameters<ChatState['openConversation']>) => remember(openConversation(...args)),
     attachPage: (...args: Parameters<ChatState['attachPage']>) => active.getState().attachPage(...args),
     attachScreenshot: (...args: Parameters<ChatState['attachScreenshot']>) => active.getState().attachScreenshot(...args),
     detachPage: () => active.getState().detachPage(),
     detachScreenshot: () => active.getState().detachScreenshot(),
-    send: (...args: Parameters<ChatState['send']>) => active.getState().send(...args),
-    sendAgent: (...args: Parameters<ChatState['sendAgent']>) => active.getState().sendAgent(...args),
+    send: async (...args: Parameters<ChatState['send']>) => { await settled(); return active.getState().send(...args); },
+    runCommand: async (...args: Parameters<ChatState['runCommand']>) => { await settled(); return active.getState().runCommand(...args); },
+    sendAgent: async (...args: Parameters<ChatState['sendAgent']>) => { await settled(); return active.getState().sendAgent(...args); },
     resolveApproval: (approved: boolean) => active.getState().resolveApproval(approved),
     regenerate: (...args: Parameters<ChatState['regenerate']>) => active.getState().regenerate(...args),
     removeMessage: (id: Parameters<ChatState['removeMessage']>[0]) => active.getState().removeMessage(id),

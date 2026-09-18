@@ -173,34 +173,6 @@ export function serializeDocumentList(list: StructuredDocumentList): string {
   return lines.join('\n');
 }
 
-export function isDocumentListTableRequest(prompt: string): boolean {
-  const compact = prompt.toLowerCase().replace(/\s+/g, '');
-  const wantsTable = compact.includes('테이블') || compact.includes('표로') || compact.includes('table');
-  const namesDocuments = compact.includes('받은문서') || compact.includes('문서목록') || compact.includes('receiveddocument');
-  const wantsTitles = compact.includes('제목') || compact.includes('리스트') || compact.includes('목록');
-  return wantsTable && namesDocuments && wantsTitles;
-}
-
-export function isDocumentSummaryRequest(prompt: string): boolean {
-  const compact = prompt.toLowerCase().replace(/\s+/g, '');
-  const wantsContent = ['요약', '정리', '핵심', '읽고', '읽어서', '내용', '보고'].some(word => compact.includes(word));
-  return compact.includes('문서') && wantsContent && !isDocumentListTableRequest(prompt);
-}
-
-export type DocumentTitleMatch =
-  | { status: 'matched'; title: string }
-  | { status: 'ambiguous'; candidates: string[] }
-  | { status: 'none'; candidates: string[] };
-
-export function requestedDocumentTitles(prompt: string, list: StructuredDocumentList): string[] {
-  const compact = prompt.replace(/\s/g, '');
-  if (/(전체|모든)문서|문서(들을|를)?(전부|모두)|전체를/.test(compact)) return list.rows.flatMap(row => row.title ? [row.title] : []);
-  const match = matchDocumentTitle(prompt, list);
-  if (match.status === 'matched') return [match.title];
-  if (/선택|체크|이문서|해당문서/.test(compact)) return list.selectedTitles ?? [];
-  return [];
-}
-
 function searchable(value: string): string {
   return cleanText(value, Number.MAX_SAFE_INTEGER).normalize('NFC').toLowerCase().replace(/[\s\p{P}\p{S}]/gu, '');
 }
@@ -217,30 +189,6 @@ export function sameDocumentTitle(left: string, right: string): boolean {
     return true;
   }
   return false;
-}
-
-/** 모델에게 고르게 하지 않고 현재 표의 제목과 사용자 문장을 결정적으로 대조한다. */
-export function matchDocumentTitle(prompt: string, list: StructuredDocumentList): DocumentTitleMatch {
-  const titles = [...new Set(list.rows.map(row => cleanText(row.title)).filter(Boolean))];
-  const normalizedPrompt = searchable(prompt);
-  const exact = titles.filter(title => {
-    const value = searchable(title);
-    return value.length >= 4 && normalizedPrompt.includes(value);
-  });
-  if (exact.length === 1) return { status: 'matched', title: exact[0]! };
-  if (exact.length > 1) {
-    const longest = Math.max(...exact.map(title => searchable(title).length));
-    const best = exact.filter(title => searchable(title).length === longest);
-    return best.length === 1 ? { status: 'matched', title: best[0]! } : { status: 'ambiguous', candidates: best };
-  }
-
-  const quoted = [...prompt.matchAll(/["'“”‘’「」『』](.*?)["'“”‘’「」『』]/g)]
-    .map(match => searchable(match[1] ?? ''))
-    .filter(value => value.length >= 4);
-  const partial = titles.filter(title => quoted.some(value => searchable(title).includes(value)));
-  if (partial.length === 1) return { status: 'matched', title: partial[0]! };
-  if (partial.length > 1) return { status: 'ambiguous', candidates: partial };
-  return { status: 'none', candidates: titles };
 }
 
 interface OpenCandidate {
@@ -371,21 +319,4 @@ export function openDocumentTarget(target: HTMLElement): void {
   } else {
     target.click();
   }
-}
-
-function markdownCell(value: string): string {
-  return value.replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/[\r\n]+/g, ' ').trim();
-}
-
-export function buildDocumentTitleTable(prompt: string, list: StructuredDocumentList | undefined): string | null {
-  if (!list || !isDocumentListTableRequest(prompt) || !list.rows.length) return null;
-  const lines = [
-    `현재 화면의 **${markdownCell(list.listName)}** 목록에서 ${list.rows.length}건의 문서 제목을 확인했습니다.`,
-    '',
-    '| 번호 | 문서 제목 |',
-    '|---:|---|',
-  ];
-  list.rows.forEach((row, index) => lines.push(`| ${index + 1} | ${markdownCell(row.title ?? '')} |`));
-  lines.push('', '※ 현재 화면에 렌더링된 목록 기준입니다. 다른 페이지의 항목은 포함하지 않았습니다.');
-  return lines.join('\n');
 }

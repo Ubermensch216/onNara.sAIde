@@ -129,8 +129,7 @@ const ko = {
   'page.screenshot': '화면 캡처',
   'page.screenshotAlt': '붙인 화면 캡처',
   'page.screenshotDetach': '화면 캡처 떼어내기',
-  'page.attached': '이 페이지에 대해 계속 물어볼 수 있습니다. 후속 질문은 빠릅니다.',
-  'page.costHint': '본문을 읽는 데 약 {sec}초, 화면 캡처는 약 5초 걸립니다.',
+  'page.commandHint': '목록에서 문서를 체크한 뒤 명령을 누르세요. 그 밖의 질문은 슬래시 없이 그냥 입력하세요.',
   'page.reading': '페이지를 읽는 중…',
   'page.restricted':
     '이 페이지에서는 내용을 읽을 수 없습니다. 일반 웹페이지에서 다시 시도하세요.',
@@ -340,6 +339,7 @@ const ko = {
   'preset.intro':
     '자주 쓰는 프롬프트를 슬래시 커맨드로 등록합니다. 사이드패널 입력창에 / 를 치면 목록이 뜹니다. 본문에 {selection}을 넣으면 커맨드 뒤에 입력한 내용이 그 자리에 들어갑니다.',
   'preset.needs.none': '첨부 없음',
+  'preset.needs.documents': '체크한 문서 대상',
   'preset.needs.page': '페이지 본문 필요',
   'preset.needs.screen': '화면 캡처 필요',
   'preset.needs.selection': '입력한 텍스트 대상',
@@ -511,8 +511,7 @@ const en = {
   'page.screenshot': 'Screen capture',
   'page.screenshotAlt': 'Attached screen capture',
   'page.screenshotDetach': 'Detach screen capture',
-  'page.attached': 'You can keep asking about this page. Follow-up questions are fast.',
-  'page.costHint': 'Reading the text takes about {sec}s; a screen capture about 5s.',
+  'page.commandHint': 'Check documents in the list, then run a command. For anything else, just type without a slash.',
   'page.reading': 'Reading the page…',
   'page.restricted': "This page's contents can't be read. Try a regular web page.",
   'page.truncateNotice': 'The page was long, so only the first {pct}% was used.',
@@ -717,6 +716,7 @@ const en = {
   'preset.intro':
     'Register prompts you use often as slash commands. Type / in the panel composer to see the list. Put {selection} in the body and whatever you type after the command lands there.',
   'preset.needs.none': 'No attachment',
+  'preset.needs.documents': 'Acts on checked documents',
   'preset.needs.page': 'Needs page text',
   'preset.needs.screen': 'Needs screenshot',
   'preset.needs.selection': 'Acts on typed text',

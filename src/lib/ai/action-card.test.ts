@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { expect, it } from 'vitest';
 import { renderMarkdown } from '@/lib/markdown';
-import { evidenceFound, findDates, findDueDates, isActionCardRequest, parseActionCard, renderActionCard } from './action-card';
+import { evidenceFound, findDates, findDueDates, parseActionCard, renderActionCard } from './action-card';
 
 const source = [
   '제목 2026년 제2회 고충상담원 역량강화 워크숍 개최 알림 및 참석자 명단 제출 요청',
@@ -59,11 +59,4 @@ it('JSON이 아니거나 항목이 비면 안전하게 처리한다', () => {
   const md = renderActionCard('알림', empty, '통계 결과를 알립니다. 별도 회신은 필요하지 않습니다.');
   expect(md).toContain('단순 알림일 수 있음');
   expect(md).toContain('**문의처** 본문에 없음');
-});
-
-it('핵심·조치사항 요청 문장을 알아본다', () => {
-  expect(isActionCardRequest('선택한 문서의 핵심·조치사항을 정리해줘')).toBe(true);
-  expect(isActionCardRequest('이 공문에서 우리가 해야 할 일 알려줘')).toBe(true);
-  expect(isActionCardRequest('선택한 문서들을 각각 요약해줘')).toBe(false);
-  expect(isActionCardRequest('오늘 할 일 정리해줘')).toBe(false);
 });
