@@ -11,6 +11,7 @@ let root: Root;
 
 beforeEach(async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+  localStorage.clear();
   await db.tasks.clear();
   useSchedule.setState({ tasks: [], loaded: false });
   document.body.innerHTML = '<div id="fixture"></div>';
@@ -29,9 +30,23 @@ function isoIn(days: number): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
-async function render() {
+async function render(mode: 'month' | 'week' | 'day' | 'list' = 'list') {
+  // 보기 방식은 브라우저에 기억된다. 테스트는 볼 화면을 먼저 정해 둔다.
+  localStorage.setItem('saide.scheduleMode', mode);
   await act(() => root.render(createElement(SchedulePanel)));
   await settle();
+}
+
+/**
+ * 격자에서 그 날의 칸을 찾는다.
+ *
+ * ★ 날짜 숫자로 찾지 않는다. 달 끝자락에 테스트를 돌리면 대상 날짜가 다음 달 칸(.other)에 있어
+ *   숫자만으로는 못 찾거나 엉뚱한 칸을 집는다. 칸이 읽어 주는 전체 날짜로 찾는다.
+ */
+function pickCell(dateISO: string): HTMLButtonElement {
+  const label = dateISO.replace(/-/g, '.');
+  return [...document.querySelectorAll<HTMLButtonElement>('.cal-cell')]
+    .find(cell => cell.getAttribute('aria-label')!.startsWith(`${label},`))!;
 }
 
 it('기한 지남·오늘·이번 주로 나눠 보이고, 지난 기한을 맨 위에 둔다', async () => {
@@ -48,9 +63,11 @@ it('기한 지남·오늘·이번 주로 나눠 보이고, 지난 기한을 맨 
   expect(document.querySelector('.sched-dday')!.textContent).toBe('D+2');
 });
 
-it('★ 등록된 일정이 없으면 어디서 등록하는지 안내한다', async () => {
-  await render();
+it('★ 등록된 일정이 없으면 어디서 등록하는지 안내한다 — 달력 보기에서도 보인다', async () => {
+  await render('month');
   expect(document.querySelector('.sched-empty-hint')!.textContent).toContain('/조치');
+  // 안내가 있으면 하루 칸의 "일정이 없습니다"는 접는다. 같은 말을 두 번 하지 않는다.
+  expect(document.querySelector('.cal-agenda-empty')).toBeNull();
 });
 
 it('완료 표시하면 완료 구간으로 내려가고, 되돌리면 원래 구간으로 돌아온다', async () => {
@@ -171,6 +188,132 @@ it('패널을 열면 저장소에서 목록을 읽어 온다', async () => {
   useSchedule.setState({ tasks: [], loaded: false });
   await render();
   expect(document.querySelector('.sched-task-title')!.textContent).toBe('저장돼 있던 일');
+});
+
+/* ── 달력 보기(월·주·일) ── */
+
+it('월 보기는 6주 42칸을 그리고 오늘 칸을 표시한다', async () => {
+  await render('month');
+
+  expect(document.querySelectorAll('.cal-cell')).toHaveLength(42);
+  expect(document.querySelectorAll('.cal-wd')).toHaveLength(7);
+  expect(document.querySelectorAll('.cal-cell.today')).toHaveLength(1);
+  expect(pickCell(isoIn(0)).classList.contains('today')).toBe(true);
+});
+
+it('★ 일정이 있는 날은 칸에서 바로 보이고, 지난 기한은 따로 표시한다', async () => {
+  await addTask({ title: '계획서 제출', status: 'todo', dueDate: '', due: { date: isoIn(0), text: '오늘', yearInferred: false } });
+  await addTask({ title: '지난 회신', status: 'todo', dueDate: '', due: { date: isoIn(-1), text: '어제', yearInferred: false } });
+  await render('month');
+
+  expect(pickCell(isoIn(0)).querySelector('.cal-chip')!.textContent).toBe('계획서 제출');
+  expect(pickCell(isoIn(-1)).querySelector('.cal-chip.overdue')).not.toBeNull();
+  expect(pickCell(isoIn(-1)).querySelector('.cal-dot')).not.toBeNull();
+  // 일정이 없는 날에는 아무 표시도 없다.
+  expect(pickCell(isoIn(2)).querySelector('.cal-chip')).toBeNull();
+});
+
+it('한 칸에 세 건 이상이면 두 건만 펼치고 나머지는 +n으로 접는다', async () => {
+  for (const title of ['첫째', '둘째', '셋째', '넷째']) {
+    await addTask({ title, status: 'todo', dueDate: '', due: { date: isoIn(1), text: '내일', yearInferred: false } });
+  }
+  await render('month');
+
+  const cell = pickCell(isoIn(1));
+  expect(cell.querySelectorAll('.cal-chip')).toHaveLength(2);
+  expect(cell.querySelector('.cal-more')!.textContent).toBe('+2');
+});
+
+it('★ 날짜를 누르면 그 날 일정이 격자 아래에 펼쳐진다 — 좁은 칸에서 읽으려 애쓰지 않는다', async () => {
+  await addTask({ title: '사업계획서 제출', status: 'todo', dueDate: '', due: { date: isoIn(4), text: '나흘 뒤', yearInferred: false } });
+  await render('month');
+  expect(document.querySelector('.cal-agenda .sched-task-title')).toBeNull();
+
+  await act(async () => pickCell(isoIn(4)).click());
+  await settle();
+  expect(pickCell(isoIn(4)).getAttribute('aria-pressed')).toBe('true');
+  expect(document.querySelector('.cal-agenda .sched-task-title')!.textContent).toBe('사업계획서 제출');
+});
+
+it('고른 날짜로 바로 일정을 추가한다', async () => {
+  await render('month');
+  await act(async () => pickCell(isoIn(6)).click());
+  await settle();
+  await act(async () => document.querySelector<HTMLButtonElement>('.cal-agenda .auto-link')!.click());
+  await settle();
+
+  const [title, date] = [...document.querySelectorAll<HTMLInputElement>('.sched-field input')];
+  // 누른 날짜가 기한 칸에 미리 들어가 있다.
+  expect(date!.value).toBe(isoIn(6));
+
+  await act(async () => setValue(title!, '현장 점검'));
+  await act(async () => document.querySelector<HTMLFormElement>('.sched-form')!.requestSubmit());
+  await settle();
+  expect((await db.tasks.toArray())[0]!.dueDate).toBe(isoIn(6));
+});
+
+it('이전·다음으로 달을 넘기고, 범위 이름을 누르면 오늘로 돌아온다', async () => {
+  await render('month');
+  const label = () => document.querySelector('.cal-range')!.textContent;
+  const thisMonth = label();
+
+  await act(async () => document.querySelector<HTMLButtonElement>('.cal-step')!.click());
+  await settle();
+  expect(label()).not.toBe(thisMonth);
+  expect(document.querySelectorAll('.cal-cell')).toHaveLength(42);
+
+  await act(async () => document.querySelector<HTMLButtonElement>('.cal-range')!.click());
+  await settle();
+  expect(label()).toBe(thisMonth);
+});
+
+it('주 보기는 이레를 하루씩 쌓아 보여 준다', async () => {
+  await addTask({ title: '오늘 회신', status: 'todo', dueDate: '', due: { date: isoIn(0), text: '오늘', yearInferred: false } });
+  await render('week');
+
+  expect(document.querySelectorAll('.cal-agenda')).toHaveLength(7);
+  expect(document.querySelectorAll('.cal-agenda.today')).toHaveLength(1);
+  expect(document.querySelector('.cal-agenda.today .sched-task-title')!.textContent).toBe('오늘 회신');
+});
+
+it('일 보기는 하루만 보여 주고, 비어 있으면 그렇다고 말한다', async () => {
+  await addTask({ title: '오늘 회신', status: 'todo', dueDate: '', due: { date: isoIn(0), text: '오늘', yearInferred: false } });
+  await render('day');
+
+  expect(document.querySelectorAll('.cal-agenda')).toHaveLength(1);
+  expect(document.querySelector('.sched-task-title')!.textContent).toBe('오늘 회신');
+
+  // 다음 날로 넘기면 빈 날이다.
+  await act(async () => [...document.querySelectorAll<HTMLButtonElement>('.cal-step')][1]!.click());
+  await settle();
+  expect(document.querySelector('.cal-agenda-empty')!.textContent).toBe('이 날짜에는 일정이 없습니다.');
+});
+
+it('★ 기한 미정 항목은 달력 칸에 넣지 않고 건수로 남긴다 — 누르면 목록으로 넘어간다', async () => {
+  await addTask({ title: '기한 없는 일', status: 'todo', dueDate: '' });
+  await render('month');
+
+  expect(document.querySelectorAll('.cal-chip')).toHaveLength(0);
+  const strip = document.querySelector<HTMLButtonElement>('.cal-undated')!;
+  expect(strip.textContent).toBe('기한 미정 1건 보기');
+
+  await act(async () => strip.click());
+  await settle();
+  expect(document.querySelector('.cal-grid')).toBeNull();
+  expect(document.querySelector('.sched-section.someday .sched-task-title')!.textContent).toBe('기한 없는 일');
+});
+
+it('고른 보기 방식은 다음에 열 때도 유지된다', async () => {
+  await render('month');
+  await act(async () => [...document.querySelectorAll<HTMLButtonElement>('.cal-mode')][1]!.click());
+  await settle();
+  expect(localStorage.getItem('saide.scheduleMode')).toBe('week');
+
+  await act(() => root.unmount());
+  root = createRoot(document.getElementById('fixture')!);
+  await act(() => root.render(createElement(SchedulePanel)));
+  await settle();
+  expect(document.querySelectorAll('.cal-agenda')).toHaveLength(7);
 });
 
 /** React가 제어하는 입력에 값을 넣는다. value를 직접 대입하면 React가 변화를 알아채지 못한다. */

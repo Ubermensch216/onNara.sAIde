@@ -1,37 +1,61 @@
 /**
  * 일정 탭 — 기한·후속조치 보드(계획서 S07 · P4-4).
  *
- * ★ 달력 격자가 아니라 D-day 목록이다. 사이드패널은 폭이 400px 남짓이라 월간 격자에는
- *   제목이 거의 들어가지 않는다. 그리고 여기서 관리하는 것은 약속 시각이 아니라 처리 기한이다.
+ * ★ 달력(월·주·일)과 D-day 목록을 함께 둔다. 달력은 "이번 달에 무엇이 몰려 있는가"를 보고,
+ *   목록은 "지금 급한 것이 무엇인가"를 본다. 사이드패널은 폭이 400px 남짓이라 월 격자의 칸이
+ *   좁으므로, 칸에는 밀도만 보이고 고른 날의 일정은 격자 아래에 제대로 편다.
  *
- * ★ 지난 기한을 숨기지 않는다. 맨 위에 "기한 지남"으로 남긴다 — 놓친 것을 보이지 않게 하면
- *   보드를 둘 이유가 없다.
+ * ★ 지난 기한을 숨기지 않는다. 달력 칸에서는 붉게, 목록에서는 맨 위에 `D+n`으로 남긴다.
  *
- * ★ 근거와 검증 결과를 항목에 붙여 보인다(원문 확인 / 연도 추정). AI가 뽑았다는 사실이
- *   며칠 뒤에도 보여야 한다. 계획서 §9.1 "근거와 범위를 숨기지 않는다".
+ * ★ 기한 미정 항목을 달력 칸에 넣지 않는다. 대신 어느 보기에서나 건수를 띠로 보여 준다 —
+ *   달력에 놓으면 없는 기한이 생기고, 안 보이면 잊힌다.
+ *
+ * ★ 근거와 검증 결과를 항목에 붙여 보인다(원문 확인 / 연도 추정). 계획서 §9.1 "근거와 범위를 숨기지 않는다".
  */
 
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { useT } from '@/lib/i18n';
+import { useT, type MessageKey } from '@/lib/i18n';
 import { refreshTasks, addTask, clearDoneTasks, deleteTask, setTaskDone, updateTask, useSchedule } from '@/lib/schedule/store';
 import { downloadText, exportFileName, tasksToCsv, tasksToIcs } from '@/lib/schedule/export';
-import { bucketOf, daysUntil, ddayLabel, groupTasks, type ScheduleTask, type TaskBucket } from '@/lib/schedule/task';
+import {
+  isCalendarMode, monthGrid, monthOf, shiftCursor, shortDate, tasksByDate, undatedTasks, weekDates, weekday,
+  type CalendarMode,
+} from '@/lib/schedule/calendar';
+import { bucketOf, daysUntil, ddayLabel, groupTasks, todayISO, type ScheduleTask, type TaskBucket } from '@/lib/schedule/task';
 
 const BUCKETS: TaskBucket[] = ['overdue', 'today', 'soon', 'later', 'someday'];
+const MODES: CalendarMode[] = ['month', 'week', 'day', 'list'];
+const MODE_KEY = 'saide.scheduleMode';
+/** 월 격자 한 칸에 펼쳐 보일 일정 수. 나머지는 "+n"으로 접는다. */
+const CELL_CHIPS = 2;
 
-/** 수정 중인 항목. 'new'면 직접 추가다. */
-type Editing = ScheduleTask | 'new' | null;
+/** 수정 중인 항목. `{ newOn }`이면 그 날짜로 새로 만드는 중이다. */
+type Editing = ScheduleTask | { newOn: string } | null;
+
+function initialMode(): CalendarMode {
+  try {
+    const stored = localStorage.getItem(MODE_KEY);
+    return isCalendarMode(stored) ? stored : 'month';
+  } catch { return 'month'; }
+}
 
 export function SchedulePanel() {
   const t = useT();
   const tasks = useSchedule(state => state.tasks);
   const loaded = useSchedule(state => state.loaded);
+  const [mode, setMode] = useState<CalendarMode>(initialMode);
+  const [cursor, setCursor] = useState<string>(todayISO);
   const [editing, setEditing] = useState<Editing>(null);
   const [showDone, setShowDone] = useState(false);
 
   useEffect(() => { void refreshTasks(); }, []);
+  useEffect(() => {
+    try { localStorage.setItem(MODE_KEY, mode); } catch { /* 기억하지 못해도 동작에는 지장 없다 */ }
+  }, [mode]);
 
-  // 자정을 넘겨도 D-day가 갱신되도록 화면을 열 때의 날짜를 기준으로 삼되, 목록이 바뀌면 다시 계산한다.
+  const today = todayISO();
+  const byDate = useMemo(() => tasksByDate(tasks), [tasks]);
+  const undated = useMemo(() => undatedTasks(tasks), [tasks]);
   const groups = useMemo(() => groupTasks(tasks, new Date()), [tasks]);
   const done = groups.done;
 
@@ -45,24 +69,52 @@ export function SchedulePanel() {
     await clearDoneTasks();
   };
 
+  const rowProps = { onEdit: setEditing, onDelete: (task: ScheduleTask) => void remove(task) };
+
   return (
     <div className="sched">
       <section className="sched-head">
         <h2 className="sched-title">{t('view.schedule')}<span className="sched-count">{t('sched.count', { n: tasks.length - done.length })}</span></h2>
-        <button type="button" className="minibtn" onClick={() => setEditing('new')}><PlusIcon />{t('sched.add')}</button>
+        <button type="button" className="minibtn" onClick={() => setEditing({ newOn: mode === 'list' ? '' : cursor })}>
+          <PlusIcon />{t('sched.add')}
+        </button>
       </section>
+
+      <div className="cal-modes" role="tablist" aria-label={t('sched.viewMode')}>
+        {MODES.map(item => (
+          <button key={item} type="button" role="tab" aria-selected={mode === item}
+            className={`cal-mode ${mode === item ? 'on' : ''}`} onClick={() => setMode(item)}>
+            {t(`sched.view.${item}` as MessageKey)}
+          </button>
+        ))}
+      </div>
+
+      {mode !== 'list' && (
+        <div className="cal-nav">
+          <button type="button" className="icon-btn cal-step" onClick={() => setCursor(shiftCursor(cursor, mode, -1))}
+            title={t('sched.prev')} aria-label={t('sched.prev')}><ChevronIcon dir="left" /></button>
+          {/* 범위 이름을 누르면 오늘로 돌아온다. 좁은 줄에 버튼을 하나 더 두지 않으려는 것이다. */}
+          <button type="button" className="cal-range" onClick={() => setCursor(today)} title={t('sched.today')}>
+            {rangeLabel(t, cursor, mode)}
+          </button>
+          <button type="button" className="icon-btn cal-step" onClick={() => setCursor(shiftCursor(cursor, mode, 1))}
+            title={t('sched.next')} aria-label={t('sched.next')}><ChevronIcon dir="right" /></button>
+        </div>
+      )}
 
       {editing && (
         // key를 주어 다른 항목을 고르면 폼을 새로 만든다. 없으면 앞 항목의 입력이 남는다.
         <TaskForm
-          key={editing === 'new' ? 'new' : editing.id}
-          task={editing === 'new' ? null : editing}
+          key={'newOn' in editing ? `new-${editing.newOn}` : editing.id}
+          task={'newOn' in editing ? null : editing}
+          defaultDate={'newOn' in editing ? editing.newOn : ''}
           onClose={() => setEditing(null)}
         />
       )}
 
       {!loaded && <p className="sched-empty">{t('sched.loading')}</p>}
 
+      {/* 처음 쓰는 사람에게는 달력보다 "어디서 등록하는가"가 먼저다. 어느 보기에서나 보여 준다. */}
       {loaded && tasks.length === 0 && (
         <div className="sched-empty-box">
           <p className="sched-empty">{t('sched.empty')}</p>
@@ -70,20 +122,60 @@ export function SchedulePanel() {
         </div>
       )}
 
-      {BUCKETS.map(bucket => groups[bucket].length > 0 && (
+      {mode === 'month' && (
+        <>
+          <MonthGrid cursor={cursor} today={today} byDate={byDate} onPick={setCursor} />
+          <DayAgenda date={cursor} tasks={byDate.get(cursor) ?? []} today={today} quiet={!tasks.length}
+            onAdd={() => setEditing({ newOn: cursor })} {...rowProps} />
+        </>
+      )}
+
+      {mode === 'week' && weekDates(cursor).map(date => (
+        <DayAgenda key={date} date={date} tasks={byDate.get(date) ?? []} today={today} compact
+          onAdd={() => setEditing({ newOn: date })} {...rowProps} />
+      ))}
+
+      {mode === 'day' && (
+        <DayAgenda date={cursor} tasks={byDate.get(cursor) ?? []} today={today} quiet={!tasks.length}
+          onAdd={() => setEditing({ newOn: cursor })} {...rowProps} />
+      )}
+
+      {mode === 'list' && BUCKETS.map(bucket => groups[bucket].length > 0 && (
         <section key={bucket} className={`sched-section ${bucket}`}>
           <h3 className="sched-section-title">
             {t(`sched.bucket.${bucket}`)}
             <span className="sched-section-count">{groups[bucket].length}</span>
           </h3>
           <ul className="sched-list">
-            {groups[bucket].map(task => (
-              <TaskRow key={task.id} task={task} onEdit={() => setEditing(task)} onDelete={() => void remove(task)} />
-            ))}
+            {groups[bucket].map(task => <TaskRow key={task.id} task={task} {...rowProps} />)}
           </ul>
         </section>
       ))}
 
+      {/* 달력에 놓을 수 없는 항목도 잊히지 않게 건수를 남긴다. 누르면 목록 보기로 넘어간다. */}
+      {mode !== 'list' && undated.length > 0 && (
+        <button type="button" className="cal-undated" onClick={() => setMode('list')}>
+          {t('sched.undatedCount', { n: undated.length })}
+        </button>
+      )}
+
+      {mode === 'list' && done.length > 0 && (
+        <section className="sched-section done">
+          <div className="sched-section-head">
+            <button type="button" className="sched-section-toggle" aria-expanded={showDone} onClick={() => setShowDone(value => !value)}>
+              <ChevronIcon dir={showDone ? 'down' : 'right'} />
+              {t('sched.bucket.done')}
+              <span className="sched-section-count">{done.length}</span>
+            </button>
+            {showDone && <button type="button" className="auto-link" onClick={() => void clearDone()}>{t('sched.clearDone')}</button>}
+          </div>
+          {showDone && (
+            <ul className="sched-list">
+              {done.map(task => <TaskRow key={task.id} task={task} {...rowProps} />)}
+            </ul>
+          )}
+        </section>
+      )}
       {tasks.length > 0 && (
         <p className="sched-foot">
           <span>{t('sched.export')}</span>
@@ -96,30 +188,106 @@ export function SchedulePanel() {
         </p>
       )}
 
-      {done.length > 0 && (
-        <section className="sched-section done">
-          <div className="sched-section-head">
-            <button type="button" className="sched-section-toggle" aria-expanded={showDone} onClick={() => setShowDone(value => !value)}>
-              <ChevronIcon open={showDone} />
-              {t('sched.bucket.done')}
-              <span className="sched-section-count">{done.length}</span>
-            </button>
-            {showDone && <button type="button" className="auto-link" onClick={() => void clearDone()}>{t('sched.clearDone')}</button>}
-          </div>
-          {showDone && (
-            <ul className="sched-list">
-              {done.map(task => (
-                <TaskRow key={task.id} task={task} onEdit={() => setEditing(task)} onDelete={() => void remove(task)} />
-              ))}
-            </ul>
-          )}
-        </section>
-      )}
     </div>
   );
 }
 
-function TaskRow({ task, onEdit, onDelete }: { task: ScheduleTask; onEdit: () => void; onDelete: () => void }) {
+/** 보기 범위의 이름. 달을 넘겼는지 한눈에 보여야 해서 늘 연도까지 적는다. */
+function rangeLabel(t: (key: MessageKey, vars?: Record<string, string | number>) => string, cursor: string, mode: CalendarMode): string {
+  const [year, month, day] = cursor.split('-');
+  if (mode === 'day') {
+    return t('cal.dayLabel', { year: Number(year), month: Number(month), day: Number(day), weekday: t(`cal.wd.${weekday(cursor)}` as MessageKey) });
+  }
+  if (mode === 'week') {
+    const dates = weekDates(cursor);
+    return t('cal.weekLabel', { from: shortDate(dates[0]!), to: shortDate(dates[6]!) });
+  }
+  return t('cal.monthLabel', { year: Number(year), month: Number(month) });
+}
+
+function MonthGrid({ cursor, today, byDate, onPick }: {
+  cursor: string; today: string; byDate: Map<string, ScheduleTask[]>; onPick: (date: string) => void;
+}) {
+  const t = useT();
+  const weeks = monthGrid(cursor);
+  const month = monthOf(cursor);
+
+  return (
+    <div className="cal">
+      <div className="cal-week-head" aria-hidden="true">
+        {Array.from({ length: 7 }, (_, day) => (
+          <span key={day} className={`cal-wd ${day === 0 ? 'sun' : day === 6 ? 'sat' : ''}`}>{t(`cal.wd.${day}` as MessageKey)}</span>
+        ))}
+      </div>
+      <div className="cal-grid">
+        {weeks.flat().map(date => {
+          const items = byDate.get(date) ?? [];
+          const open = items.filter(item => item.status !== 'done');
+          const overdue = open.some(item => date < today);
+          const day = weekday(date);
+          return (
+            <button
+              key={date}
+              type="button"
+              className={[
+                'cal-cell',
+                monthOf(date) === month ? '' : 'other',
+                date === today ? 'today' : '',
+                date === cursor ? 'picked' : '',
+                day === 0 ? 'sun' : day === 6 ? 'sat' : '',
+              ].filter(Boolean).join(' ')}
+              aria-pressed={date === cursor}
+              aria-label={t('cal.cellLabel', { date: shortDate(date), n: open.length })}
+              onClick={() => onPick(date)}
+            >
+              <span className="cal-day">{Number(date.slice(8))}</span>
+              {items.slice(0, CELL_CHIPS).map(item => (
+                <span key={item.id} className={`cal-chip ${item.status === 'done' ? 'done' : date < today ? 'overdue' : ''}`}>
+                  {item.title}
+                </span>
+              ))}
+              {items.length > CELL_CHIPS && <span className="cal-more">+{items.length - CELL_CHIPS}</span>}
+              {overdue && <span className="cal-dot" aria-hidden="true" />}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/** 하루치 일정. 주 보기에서는 이것을 이레 쌓는다. */
+function DayAgenda({ date, tasks, today, compact = false, quiet = false, onAdd, onEdit, onDelete }: {
+  date: string; tasks: ScheduleTask[]; today: string; compact?: boolean;
+  /** 등록된 일정이 하나도 없을 때. 위의 안내와 겹치므로 빈 문구를 접는다. */
+  quiet?: boolean;
+  onAdd: () => void; onEdit: (task: ScheduleTask) => void; onDelete: (task: ScheduleTask) => void;
+}) {
+  const t = useT();
+  const day = weekday(date);
+  // 주 보기는 이레가 같은 달인 경우가 대부분이다. 연·월을 매 줄 반복하지 않고 날짜와 요일만 적는다.
+  const label = compact
+    ? t('cal.shortDayLabel', { month: Number(date.slice(5, 7)), day: Number(date.slice(8)), weekday: t(`cal.wd.${day}` as MessageKey) })
+    : t('cal.dayLabel', { year: Number(date.slice(0, 4)), month: Number(date.slice(5, 7)), day: Number(date.slice(8)), weekday: t(`cal.wd.${day}` as MessageKey) });
+
+  return (
+    <section className={`cal-agenda ${date === today ? 'today' : ''} ${compact ? 'compact' : ''}`}>
+      <div className="sched-section-head">
+        <h3 className={`sched-section-title ${day === 0 ? 'sun' : day === 6 ? 'sat' : ''}`}>
+          {label}
+          {date === today && <span className="cal-today-badge">{t('sched.today')}</span>}
+          {tasks.length > 0 && <span className="sched-section-count">{tasks.length}</span>}
+        </h3>
+        <button type="button" className="auto-link" onClick={onAdd}>{t('sched.addOnDay')}</button>
+      </div>
+      {tasks.length
+        ? <ul className="sched-list">{tasks.map(task => <TaskRow key={task.id} task={task} onEdit={onEdit} onDelete={onDelete} />)}</ul>
+        : !compact && !quiet && <p className="cal-agenda-empty">{t('sched.noTaskOnDay')}</p>}
+    </section>
+  );
+}
+
+function TaskRow({ task, onEdit, onDelete }: { task: ScheduleTask; onEdit: (task: ScheduleTask) => void; onDelete: (task: ScheduleTask) => void }) {
   const t = useT();
   const [open, setOpen] = useState(false);
   const days = task.dueDate ? daysUntil(task.dueDate) : null;
@@ -138,7 +306,7 @@ function TaskRow({ task, onEdit, onDelete }: { task: ScheduleTask; onEdit: () =>
         >
           {task.status === 'done' ? <CheckedIcon /> : <UncheckedIcon />}
         </button>
-        <button type="button" className="sched-task-main" onClick={() => detail ? setOpen(value => !value) : onEdit()}>
+        <button type="button" className="sched-task-main" onClick={() => detail ? setOpen(value => !value) : onEdit(task)}>
           <span className="sched-task-title">{task.title}</span>
           <span className="sched-task-meta">
             {days === null
@@ -148,8 +316,8 @@ function TaskRow({ task, onEdit, onDelete }: { task: ScheduleTask; onEdit: () =>
             {task.evidenceVerified === false && <span className="sched-badge warn">{t('sched.unverified')}</span>}
           </span>
         </button>
-        <button type="button" className="icon-btn sched-icon" title={t('sched.edit')} aria-label={t('sched.edit')} onClick={onEdit}><PencilIcon /></button>
-        <button type="button" className="icon-btn sched-icon" title={t('ui.delete')} aria-label={t('ui.delete')} onClick={onDelete}><TrashIcon /></button>
+        <button type="button" className="icon-btn sched-icon" title={t('sched.edit')} aria-label={t('sched.edit')} onClick={() => onEdit(task)}><PencilIcon /></button>
+        <button type="button" className="icon-btn sched-icon" title={t('ui.delete')} aria-label={t('ui.delete')} onClick={() => onDelete(task)}><TrashIcon /></button>
       </div>
 
       {open && detail && (
@@ -187,10 +355,10 @@ function TaskRow({ task, onEdit, onDelete }: { task: ScheduleTask; onEdit: () =>
  * ★ 날짜는 <input type="date">로 받는다. 직접 적는 칸으로 두면 "9/30", "9.30" 같은
  *   표기가 섞여 들어와 정렬이 깨진다. 공문에서 읽어 온 원문 표기는 due.text에 그대로 남는다.
  */
-function TaskForm({ task, onClose }: { task: ScheduleTask | null; onClose: () => void }) {
+function TaskForm({ task, defaultDate, onClose }: { task: ScheduleTask | null; defaultDate: string; onClose: () => void }) {
   const t = useT();
   const [title, setTitle] = useState(task?.title ?? '');
-  const [date, setDate] = useState(task?.dueDate ?? '');
+  const [date, setDate] = useState(task?.dueDate ?? defaultDate);
   const [time, setTime] = useState(task?.due?.time ?? '');
   const [notes, setNotes] = useState(task?.notes ?? '');
   const [error, setError] = useState('');
@@ -257,4 +425,6 @@ const PencilIcon = () => <Svg size={14}><path d="M12 20h9" /><path d="M16.5 3.5a
 const TrashIcon = () => <Svg size={14}><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14" /></Svg>;
 const UncheckedIcon = () => <Svg size={17}><circle cx="12" cy="12" r="9" /></Svg>;
 const CheckedIcon = () => <Svg size={17}><circle cx="12" cy="12" r="9" /><path d="m8 12 3 3 5-6" /></Svg>;
-const ChevronIcon = ({ open }: { open: boolean }) => <Svg size={13}>{open ? <path d="m6 9 6 6 6-6" /> : <path d="m9 6 6 6-6 6" />}</Svg>;
+
+const ARROWS = { left: 'm15 6-6 6 6 6', right: 'm9 6 6 6-6 6', down: 'm6 9 6 6 6-6' } as const;
+const ChevronIcon = ({ dir }: { dir: keyof typeof ARROWS }) => <Svg size={14}><path d={ARROWS[dir]} /></Svg>;

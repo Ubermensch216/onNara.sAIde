@@ -1193,3 +1193,159 @@
 
 .task-register-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
 .task-register-actions .auto-link { margin-right: auto; }
+
+/* ── 일정 달력 (월·주·일) ──
+ * 400px 폭에서 한 칸은 50px 남짓이다. 칸에는 "무엇이 얼마나 있는가"만 담고,
+ * 고른 날의 일정은 격자 아래에 제대로 편다. 칸 안에서 글자를 줄여 읽히게 하려 애쓰지 않는다.
+ */
+
+.cal-modes {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-2);
+}
+
+.cal-mode {
+  flex: 1;
+  padding: 4px 0;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: var(--fg-muted);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.cal-mode:hover { color: var(--fg); }
+.cal-mode.on { color: var(--accent-fg); background: var(--accent); }
+
+.cal-nav { display: flex; align-items: center; gap: 4px; }
+.cal-step { width: 26px; height: 26px; color: var(--fg-muted); }
+
+.cal-range {
+  flex: 1;
+  padding: 3px 0;
+  border: 0;
+  background: none;
+  color: var(--fg);
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.cal-range:hover { color: var(--accent); }
+
+.cal { display: flex; flex-direction: column; gap: 2px; }
+.cal-week-head, .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+
+.cal-wd {
+  padding: 2px 0;
+  text-align: center;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--fg-muted);
+}
+
+.cal-wd.sun, .sched-section-title.sun { color: var(--danger); }
+.cal-wd.sat, .sched-section-title.sat { color: var(--accent); }
+
+.cal-cell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 1px;
+  min-height: 52px;
+  padding: 2px 2px 3px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: var(--surface);
+  text-align: left;
+  overflow: hidden;
+}
+
+.cal-cell:hover { border-color: var(--border-strong); }
+/* 이번 달이 아닌 날은 색으로만 낮춘다 — opacity는 작은 글자에서 AA 대비를 깬다. */
+.cal-cell.other { background: var(--surface-2); }
+.cal-cell.other .cal-day { color: var(--fg-muted); }
+.cal-cell.today { background: var(--accent-soft); }
+.cal-cell.picked { border-color: var(--accent); }
+.cal-cell.picked .cal-day { color: var(--accent); }
+
+.cal-day {
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg);
+}
+
+.cal-cell.sun:not(.other) .cal-day { color: var(--danger); }
+.cal-cell.sat:not(.other) .cal-day { color: var(--accent); }
+.cal-cell.today .cal-day { color: var(--accent); }
+
+.cal-chip {
+  display: block;
+  padding: 0 3px;
+  border-radius: 3px;
+  background: var(--accent-soft);
+  color: var(--fg);
+  font-size: 9.5px;
+  line-height: 1.5;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cal-chip.overdue { background: var(--danger-soft); color: var(--danger); }
+.cal-chip.done { background: var(--surface-2); color: var(--fg-muted); text-decoration: line-through; }
+.cal-more { font-size: 9.5px; font-weight: 600; color: var(--fg-muted); padding-left: 3px; }
+
+.cal-dot {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--danger);
+}
+
+.cal-agenda { display: flex; flex-direction: column; gap: 6px; }
+.cal-agenda.compact .sched-section-head { padding-top: 2px; border-top: 1px solid var(--border); }
+.cal-agenda.today .sched-section-title { color: var(--accent); }
+
+.cal-today-badge {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 999px;
+  padding: 1px 6px;
+}
+
+.cal-agenda-empty {
+  margin: 0;
+  padding: 14px 12px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  color: var(--fg-muted);
+  text-align: center;
+  font-size: 11.5px;
+}
+
+/* 달력에 놓을 수 없는 항목은 띠로 남긴다. 안 보이면 잊히고, 칸에 넣으면 없는 기한이 생긴다. */
+.cal-undated {
+  padding: 6px 10px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  background: none;
+  color: var(--fg-muted);
+  font-size: 11.5px;
+  font-weight: 600;
+  text-align: left;
+}
+
+.cal-undated:hover { color: var(--accent); border-color: var(--accent); }
