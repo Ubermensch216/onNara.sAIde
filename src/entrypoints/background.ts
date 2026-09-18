@@ -19,6 +19,7 @@ import type { DocumentListLocation } from '@/lib/onnara/document-navigation';
  */
 
 import { setLocale, t } from '@/lib/i18n';
+import { registerTaskAlerts } from '@/lib/schedule/alerts';
 import { loadSettings, onSettingsChanged } from '@/lib/storage/settings';
 import {
   isRestrictedUrl,
@@ -50,6 +51,9 @@ export default defineBackground(() => {
 
   // 작업 탭이 새 창으로 띄운 문서 팝업을 추적한다. 서비스 워커가 깨어날 때마다 최상위에서 등록해야 한다.
   registerWorkTabListeners();
+
+  // 기한 알림(S07). 패널이 닫혀 있어도 알람이 워커를 깨워 확인한다.
+  registerTaskAlerts();
 
   chrome.runtime.onMessage.addListener((msg: unknown, sender, sendResponse) => {
     if (!trustedPanel(sender)) return false;

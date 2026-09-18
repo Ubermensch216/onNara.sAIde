@@ -7,6 +7,7 @@ import { useT } from '@/lib/i18n';
 import type { UiMessage } from '@/lib/chat/store';
 import type { PerfSample } from '@/types/ollama';
 import { AgentSteps } from './AgentSteps';
+import { TaskRegisterCard } from './TaskRegisterCard';
 import { Markdown } from './Markdown';
 import { CopyIcon, DeleteIcon } from './ChatActionIcons';
 import { parseDownloadLink, type DownloadLinkAction } from '@/lib/downloads/links';
@@ -19,9 +20,11 @@ interface Props {
   onDelete: (id: UiMessage['id']) => Promise<void>;
   /** 답변 안의 다운로드 파일 링크를 눌렀을 때. 사용자 제스처가 살아 있도록 클릭 중에 동기로 호출한다. */
   onDownloadLink?: (action: DownloadLinkAction, downloadId: number) => void;
+  /** 일정을 등록한 뒤 일정 탭으로 넘어가는 길. */
+  onOpenSchedule?: () => void;
 }
 
-export function MessageList({ messages, dark, showThinking, deleteDisabled, onDelete, onDownloadLink }: Props) {
+export function MessageList({ messages, dark, showThinking, deleteDisabled, onDelete, onDownloadLink, onOpenSchedule }: Props) {
   // 마크다운 HTML 안의 링크에는 React 핸들러를 달 수 없어 목록에서 한 번에 가로챈다.
   const onClick = (event: React.MouseEvent) => {
     const anchor = (event.target as Element).closest?.('a');
@@ -48,7 +51,7 @@ export function MessageList({ messages, dark, showThinking, deleteDisabled, onDe
   return (
     <div className="msgs" ref={scrollerRef} onScroll={onScroll} onClick={onClick}>
       {messages.map((m) => (
-        <Message key={String(m.id)} msg={m} dark={dark} showThinking={showThinking} deleteDisabled={deleteDisabled} onDelete={onDelete} />
+        <Message key={String(m.id)} msg={m} dark={dark} showThinking={showThinking} deleteDisabled={deleteDisabled} onDelete={onDelete} onOpenSchedule={onOpenSchedule} />
       ))}
       <div ref={endRef} />
     </div>
@@ -61,12 +64,14 @@ function Message({
   showThinking,
   deleteDisabled,
   onDelete,
+  onOpenSchedule,
 }: {
   msg: UiMessage;
   dark: boolean;
   showThinking: boolean;
   deleteDisabled: boolean;
   onDelete: Props['onDelete'];
+  onOpenSchedule?: Props['onOpenSchedule'];
 }) {
   const t = useT();
   if (msg.role === 'user') {
@@ -105,6 +110,16 @@ function Message({
       ) : (
         <Markdown text={msg.content} streaming={msg.streaming} dark={dark} />
       )}
+
+      {/* 핵심·조치사항에서 나온 일정 후보(S07). 답변 바로 아래 둔다 — 근거를 읽은 자리에서 판단한다. */}
+      {!msg.streaming && msg.taskCandidates?.length && msg.sourceDoc ? (
+        <TaskRegisterCard
+          candidates={msg.taskCandidates}
+          source={msg.sourceDoc}
+          conversationId={msg.conversationId}
+          {...(onOpenSchedule ? { onOpenSchedule } : {})}
+        />
+      ) : null}
 
       {msg.aborted && <div className="aborted">{t('msg.aborted')}</div>}
       {msg.perf && !msg.streaming && <PerfLine perf={msg.perf} />}

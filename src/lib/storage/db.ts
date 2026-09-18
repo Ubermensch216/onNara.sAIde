@@ -8,6 +8,8 @@
 import Dexie, { type EntityTable } from 'dexie';
 import type { PerfSample } from '@/types/ollama';
 import type { AgentStep } from '@/lib/agent/loop';
+import type { ScheduleTask } from '@/lib/schedule/task';
+import type { TaskCandidate } from '@/lib/schedule/candidates';
 import { sameDocument } from '@/lib/messaging/protocol';
 
 export interface Conversation {
@@ -54,12 +56,24 @@ export interface StoredMessage {
   steps?: AgentStep[];
   /** 'automation'이면 AI가 생성한 글이 아니라 자동화 실행 결과다. 없으면 AI 답변으로 본다. 비인덱스 필드. */
   origin?: 'automation';
+  /**
+   * 핵심·조치사항 카드에서 뽑은 일정 후보(계획서 S07). 비인덱스 필드.
+   *
+   * ★ 답변 문자열만 남기면 패널을 닫았다 열었을 때 "일정으로 등록" 버튼이 사라진다.
+   *   원문 대조까지 끝난 후보를 메시지에 붙여 두면 며칠 뒤에 다시 열어도 그대로 등록할 수 있다.
+   *   원문 전체가 아니라 후보만 저장한다 — 본문을 대화마다 복사해 두지 않는다.
+   */
+  taskCandidates?: TaskCandidate[];
+  /** 그 후보가 나온 공문. 일정 항목의 출처가 된다. */
+  sourceDoc?: { title: string; url?: string };
   createdAt: number;
 }
 
 class SaideDB extends Dexie {
   conversations!: EntityTable<Conversation, 'id'>;
   messages!: EntityTable<StoredMessage, 'id'>;
+  /** 일정(기한·후속조치 보드). 계획서 S07 — 대화를 지워도 남는 별도 수명이다. */
+  tasks!: EntityTable<ScheduleTask, 'id'>;
 
   constructor() {
     super('saide');
@@ -70,6 +84,9 @@ class SaideDB extends Dexie {
       pageVectors: '++id, url, visitedAt',
     });
     this.version(2).stores({ memoryControl: 'id' });
+    // ★ dueDate는 중첩 객체(due.date)가 아니라 평평한 필드로 색인한다. "다음 7일" 같은
+    //   범위 조회를 걸어야 하고, Dexie는 중첩 필드에 범위 색인을 만들지 못한다.
+    this.version(3).stores({ tasks: '++id, status, dueDate, updatedAt, dedupeKey' });
   }
 }
 

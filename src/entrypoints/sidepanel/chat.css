@@ -629,9 +629,10 @@
   font-weight: 600;
 }
 
-/* ── AI 도우미 · 자동화 탭 ──
- * 두 탭만 둔다. 좁은 사이드패널에서 세 개 이상은 글자가 잘린다.
- * 자동화는 초록(--ok) 계열로 구분해, 결과 표시(출처 배지)와 같은 색 언어를 쓴다.
+/* ── AI 도우미 · 일정 · 자동화 탭 ──
+ * 세 탭이 한계다. 라벨은 두 글자로 두고 배지는 숫자만 넣는다 — 좁은 사이드패널에서
+ * 문장을 넣으면 글자가 잘린다.
+ * 일정은 경고색(--warn), 자동화는 초록(--ok)으로 구분해 결과 표시와 같은 색 언어를 쓴다.
  */
 
 .view-tabs {
@@ -657,6 +658,7 @@
 .view-tab:hover { color: var(--fg); }
 .view-tab.on { color: var(--accent); border-bottom-color: var(--accent); }
 .view-tab.auto.on { color: var(--ok); border-bottom-color: var(--ok); }
+.view-tab.sched.on { color: var(--warn); border-bottom-color: var(--warn); }
 
 .view-tab-count {
   font-size: 10.5px;
@@ -666,6 +668,8 @@
   border-radius: 999px;
   padding: 1px 6px;
 }
+
+.view-tab-count.due { color: var(--warn); background: var(--warn-soft); }
 
 .origin-badge {
   align-self: flex-start;
@@ -955,3 +959,237 @@
 }
 
 .auto-foot svg { flex: none; margin-top: 2px; }
+
+/* ── 일정 탭 (S07) ──
+ * 달력 격자가 아니라 D-day 목록이다. 폭이 400px 남짓이라 격자에는 제목이 들어가지 않는다.
+ * 강조색은 --warn(기한)이다. AI 탭의 --accent(파랑), 도구 탭의 --ok(초록)와 구분한다.
+ * 지난 기한만 --danger를 쓴다. 상태색은 의미가 있을 때만 쓴다는 규칙(계획서 §9.1)을 따른다.
+ */
+
+.sched {
+  height: 100%;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 14px 12px 16px;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.sched-head { display: flex; align-items: center; gap: 8px; }
+.sched-title { display: flex; align-items: center; gap: 6px; margin: 0 auto 0 0; font-size: 13px; font-weight: 700; }
+
+.sched-count, .sched-section-count {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--fg-muted);
+  background: var(--surface-2);
+  border-radius: 999px;
+  padding: 1px 6px;
+}
+
+.sched-section { display: flex; flex-direction: column; gap: 6px; }
+.sched-section-head { display: flex; align-items: center; gap: 8px; }
+
+.sched-section-title, .sched-section-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 auto 0 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--fg-muted);
+  letter-spacing: 0.01em;
+}
+
+.sched-section.overdue .sched-section-title { color: var(--danger); }
+.sched-section.today .sched-section-title { color: var(--warn); }
+
+.sched-list { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; }
+
+.sched-task {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.sched-task.done { background: var(--surface-2); }
+.sched-task.done .sched-task-title { color: var(--fg-muted); text-decoration: line-through; }
+
+.sched-task-head { display: flex; align-items: flex-start; gap: 4px; padding: 7px 6px 7px 8px; }
+
+.sched-check {
+  flex: none;
+  display: inline-flex;
+  padding: 1px;
+  border: 0;
+  background: none;
+  color: var(--fg-muted);
+}
+
+.sched-check[aria-pressed='true'] { color: var(--ok); }
+.sched-check:hover { color: var(--accent); }
+
+.sched-task-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: left;
+  color: inherit;
+}
+
+.sched-task-title { font-size: 12.5px; font-weight: 600; overflow-wrap: anywhere; }
+.sched-task-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 11px; color: var(--fg-muted); }
+
+.sched-dday { font-weight: 700; font-variant-numeric: tabular-nums; }
+.sched-dday.overdue { color: var(--danger); }
+.sched-dday.today { color: var(--warn); }
+.sched-due { font-variant-numeric: tabular-nums; }
+.sched-nodue { font-style: normal; }
+
+.sched-badge {
+  font-size: 10px;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 1px 6px;
+}
+
+.sched-badge.ok { color: var(--ok); background: var(--ok-soft); }
+.sched-badge.warn { color: var(--warn); background: var(--warn-soft); }
+
+.sched-icon { flex: none; width: 26px; height: 26px; color: var(--fg-muted); }
+
+.sched-task-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 0 8px 8px 32px;
+  padding-top: 7px;
+  border-top: 1px solid var(--border);
+  font-size: 11.5px;
+  color: var(--fg-muted);
+}
+
+.sched-detail-row { display: flex; gap: 6px; margin: 0; overflow-wrap: anywhere; }
+.sched-detail-label { flex: none; font-weight: 700; color: var(--fg); }
+
+.sched-link { padding: 0; border: 0; background: none; color: var(--accent); font-size: inherit; font-weight: 600; text-align: left; }
+.sched-link:hover { text-decoration: underline; }
+
+.sched-evidence {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  margin: 0;
+  padding: 6px 8px;
+  border-left: 2px solid var(--border-strong);
+  background: var(--surface-2);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  overflow-wrap: anywhere;
+}
+
+/* 내보내기는 목록 아래에 조용히 둔다 — 자주 쓰지는 않지만 어디 있는지는 늘 같아야 한다. */
+.sched-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  font-size: 11.5px;
+  color: var(--fg-muted);
+}
+
+.sched-empty-box { display: flex; flex-direction: column; gap: 6px; padding: 18px 14px; border: 1px dashed var(--border-strong); border-radius: var(--radius); }
+.sched-empty { margin: 0; color: var(--fg-muted); text-align: center; font-weight: 600; }
+.sched-empty-hint { margin: 0; color: var(--fg-muted); text-align: center; font-size: 11.5px; }
+
+/* 추가·수정 폼. 목록 위에 펼쳐 둔다 — 좁은 패널에서 모달을 띄우면 목록 맥락이 사라진다. */
+.sched-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.sched-form-title { margin: 0; font-size: 12px; font-weight: 700; }
+.sched-field { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
+.sched-field > span { font-size: 11px; font-weight: 600; color: var(--fg-muted); }
+.sched-field-row { display: flex; gap: 8px; }
+
+.sched-field input, .sched-field textarea {
+  width: 100%;
+  padding: 5px 7px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+}
+
+.sched-field input:focus-visible, .sched-field textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.sched-field textarea { resize: vertical; }
+.sched-field input:disabled { background: var(--surface-2); color: var(--fg-muted); }
+
+.sched-form-error { margin: 0; color: var(--danger); font-size: 11.5px; font-weight: 600; }
+.sched-form-actions { display: flex; justify-content: flex-end; gap: 6px; }
+.minibtn.primary { color: var(--accent-fg); background: var(--accent); border-color: var(--accent); }
+.minibtn.primary:hover:not(:disabled) { color: var(--accent-fg); background: var(--accent); }
+
+/* ── 일정 등록 카드 (답변 아래) ──
+ * 답변 바로 아래 둔다. 근거 문장을 읽은 자리에서 체크해야 판단이 흐려지지 않는다.
+ */
+
+.task-register { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+
+.task-register.open {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--warn);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.task-register-title { margin: 0; font-size: 12px; font-weight: 700; }
+.task-register-hint, .task-register-done { margin: 0; font-size: 11.5px; color: var(--fg-muted); }
+.task-register-result { margin: 0; font-size: 11.5px; font-weight: 600; color: var(--ok); }
+.task-register-list { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; }
+
+.task-candidate { border-top: 1px solid var(--border); padding-top: 6px; }
+.task-candidate:first-child { border-top: 0; padding-top: 0; }
+/* 이미 등록한 후보는 흐리게 하지 않고 색으로만 낮춘다 — opacity는 작은 글자에서 AA 대비를 깬다. */
+.task-candidate.already .task-candidate-title { color: var(--fg-muted); }
+
+.task-candidate-main { display: flex; align-items: flex-start; gap: 7px; cursor: pointer; }
+.task-candidate-main input { margin-top: 2px; flex: none; accent-color: var(--accent); }
+.task-candidate-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.task-candidate-title { font-size: 12.5px; font-weight: 600; overflow-wrap: anywhere; }
+.task-candidate-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 11px; color: var(--fg-muted); }
+
+.task-candidate-evidence {
+  font-size: 11px;
+  color: var(--fg-muted);
+  border-left: 2px solid var(--border-strong);
+  padding-left: 6px;
+  overflow-wrap: anywhere;
+}
+
+.task-register-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+.task-register-actions .auto-link { margin-right: auto; }

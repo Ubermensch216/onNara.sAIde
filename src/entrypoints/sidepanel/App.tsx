@@ -53,16 +53,23 @@ import { PageActions } from './components/PageActions';
 import { findDocumentCommand, type DocumentCommandId } from '@/lib/onnara/commands';
 import { ScreenshotChip } from './components/ScreenshotChip';
 import { AutomationPanel } from './components/AutomationPanel';
+import { SchedulePanel } from './components/SchedulePanel';
 import { useAutomation } from '@/lib/automation/jobs';
+import { refreshTasks, useSchedule } from '@/lib/schedule/store';
+import { urgentCount } from '@/lib/schedule/task';
 import type { DownloadLinkAction } from '@/lib/downloads/links';
 import type { AppError } from '@/lib/messaging/protocol';
 
-type View = 'ai' | 'automation';
+type View = 'ai' | 'schedule' | 'automation';
 const VIEW_KEY = 'saide.view';
+const VIEWS: View[] = ['ai', 'schedule', 'automation'];
 
 /** 마지막으로 연 탭은 이 브라우저에서만 기억한다. 저장소를 못 쓰면 AI 도우미로 시작한다. */
 function initialView(): View {
-  try { return localStorage.getItem(VIEW_KEY) === 'automation' ? 'automation' : 'ai'; } catch { return 'ai'; }
+  try {
+    const stored = localStorage.getItem(VIEW_KEY);
+    return VIEWS.find(view => view === stored) ?? 'ai';
+  } catch { return 'ai'; }
 }
 
 export default function App() {
@@ -91,6 +98,8 @@ export default function App() {
   const [view, setView] = useState<View>(initialView);
   const [automationError, setAutomationError] = useState<AppError | null>(null);
   const runningJobs = useAutomation(state => state.jobs.filter(job => job.status === 'queued' || job.status === 'running').length);
+  // 기한이 임박한 일정은 어느 탭에 있든 보여야 한다. 그러려고 배지를 헤더가 아니라 탭에 둔다.
+  const dueTasks = useSchedule(state => urgentCount(state.tasks));
   const warmedFor = useRef('');
 
   const t = useT();
@@ -99,6 +108,9 @@ export default function App() {
   useEffect(() => {
     try { localStorage.setItem(VIEW_KEY, view); } catch { /* 기억하지 못해도 동작에는 지장 없다 */ }
   }, [view]);
+
+  // 일정 배지는 탭을 열지 않아도 맞아야 한다. 패널을 열 때 한 번 읽어 둔다.
+  useEffect(() => { void refreshTasks(); }, []);
 
   /* ── 설정 ── */
   useEffect(() => {
@@ -524,13 +536,22 @@ export default function App() {
         <button type="button" role="tab" aria-selected={view === 'ai'} className={`view-tab ${view === 'ai' ? 'on' : ''}`} onClick={() => setView('ai')}>
           {t('view.ai')}
         </button>
+        <button type="button" role="tab" aria-selected={view === 'schedule'} onClick={() => setView('schedule')}
+          className={`view-tab sched ${view === 'schedule' ? 'on' : ''}`}
+          {...(dueTasks > 0 ? { 'aria-label': t('view.dueLabel', { n: dueTasks }) } : {})}>
+          {t('view.schedule')}
+          {/* 배지는 숫자만 둔다. 탭이 셋이라 문장을 넣으면 좁은 폭에서 글자가 잘린다. */}
+          {dueTasks > 0 && <span className="view-tab-count due">{t('view.due', { n: dueTasks })}</span>}
+        </button>
         <button type="button" role="tab" aria-selected={view === 'automation'} className={`view-tab auto ${view === 'automation' ? 'on' : ''}`} onClick={() => setView('automation')}>
           {t('view.automation')}
           {runningJobs > 0 && <span className="view-tab-count">{t('view.running', { n: runningJobs })}</span>}
         </button>
       </nav>
 
-      {view === 'automation' ? (
+      {view === 'schedule' ? (
+        <main className="app-main"><SchedulePanel /></main>
+      ) : view === 'automation' ? (
         <>
           {automationError && (
             <ErrorBanner error={automationError} model={settings.model} onClose={() => setAutomationError(null)} onAction={handleErrorAction} />
@@ -573,6 +594,7 @@ export default function App() {
             showThinking={settings.thinkMode !== 'off'}
             deleteDisabled={chat.streaming || chat.loading}
             onDelete={chat.removeMessage}
+            onOpenSchedule={() => setView('schedule')}
             onDownloadLink={(action, downloadId) => openDownload(action, downloadId, chat.setError)}
           />
         )}

@@ -329,6 +329,41 @@ export default function OptionsApp() {
 
       <MemoryPanel />
 
+      {/* ── 일정 기한 알림 (S07) ── */}
+      <section>
+        <h2>{t('opt.alert.h')}</h2>
+
+        <div className="field">
+          <div className="row">
+            <label htmlFor="taskAlerts">{t('opt.alert.on')}</label>
+            <input
+              id="taskAlerts"
+              type="checkbox"
+              checked={s.taskAlerts}
+              onChange={(e) => patch({ taskAlerts: e.target.checked })}
+            />
+          </div>
+          <p className="desc">{t('opt.alert.onDesc')}</p>
+        </div>
+
+        <div className="field">
+          <div className="row">
+            <label htmlFor="taskAlertHour">{t('opt.alert.hour')}</label>
+            <select
+              id="taskAlertHour"
+              value={s.taskAlertHour}
+              disabled={!s.taskAlerts}
+              onChange={(e) => patch({ taskAlertHour: Number(e.target.value) })}
+            >
+              {Array.from({ length: 24 }, (_, hour) => (
+                <option key={hour} value={hour}>{t('opt.alert.hourValue', { hour })}</option>
+              ))}
+            </select>
+          </div>
+          <p className="desc">{t('opt.alert.hourDesc')}</p>
+        </div>
+      </section>
+
       {/* ── 페이지 접근 권한 ── */}
       <section>
         <h2>{t('opt.access.h')}</h2>

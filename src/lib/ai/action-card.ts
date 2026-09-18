@@ -80,7 +80,8 @@ export function findDates(text: string): FoundDate[] {
   return found;
 }
 
-function sameDate(a: FoundDate, b: FoundDate): boolean {
+/** 같은 날짜인가. 한쪽에 연도가 없으면 월·일만 비교한다(공문은 연도를 자주 생략한다). */
+export function sameDate(a: FoundDate, b: FoundDate): boolean {
   return a.month === b.month && a.day === b.day && (a.year === undefined || b.year === undefined || a.year === b.year);
 }
 

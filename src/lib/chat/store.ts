@@ -2,6 +2,9 @@ import { abortable } from '@/lib/async';
 import { downloadDocumentAttachments, formatAttachmentReport, releaseWorkTab } from '@/lib/onnara/download';
 import { recordAutomation, workTabLock } from '@/lib/automation/jobs';
 import { ACTION_CARD_SCHEMA, actionCardInstruction, parseActionCard, renderActionCard } from '@/lib/ai/action-card';
+import { buildTaskCandidates } from '@/lib/schedule/candidates';
+import type { StructuredDocumentList } from '@/lib/onnara/document-list';
+import { parseReferenceDate } from '@/lib/schedule/due-date';
 /**
  * 채팅 상태. 계획서 §5 Phase 2–3
  *
@@ -303,7 +306,7 @@ export function createChatSession() {
     },
 
     // 본문을 떼는 것은 "이 문서 이야기는 그만"이라는 뜻이다. 그 문서에 대한 문답도 문맥에서 뺀다.
-    detachPage: () => { ++epochs.attachment; set({ page: null, lastContext: null, extracting: false }); void moveContextBoundary(set, get); },
+    detachPage: () => { ++epochs.attachment; set({ page: null, lastContext: null, extracting: false }); void moveContextBoundary(set, get, nextStamp(get())); },
     detachScreenshot: () => { ++epochs.attachment; set({ screenshot: null, lastContext: null, extracting: false }); },
 
     async send(text, settings) {
@@ -421,6 +424,24 @@ type Get = () => ChatState;
  * ★ 문서를 새로 읽을 때마다 부른다. 앞 문서 요약이 다음 문서 답변에 섞이면 사용자는
  *   무엇을 근거로 한 답인지 알 수 없고, 좁은 문맥(num_ctx 4096)도 그만큼 잡아먹는다.
  */
+/**
+ * 대화 안에서 다음에 쓸 시각. 새 메시지의 `createdAt`과 문맥 경계를 모두 이 값으로 잡는다.
+ *
+ * ★ 밀리초는 생각보다 넉넉하지 않다. 답변이 캐시로 즉시 끝나면 질문·답변·다음 동작이 같은
+ *   밀리초에 들어오고, 그러면 `createdAt`만으로는 무엇이 먼저인지 알 수 없다.
+ *
+ * ★ 문맥 경계는 같은 시각의 메시지를 **포함**한다(contextMessages). 그래서 경계와 메시지 시각이
+ *   겹치면 두 가지가 동시에 깨진다 — 본문을 떼었는데 그 문서 문답이 문맥에 남거나(경계가 앞 메시지와 같을 때),
+ *   방금 보낸 질문이 문맥에서 빠지거나(경계가 새 메시지보다 뒤일 때).
+ *
+ * 시각이 절대 뒤로 가지 않게 하면 둘 다 사라진다. 경계 = 다음 시각, 새 메시지 = 그 시각이므로
+ * 앞의 것은 모두 경계보다 앞서고, 새 메시지는 경계에 걸쳐 문맥에 들어간다.
+ * 사람이 조작하는 실제 상황에서는 이미 시계가 충분히 흘러 Date.now()와 같은 값이다.
+ */
+function nextStamp(state: ChatState): number {
+  return Math.max(Date.now(), (state.messages.at(-1)?.createdAt ?? 0) + 1);
+}
+
 async function moveContextBoundary(set: Set, get: Get, at = Date.now()): Promise<void> {
   set({ contextFrom: at, lastContext: null });
   const conversation = get().conversation;
@@ -448,7 +469,7 @@ async function submit(set: Set, get: Get, text: string, settings: Settings, epoc
   try {
     const conv = await ensureConversation(ownSet, get, trimmed, owns);
     if (!conv || !owns()) return;
-    const userMsg = { conversationId: conv.id, role: 'user' as const, content: trimmed, createdAt: Date.now() };
+    const userMsg = { conversationId: conv.id, role: 'user' as const, content: trimmed, createdAt: nextStamp(get()) };
     const id = await addMessage(userMsg);
     if (!owns()) return;
     ownSet(s => ({ messages: [...s.messages, { ...userMsg, id }] }));
@@ -524,7 +545,10 @@ async function runDocumentCommand(
     const conv = await ensureConversation(ownSet, get, trimmed, owns);
     if (!conv || !owns()) return;
     // 문서를 새로 다루는 명령이다. 여기서부터가 새 문맥이다 — 앞 문서 문답은 모델에 보내지 않는다.
-    const startedAt = Date.now();
+    // ★ 경계와 이 명령의 사용자 메시지는 같은 시각이어야 한다(경계는 같은 시각을 포함한다).
+    //   앞 메시지와 겹치지 않도록 nextStamp로 잡는다 — Date.now()면 답변이 즉시 끝났을 때
+    //   직전 문답과 시각이 같아져 앞 문서 이야기가 새 문맥에 딸려 들어온다.
+    const startedAt = nextStamp(get());
     await moveContextBoundary(ownSet, get, startedAt);
     if (!owns()) return;
     const userMsg = { conversationId: conv.id, role: 'user' as const, content: trimmed, createdAt: startedAt };
@@ -540,7 +564,7 @@ async function runDocumentCommand(
     /** 모델이 만들지 않은 실행 결과. 답변과 구분해 표시한다. */
     const report = async (content: string) => {
       if (!owns() || signal.aborted) return;
-      const message = { conversationId: conv.id, role: 'assistant' as const, content, origin: 'automation' as const, createdAt: Date.now() };
+      const message = { conversationId: conv.id, role: 'assistant' as const, content, origin: 'automation' as const, createdAt: nextStamp(get()) };
       const reportId = await addMessage(message);
       ownSet(s => ({ messages: [...s.messages, { ...message, id: reportId }] }));
     };
@@ -592,6 +616,7 @@ async function runDocumentCommand(
       titles: list ? titles : [page.title],
       instruction: args.trim() || defaultInstruction(command),
       detailPage: list ? null : page,
+      list: list ?? null,
       signal,
     });
   } catch (error) { ownSet({ error: toAppError(error instanceof OllamaError ? error : null, error) }); }
@@ -643,9 +668,18 @@ async function runDocumentBatch(set: Set, get: Get, options: {
   instruction: string;
   /** 목록이 아니라 이미 열린 상세 화면이면 그 본문 */
   detailPage: ExtractedPage | null;
+  /**
+   * 목록 화면이면 그 목록. 기한의 연도를 해석할 기준일(보고일자)을 여기서 찾는다.
+   *
+   * ★ 공문은 "9. 30.까지"처럼 연도를 자주 생략한다. 오늘을 기준으로 삼으면 지난달에 받은
+   *   공문의 기한이 한 해 뒤로 밀린다. 그 문서의 보고일자가 기준이어야 한다.
+   */
+  list: StructuredDocumentList | null;
   signal: AbortSignal | undefined;
 }): Promise<void> {
-  const { command, settings, epochs, tabId, titles, instruction, detailPage, signal } = options;
+  const { command, settings, epochs, tabId, titles, instruction, detailPage, list, signal } = options;
+  const referenceOf = (title: string): Date | null =>
+    parseReferenceDate(list?.rows.find(row => row.title === title)?.reportDate);
   const controller = get().abort;
   const epoch = ++epochs.attachment;
   const keepWorkTab = titles.length > 1;
@@ -658,7 +692,7 @@ async function runDocumentBatch(set: Set, get: Get, options: {
       ...(typeof patch === 'function' ? patch(current) : patch),
       ...(batching ? { streaming: true, abort: controller } : {}),
     }));
-    if (command === 'actions') await runActionCard(batchSet, get, settings, title, page);
+    if (command === 'actions') await runActionCard(batchSet, get, settings, title, page, referenceOf(title));
     else await runGeneration(batchSet, instructionOnly(get, documentBatchInstruction(title, instruction)), { ...settings, thinkMode: 'off' });
   };
 
@@ -872,11 +906,11 @@ const STALE_NOTICE =
  * 핵심·조치사항 카드(S01). JSON 스키마로만 답하게 하고, 원문 대조 결과를 붙여 보여 준다.
  * 토큰 스트림은 JSON이라 화면에 흘리지 않고 진행 표시만 한다.
  */
-async function runActionCard(set: Set, get: Get, settings: Settings, title: string, page: ExtractedPage) {
+async function runActionCard(set: Set, get: Get, settings: Settings, title: string, page: ExtractedPage, reference: Date | null) {
   const conv = get().conversation;
   if (!conv) return;
   const abort = get().abort ?? new AbortController();
-  const startedAt = Date.now();
+  const startedAt = nextStamp(get());
   const context = buildContext([{ role: 'user', content: actionCardInstruction(title) }], settings.numCtx, toAttachment(page, null));
   const placeholder: UiMessage = { id: `streaming-${crypto.randomUUID()}`, conversationId: conv.id, role: 'assistant', content: '', createdAt: startedAt, streaming: true };
   set(s => ({ messages: [...s.messages, placeholder], streaming: true, startedAt, expectedPrefillSec: uncachedPrefillSeconds(null, context), abort, error: null }));
@@ -892,9 +926,14 @@ async function runActionCard(set: Set, get: Get, settings: Settings, title: stri
     const card = parseActionCard(raw);
     if (!card) throw new Error('AI 응답을 핵심·조치사항 형식으로 읽지 못했습니다. 다시 요청해 보세요.');
     const content = renderActionCard(title, card, page.text);
-    const id = await addMessage({ conversationId: conv.id, clientId: String(placeholder.id), role: 'assistant', content, perf: perf ?? undefined, createdAt: startedAt });
+    // 일정 후보(S07). 등록은 사용자가 확인 카드에서 체크한 것만 — 여기서 저장되는 것은 후보일 뿐이다.
+    const candidates = buildTaskCandidates(card, page.text, reference ?? new Date());
+    const extra = candidates.length
+      ? { taskCandidates: candidates, sourceDoc: { title, ...(page.url ? { url: page.url } : {}) } }
+      : {};
+    const id = await addMessage({ conversationId: conv.id, clientId: String(placeholder.id), role: 'assistant', content, perf: perf ?? undefined, ...extra, createdAt: startedAt });
     set(s => ({
-      messages: s.messages.map(m => m.id === placeholder.id ? { ...m, id, content, perf: perf ?? undefined, streaming: false } : m),
+      messages: s.messages.map(m => m.id === placeholder.id ? { ...m, id, content, perf: perf ?? undefined, ...extra, streaming: false } : m),
       streaming: false, startedAt: null, abort: null, lastContext: null,
     }));
   } catch (e) {
@@ -909,7 +948,7 @@ async function runGeneration(set: Set, get: Get, settings: Settings) {
   if (!conv) return;
 
   const abort = get().abort ?? new AbortController();
-  const startedAt = Date.now();
+  const startedAt = nextStamp(get());
 
   const { page, screenshot, stale } = freshAttachment(set, get);
 
@@ -1093,7 +1132,7 @@ async function runAgent(set: Set, get: Get, settings: Settings, tab: AgentTab) {
   if (!conv) return;
 
   const abort = get().abort ?? new AbortController();
-  const startedAt = Date.now();
+  const startedAt = nextStamp(get());
   const { page, screenshot, stale } = freshAttachment(set, get);
 
   // ★ 시스템 프롬프트 · 에이전트 지침 · 현재 탭 안내를 **하나로 합쳐** 넣는다.
