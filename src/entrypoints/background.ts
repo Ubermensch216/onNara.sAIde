@@ -1,6 +1,7 @@
 import { assertCurrent, captureTab, trustedPanel, validPanelRequest } from '@/lib/browser/guards';
 import { committedSince, duplicateWorkTab, forgetWorkTab, panelTab, registerWorkTabListeners, tabsSpawnedBy, workTabs } from '@/lib/browser/work-tabs';
 import type { AppError, AttachmentDownloadResult, ExtractedPage, RequestControl, SWToContent } from '@/lib/messaging/protocol';
+import { isHtmlAttachmentName } from '@/lib/onnara/attachments';
 import { sameDocumentTitle } from '@/lib/onnara/document-list';
 import { fitToBudget } from '@/lib/extract/budget';
 import { pdfText, withPdfSections } from '@/lib/extract/pdf-offscreen';
@@ -1005,7 +1006,7 @@ export async function downloadAttachmentsInTab(tabId: number, control: RequestCo
         });
         continue;
       }
-      const outcome = await waitForDownload(downloadId, frameControl);
+      const outcome = await waitForDownload(downloadId, frameControl, item.name);
       results.push({ name: item.name, ...outcome });
       if (outcome.status === 'in_progress') break;
     } catch (error) {
@@ -1046,12 +1047,13 @@ async function clickAndCatchDownload(
   }
 }
 
-async function waitForDownload(downloadId: number, control: RequestControl): Promise<Omit<AttachmentDownloadResult, 'name'>> {
+async function waitForDownload(downloadId: number, control: RequestControl, name: string): Promise<Omit<AttachmentDownloadResult, 'name'>> {
   while (Date.now() < control.deadline) {
     assertCurrent(control, '', cancelled.has(control.id));
     const [item] = await chrome.downloads.search({ id: downloadId });
     if (item?.state === 'complete') {
-      return item.mime === 'text/html'
+      // 링크 첨부는 내용이 HTML인 게 정상이라 오류로 보지 않는다.
+      return item.mime === 'text/html' && !isHtmlAttachmentName(name)
         ? { status: 'failed', message: '파일 대신 HTML 페이지가 내려왔습니다. 로그인 상태나 다운로드 주소를 확인하세요.' }
         : { status: 'complete', downloadId, ...(item.filename ? { path: item.filename } : {}) };
     }

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { expect, it, vi } from 'vitest';
-import { clickAttachment, listAttachments, scanAttachments } from './attachments';
+import { clickAttachment, isHtmlAttachmentName, listAttachments, scanAttachments } from './attachments';
 
 it('첨부 영역의 일반 링크만 수집하고 메뉴·스크립트·중복을 제외한다', () => {
   document.body.innerHTML = `<a href="https://example.test/help.pdf">도움말.pdf</a><div id="attachments">
@@ -23,4 +23,18 @@ it('스크립트 방식 첨부도 목록에 포함하고 겹친 요소는 가장
   expect(clickAttachment(items[0]!.index, '다른 이름.xlsx')).toBe(false);
   expect(clickAttachment(items[0]!.index, items[0]!.name)).toBe(true);
   expect(clicked).toHaveBeenCalledTimes(1);
+});
+
+it('확장자가 점 없이 붙는 온나라 링크 첨부도 찾아낸다', () => {
+  document.body.innerHTML = `<div id="atchFileList"><span>첨부</span>
+    <label><input type="checkbox"> 1.</label><a href="#" onclick="down(1)">2025년 정기종합감사 처분요구 처리결과(수영구, 20260916)hwpx(link).html</a> [3K]
+    <label><input type="checkbox"> 2.</label><a href="#" onclick="down(2)">증빙자료zip(link).html</a> [3K]
+    <a href="#" onclick="help()">도움말 보기</a></div>`;
+  const items = listAttachments();
+  expect(items.map(item => item.name)).toEqual([
+    '2025년 정기종합감사 처분요구 처리결과(수영구, 20260916)hwpx(link).html',
+    '증빙자료zip(link).html',
+  ]);
+  expect(items.every(item => isHtmlAttachmentName(item.name))).toBe(true);
+  expect(isHtmlAttachmentName('붙임.hwp')).toBe(false);
 });

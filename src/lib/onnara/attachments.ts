@@ -10,6 +10,21 @@ const REGION_SELECTOR = [
   '[aria-label*="첨부"]', '[aria-label*="붙임"]',
 ].join(', ');
 const FILE_NAME = /\.(hwp|hwpx|pdf|docx?|xlsx?|pptx?|zip|txt|csv|png|jpe?g|gif|odt|ods|odp)(?=$|[\s(\[])/i;
+/**
+ * 온나라 링크 첨부는 "처리결과(수영구, 20260916)hwpx(link).html"처럼 원본 확장자가 점 없이 이름에 붙고
+ * 실제로는 .html 파일로 등록된다. 확장자만 보면 첨부가 아닌 것처럼 보이므로 따로 알아본다.
+ */
+const LINK_FILE_NAME = /\((?:link|링크)\)\.html?(?=$|[\s(\[])/i;
+
+/** 첨부 목록에 쓰이는 파일 이름인지. 일반 첨부와 링크 첨부를 모두 받아들인다. */
+export function isAttachmentFileName(name: string): boolean {
+  return FILE_NAME.test(name) || LINK_FILE_NAME.test(name);
+}
+
+/** 링크 첨부처럼 내용이 HTML인 파일인지. 다운로드된 HTML을 오류로 볼지 가르는 데 쓴다. */
+export function isHtmlAttachmentName(name: string): boolean {
+  return /\.html?(?=$|[\s(\[])/i.test(name);
+}
 
 /**
  * 첨부 영역(또는 "첨부/붙임" 표지 근처)에서 파일 이름이 보이는 누를 수 있는 요소만 고른다.
@@ -21,7 +36,7 @@ export function findAttachmentElements(root: Document = document): Array<{ eleme
     if (element.closest('[hidden], [aria-hidden="true"]')) continue;
     const name = (element.textContent || element.getAttribute('title') || '').replace(/\s+/g, ' ').trim();
     const explicit = element.hasAttribute('download');
-    if (!explicit && !(FILE_NAME.test(name) && (element.closest(REGION_SELECTOR) || nearAttachmentLabel(element)))) continue;
+    if (!explicit && !(isAttachmentFileName(name) && (element.closest(REGION_SELECTOR) || nearAttachmentLabel(element)))) continue;
     found.push({ element, name: name || element.getAttribute('download') || '첨부파일', url: directUrl(element, root) });
   }
   // <td onclick><a>파일.hwp</a></td>처럼 겹친 경우 실제로 누를 가장 안쪽 요소만 남긴다.
