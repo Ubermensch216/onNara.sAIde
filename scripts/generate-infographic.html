@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>온나라 sAIde 인포그래픽</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      width: 1200px;
+      height: 1560px;
+      background: linear-gradient(145deg, #071326 0%, #0d2347 45%, #08162e 100%);
+      font-family: 'Pretendard', 'Malgun Gothic', '맑은 고딕', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      color: #ffffff;
+      padding: 44px 50px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    /* 은은한 배경 장식 */
+    body::before {
+      content: '';
+      position: absolute;
+      top: -150px;
+      right: -100px;
+      width: 650px;
+      height: 650px;
+      background: radial-gradient(circle, rgba(30, 100, 230, 0.22) 0%, transparent 70%);
+      pointer-events: none;
+    }
+    body::after {
+      content: '';
+      position: absolute;
+      bottom: -150px;
+      left: -100px;
+      width: 600px;
+      height: 600px;
+      background: radial-gradient(circle, rgba(16, 185, 129, 0.15) 0%, transparent 70%);
+      pointer-events: none;
+    }
+
+    /* 헤더 */
+    .header {
+      text-align: center;
+      margin-bottom: 34px;
+      position: relative;
+      z-index: 2;
+    }
+    .badge-top {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(37, 99, 235, 0.25);
+      border: 1px solid rgba(96, 165, 250, 0.4);
+      color: #93c5fd;
+      font-size: 14px;
+      font-weight: 700;
+      padding: 6px 18px;
+      border-radius: 9999px;
+      letter-spacing: 0.5px;
+      margin-bottom: 12px;
+      text-transform: uppercase;
+    }
+    .title-group {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      margin-bottom: 10px;
+    }
+    .logo-icon {
+      width: 44px;
+      height: 44px;
+      border-radius: 12px;
+      background: linear-gradient(135deg, #2563eb, #1d4ed8);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 8px 20px rgba(37, 99, 235, 0.4);
+    }
+    h1 {
+      font-size: 46px;
+      font-weight: 900;
+      letter-spacing: -1px;
+      background: linear-gradient(to right, #ffffff 40%, #93c5fd 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    h1 span {
+      color: #60a5fa;
+      -webkit-text-fill-color: #60a5fa;
+    }
+    .slogan {
+      font-size: 22px;
+      font-weight: 700;
+      color: #38bdf8;
+      margin-bottom: 6px;
+      letter-spacing: -0.3px;
+    }
+    .subtext {
+      font-size: 15px;
+      color: #94a3b8;
+      font-weight: 500;
+    }
+
+    /* 2단 핵심 기능 그리드 */
+    .grid-main {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 28px;
+      margin-bottom: 26px;
+      position: relative;
+      z-index: 2;
+    }
+
+    .card {
+      background: rgba(15, 33, 64, 0.85);
+      border: 1px solid rgba(59, 130, 246, 0.28);
+      border-radius: 24px;
+      padding: 26px 24px;
+      box-shadow: 0 16px 36px rgba(0, 0, 0, 0.45);
+      backdrop-filter: blur(12px);
+      display: flex;
+      flex-direction: column;
+    }
+
+    .card-header {
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+      margin-bottom: 14px;
+    }
+    .icon-box {
+      width: 48px;
+      height: 48px;
+      border-radius: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .icon-box.blue {
+      background: linear-gradient(135deg, #1e40af, #3b82f6);
+      box-shadow: 0 6px 16px rgba(59, 130, 246, 0.35);
+    }
+    .icon-box.emerald {
+      background: linear-gradient(135deg, #065f46, #10b981);
+      box-shadow: 0 6px 16px rgba(16, 185, 129, 0.35);
+    }
+
+    .card-title-wrap {
+      flex: 1;
+    }
+    .tag-feature {
+      font-size: 12px;
+      font-weight: 800;
+      color: #60a5fa;
+      letter-spacing: 0.5px;
+      margin-bottom: 2px;
+      display: block;
+    }
+    .card h2 {
+      font-size: 21px;
+      font-weight: 800;
+      color: #ffffff;
+      line-height: 1.25;
+      letter-spacing: -0.5px;
+    }
+
+    .quote-box {
+      background: rgba(30, 58, 110, 0.35);
+      border-left: 3px solid #38bdf8;
+      border-radius: 0 8px 8px 0;
+      padding: 8px 12px;
+      font-size: 13.5px;
+      font-weight: 600;
+      color: #bae6fd;
+      margin-bottom: 14px;
+    }
+
+    .bullet-list {
+      list-style: none;
+      margin-bottom: 16px;
+    }
+    .bullet-list li {
+      position: relative;
+      padding-left: 18px;
+      font-size: 13.5px;
+      color: #cbd5e1;
+      margin-bottom: 7px;
+      line-height: 1.4;
+      font-weight: 500;
+    }
+    .bullet-list li::before {
+      content: '✔';
+      position: absolute;
+      left: 0;
+      color: #38bdf8;
+      font-size: 12px;
+      font-weight: bold;
+    }
+    .bullet-list strong {
+      color: #ffffff;
+      font-weight: 700;
+    }
+
+    /* 실제 스크린샷 목업 */
+    .screenshot-frame {
+      background: #091220;
+      border-radius: 14px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      overflow: hidden;
+      box-shadow: 0 10px 24px rgba(0, 0, 0, 0.5);
+      height: 480px;
+      display: flex;
+      flex-direction: column;
+    }
+    .frame-bar {
+      height: 24px;
+      background: #0f1c30;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      display: flex;
+      align-items: center;
+      padding: 0 10px;
+      gap: 5px;
+    }
+    .dot { width: 7px; height: 7px; border-radius: 50%; }
+    .dot.red { background: #ef4444; }
+    .dot.yellow { background: #f59e0b; }
+    .dot.green { background: #10b981; }
+    .frame-title {
+      font-size: 11px;
+      color: #64748b;
+      margin-left: 8px;
+      font-weight: 600;
+    }
+    .screenshot-img-box {
+      flex: 1;
+      overflow: hidden;
+      background: #0b1424;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+    }
+    .screenshot-img-box img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      object-position: top center;
+      display: block;
+    }
+
+    /* 하단 로컬 보안 & 효율성 바 */
+    .bottom-section {
+      background: rgba(13, 31, 60, 0.9);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      border-radius: 20px;
+      padding: 20px 26px;
+      box-shadow: 0 12px 28px rgba(0, 0, 0, 0.4);
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      position: relative;
+      z-index: 2;
+    }
+    .shield-icon {
+      width: 60px;
+      height: 60px;
+      border-radius: 16px;
+      background: linear-gradient(135deg, #0284c7, #0369a1);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      box-shadow: 0 8px 20px rgba(2, 132, 199, 0.4);
+    }
+    .bottom-content {
+      flex: 1;
+    }
+    .bottom-tag {
+      font-size: 13px;
+      font-weight: 800;
+      color: #38bdf8;
+      letter-spacing: 0.5px;
+      margin-bottom: 3px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .bottom-title {
+      font-size: 18px;
+      font-weight: 800;
+      color: #ffffff;
+      margin-bottom: 6px;
+    }
+    .bottom-desc {
+      font-size: 13.5px;
+      color: #cbd5e1;
+      line-height: 1.45;
+    }
+    .bottom-chips {
+      display: flex;
+      gap: 8px;
+      margin-top: 8px;
+    }
+    .chip {
+      background: rgba(30, 58, 110, 0.5);
+      border: 1px solid rgba(56, 189, 248, 0.35);
+      color: #bae6fd;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 3px 10px;
+      border-radius: 6px;
+    }
+
+    /* 최하단 푸터 */
+    .footer-bar {
+      margin-top: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      color: #64748b;
+      font-size: 12px;
+      font-weight: 500;
+      position: relative;
+      z-index: 2;
+      padding: 0 6px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- 헤더 -->
+  <header class="header">
+    <div class="badge-top">Microsoft Edge AI Side Panel Extension</div>
+    <div class="title-group">
+      <div class="logo-icon">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"></path>
+          <path d="M9 7h6"></path>
+          <path d="M9 11h6"></path>
+          <circle cx="16" cy="17" r="2"></circle>
+        </svg>
+      </div>
+      <h1>온나라 <span>sAIde</span></h1>
+    </div>
+    <div class="slogan">"문서를 일일이 열지 않고, 목록에서 바로 끝내는 온나라 전용 Edge AI"</div>
+    <div class="subtext">온나라 2.0 전자문서 시스템과 완벽 연동되는 공공 실무자 맞춤형 스마트 어시스턴트</div>
+  </header>
+
+  <!-- 메인 2대 핵심 혁신 그리드 -->
+  <main class="grid-main">
+
+    <!-- 핵심 기능 1: 원클릭 공문 요약 & 분석 -->
+    <section class="card">
+      <div class="card-header">
+        <div class="icon-box blue">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+            <polyline points="14 2 14 8 20 8"></polyline>
+            <line x1="16" y1="13" x2="8" y2="13"></line>
+            <line x1="16" y1="17" x2="8" y2="17"></line>
+            <polyline points="10 9 9 9 8 9"></polyline>
+          </svg>
+        </div>
+        <div class="card-title-wrap">
+          <span class="tag-feature">핵심 혁신 1</span>
+          <h2>원클릭 공문 요약 & 분석</h2>
+        </div>
+      </div>
+
+      <div class="quote-box">
+        "수십 건의 공문을 하나하나 클릭해 창 열고 기다리던 시대 종료!"
+      </div>
+
+      <ul class="bullet-list">
+        <li><strong>목록 체크만으로 분석</strong>: 문서등록대장에서 체크 후 <code>/요약</code> 입력 시 본문 자동 회수</li>
+        <li><strong>핵심·조치사항 원스톱 도출</strong>: 할 일(To-Do), 제출물, 마감 기한, 문의처 정형화 카드 생성</li>
+        <li><strong>원문 실시간 대조 검증</strong>: AI 추출 기한과 근거를 원문과 대조하여 <code>원문 확인</code> 배지 부착</li>
+        <li><strong>다중 공문 비교</strong>: 여러 공문을 한 번에 묶어 변경점과 공통점을 분석하는 <code>/비교</code> 지원</li>
+      </ul>
+
+      <!-- 실제 UI 스크린샷 01-chat.png -->
+      <div class="screenshot-frame">
+        <div class="frame-bar">
+          <div class="dot red"></div>
+          <div class="dot yellow"></div>
+          <div class="dot green"></div>
+          <span class="frame-title">온나라 sAIde — AI 탭 공문 요약 화면</span>
+        </div>
+        <div class="screenshot-img-box">
+          <img src="../docs/screenshots/01-chat.png" alt="온나라 sAIde 공문 요약 화면">
+        </div>
+      </div>
+    </section>
+
+    <!-- 핵심 기능 2: 첨부파일 일괄 자동 다운로드 -->
+    <section class="card">
+      <div class="card-header">
+        <div class="icon-box emerald">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="7 10 12 15 17 10"></polyline>
+            <line x1="12" y1="15" x2="12" y2="3"></line>
+          </svg>
+        </div>
+        <div class="card-title-wrap">
+          <span class="tag-feature">핵심 혁신 2</span>
+          <h2>첨부파일 일괄 자동 다운로드</h2>
+        </div>
+      </div>
+
+      <div class="quote-box">
+        "상세 화면마다 들어가 첨부 링크를 일일이 누를 필요가 없습니다."
+      </div>
+
+      <ul class="bullet-list">
+        <li><strong>원클릭 일괄 다운로드</strong>: 선택한 여러 공문의 모든 첨부파일(HWP, HWPX, PDF)을 한 번에 수신</li>
+        <li><strong>스마트 순차 대기열</strong>: 브라우저 완료 신호를 감지하여 파일 누락이나 충돌 없이 순차 처리</li>
+        <li><strong>AI 모델 없이도 초고속</strong>: 온나라 기능 기반 자동화로 LLM 오프라인 상태에서도 100% 즉시 동작</li>
+        <li><strong>작업 이력 보존 & 바로 열기</strong>: 패널을 재시작해도 이력이 유지되며, <code>폴더 열기</code>로 즉시 확인</li>
+      </ul>
+
+      <!-- 실제 UI 스크린샷 06-automation.png -->
+      <div class="screenshot-frame">
+        <div class="frame-bar">
+          <div class="dot red"></div>
+          <div class="dot yellow"></div>
+          <div class="dot green"></div>
+          <span class="frame-title">온나라 sAIde — 도구 탭 첨부 다운로드 화면</span>
+        </div>
+        <div class="screenshot-img-box">
+          <img src="../docs/screenshots/06-automation.png" alt="온나라 sAIde 첨부 다운로드 화면">
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- 하단 로컬 보안 & PDF 지원 배너 (사용자 요청: color palette 및 사람중심 안전승인 삭제 완료) -->
+  <footer class="bottom-section">
+    <div class="shield-icon">
+      <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+        <path d="m9 12 2 2 4-4"></path>
+      </svg>
+    </div>
+    <div class="bottom-content">
+      <div class="bottom-tag">
+        <span>SECURITY & COMPLIANCE</span>
+        <span>•</span>
+        <span>LOCAL-FIRST ARCHITECTURE</span>
+      </div>
+      <div class="bottom-title">100% 안전한 로컬 AI (Local-First) & 행정 표준 뷰어 지원</div>
+      <div class="bottom-desc">
+        사용자 PC 내부의 로컬 LLM(Ollama <code>gemma4:e2b</code>, <code>bge-m3</code>)을 사용하여 공문 본문 및 개인정보가 외부 클라우드로 단 1바이트도 유출되지 않습니다. 브라우저 내장 PDF 뷰어 공문도 오프스크린 파서와 한국어 CMap으로 완벽하게 판독합니다.
+      </div>
+      <div class="bottom-chips">
+        <span class="chip">🔒 망분리/기관망 보안 준수</span>
+        <span class="chip">⚡ 문맥 경계 자동 격리</span>
+        <span class="chip">📑 한국어 CMap PDF 지원</span>
+        <span class="chip">⚙️ 범정부 AI 공통기반 연계 대비</span>
+      </div>
+    </div>
+  </footer>
+
+  <div class="footer-bar">
+    <span>온나라 sAIde (onNara.sAIde) · Microsoft Edge Manifest V3</span>
+    <span>Local LLM Driven Public Administrative Productivity Tool</span>
+  </div>
+
+</body>
+</html>

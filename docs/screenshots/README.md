@@ -6,10 +6,11 @@
 
 ---
 
-## 1. 캡처 이미지 목록 및 역할
+## 1. 캡처 이미지 및 인포그래픽 자산 목록
 
 | 파일명 | 해상도 | 매뉴얼 설명 영역 | 렌더링된 주요 컴포넌트 및 내용 |
 |---|---|---|---|
+| [**infographic.png**](../infographic.png) | 1200 × 1560 | `README.md` 최상단 대표 비주얼 | **원클릭 공문 요약/분석 & 첨부 일괄 다운로드 & 로컬 보안** 핵심 가치 3종 요약 인포그래픽 포스터 |
 | [**01-chat.png**](01-chat.png) | 520 × 940 | 사이드패널 AI 대화 및 공문 요약 화면 | `App`, `AppHeader`, `ModelChip`(`내 PC · gemma4:e2b`), 공문 요약 및 원문 확인 배지, `PageContextChip`, `Composer` |
 | [**02-approval.png**](02-approval.png) | 520 × 940 | 에이전트 브라우저 작업 승인 카드 | `ApprovalCard`, 온나라 접수대기함 문서 열기 동작 및 사람 승인 인터페이스 |
 | [**03-settings.png**](03-settings.png) | 1120 × 1000 | 확장 옵션 및 AI 모델 연결 설정 | `OptionsApp`, Ollama 0.34.1 연결 및 GPU 가속, 토큰 예산, 컨텍스트 길이(num_ctx) 설정 |
