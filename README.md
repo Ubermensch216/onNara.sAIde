@@ -3,6 +3,10 @@
 > **공문 열람의 패러다임을 바꿉니다 — 문서를 일일이 열어보지 않고 목록에서 바로 파악하고 처리하는 온나라 전용 Edge AI 사이드패널**  
 > 끝없는 새 창 띄우기와 첨부 다운로드의 반복에서 벗어나, 가장 스마트하고 안전한 업무 어시스턴트를 경험하세요.
 
+![온나라 sAIde 핵심 소개](docs/introduction_key_points.png)
+
+![온나라 sAIde 상세 기능 및 업무 흐름 안내](docs/introduction_details.png)
+
 ![온나라 sAIde 핵심 기능 및 아키텍처 인포그래픽](docs/infographic.png)
 
 ---
