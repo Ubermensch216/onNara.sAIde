@@ -1,68 +1,83 @@
-# Chrome 웹스토어 등록 자산
+# 웹스토어 및 마켓플레이스 등록 준비 자산
 
-갱신: **2026-09-12**. 이 폴더는 제출 준비 자산이며 확장 번들에 포함되지 않는다. 실제 스토어 등록·공개 배포는 이번 작업에서 수행하지 않았다.
+기준일: **2026-09-18**. 이 디렉터리는 Microsoft Edge Add-ons 및 Chrome 웹스토어 등록을 위해 준비된 홍보 및 메타데이터 자산이며, 확장 프로그램 빌드 번들(`.output/edge-mv3`)에는 포함되지 않습니다.
 
-## 현재 파일
+---
 
-| 파일 | 규격 | 용도 |
+## 1. 현재 자산 목록
+
+| 자산 파일 | 규격 | 용도 및 설명 |
 |---|---|---|
-| [작은 홍보 이미지](promo-small-440x280.png) | 440 × 280 | 스토어 필수 작은 홍보 이미지 |
-| [마키 이미지](promo-marquee-1400x560.png) | 1400 × 560 | 선택 홍보 배너 |
-| [확장 아이콘](../../public/icon/128.png) | 128 × 128 | 확장/스토어 아이콘 |
-| [브랜드 시트](../saide-brand-sheet.html) | HTML | 로고·색상·사용 규칙 |
+| [**작은 홍보 이미지**](promo-small-440x280.png) | 440 × 280 px | 스토어 필수 작은 프로모션 타일 이미지 |
+| [**마키 이미지**](promo-marquee-1400x560.png) | 1400 × 560 px | 스토어 상단 추천 배너(선택 자산) |
+| [**확장 아이콘**](../../public/icon/128.png) | 128 × 128 px | 스토어 및 확장 관리자 대표 아이콘 |
+| [**브랜드 시트**](../saide-brand-sheet.html) | HTML 문서 | 행정 블루 로고, 색상 팔레트, 디자인 토큰 명세서 |
 
-작은 홍보 이미지는 필수다. 과거 문서의 선택 자산이라는 설명을 정정했다. 로고 워드마크는 SVG 패스로 되어 있고 락업의 한글 태그라인은 라이브 텍스트이므로 폰트에 따라 달라질 수 있다. 기존 홍보 PNG의 생성 스크립트와 폰트 원본은 저장소에 없다.
+> 💡 **참고:** 작은 홍보 이미지(440 × 280)는 마켓플레이스 등록 시 필수 규격입니다. 현재 이미지의 락업 워드마크는 SVG 패스로 처리되어 있습니다.
 
-## 스크린샷과 등록 전 남은 작업
+---
 
-[공식 이미지 안내](https://developer.chrome.com/docs/webstore/images)에 따르면 1280 × 800 또는 640 × 400 스크린샷을 최소 1장, 최대 5장 제공한다. 실제 사용자 경험을 보여주는 장면을 사용한다. 아이콘의 투명 여백과 작은 홍보 이미지 규격도 제출 시 재확인한다.
+## 2. 매뉴얼 캡처와 스토어 등록 스크린샷
 
-[사용자 매뉴얼의 5장](../../docs/screenshots/README.md)은 실제 UI 컴포넌트와 샘플 데이터를 이용한 **문서용 캡처**다. 확장 설치·브라우저 권한·모델 응답을 증명하는 실확장 화면이 아니며 스토어 규격도 다르므로 그대로 제출용으로 간주하지 않는다.
+[`docs/screenshots/`](../../docs/screenshots/README.md)에 위치한 5장의 스크린샷은 **사용자 매뉴얼용 캡처**입니다.  
+스토어 공식 제출용 스크린샷은 [스토어 이미지 가이드](https://developer.chrome.com/docs/webstore/images)에 따라 **1280 × 800 px** 또는 **640 × 400 px** 규격을 충족해야 합니다.
 
-제출 전 체크:
+### 스토어 제출 전 필수 점검 목록 (Checklist):
+- [ ] 깨끗한 테스트 프로필에서 최신 프로덕션 빌드(`.output/edge-mv3`) 로드 검증
+- [ ] 가명/샘플 공문 화면에서의 요약, 조치사항 카드, 슬래시 명령 실행 화면 캡처
+- [ ] 에이전트 승인 카드(`ApprovalCard`) 및 설정 화면 캡처 (개인정보 미포함)
+- [ ] 제품 설명의 동작·권한·데이터 처리 범위를 실제 코드와 대조
+- [ ] 기관 및 서비스에 맞는 개인정보 처리방침(Privacy Policy) URL 및 지원 연락처 준비
+- [ ] [`docs/IMPLEMENTATION_STATUS.md`](../../docs/IMPLEMENTATION_STATUS.md)의 검증 완료 상태 확인
+- [ ] `npm run zip` 산출물(`onnara-saide-*.zip`) 및 manifest 권한 무결성 최종 확인 후 제출
 
-- [ ] 별도 Chrome 테스트 프로필에 최신 production 빌드 설치.
-- [ ] 개인정보 없는 테스트 페이지의 요약과 후속 질문 실제 실행 캡처.
-- [ ] 승인 카드·실제 동작 결과, 설정, 선택 문장 기능 캡처.
-- [ ] 확장 ID/버전/모델/날짜와 원본 이미지 기록.
-- [ ] 제품 설명의 동작·권한·데이터 저장 범위를 실제 구현과 대조.
-- [ ] 공개 개인정보 처리방침 URL, 지원 연락처, 라이선스 준비.
-- [ ] [P1 개선 과제](../../docs/PROJECT_REVIEW.md)와 [브라우저 QA](../../plan/phase5-tool-checklist.md) 처리.
-- [ ] `npm run zip` 산출물 및 manifest 확인 후 제출.
+---
 
-## 등록용 설명 초안
+## 3. 스토어 상세 설명 초안
 
-manifest 이름과 설명은 `public/_locales/ko/messages.json`, `public/_locales/en/messages.json`이 기준이다. 아래는 스토어 상세 설명 초안이며 공개 제출 전에 검토해야 한다.
+확장 메타데이터의 다국어 기준 파일은 `public/_locales/ko/messages.json` 및 `public/_locales/en/messages.json`입니다. 아래는 스토어 상세 페이지에 기재할 소개문 초안입니다.
 
-### 한국어
+### 한국어 (Korean)
 
-sAIde는 내 컴퓨터의 Ollama 모델을 이용해 웹페이지 요약·번역·질문을 돕는 사이드패널 확장입니다. 선택한 문장을 설명하거나 다듬고, 지원 모델에서는 현재 화면을 설명할 수 있습니다.
+**온나라 sAIde — 온나라 전자문서를 위한 로컬 AI 사이드패널 어시스턴트**
 
-에이전트는 페이지를 읽고 요소를 찾으며, 클릭·입력·이동은 사용자 승인을 거칩니다. 기억 기능을 켜면 sAIde에 읽힌 페이지의 일부를 로컬에 저장하고 나중에 검색할 수 있습니다.
+온나라 sAIde는 공문서 처리 업무를 수행할 때 브라우저 우측 사이드패널에서 문서를 즉시 이해하고 조치사항을 도출할 수 있도록 지원하는 Microsoft Edge 확장 프로그램입니다.
 
-별도의 Ollama 설치와 모델 다운로드가 필요합니다. 기본 설정은 로컬 서버를 사용합니다. 원격 서버 주소를 설정하면 요청 데이터는 해당 서버로 전송됩니다. 웹페이지 탐색과 자막 수집에는 인터넷이 필요할 수 있습니다. 화면 캡처는 모든 사이트 접근 권한을 요청하며, 일반 본문 읽기는 사이트별로 허용할 수 있습니다.
+* **핵심 기능:**
+  * **공문 핵심 요약 및 조치사항 도출**: 수신된 공문의 요지, 세부 할 일, 제출물, 제출 기한을 원문과 대조하여 한눈에 정리합니다.
+  * **원문 대조 검증**: AI의 환각을 방지하기 위해 추출된 기한과 근거 문장을 원문과 실시간 대조하여 표시합니다.
+  * **첨부파일 일괄 다운로드**: 체크한 문서의 첨부파일을 백그라운드에서 안전하게 순차적으로 내려받습니다.
+  * **공문 비교 및 교정**: 여러 공문의 변경 사항과 연관성을 한 화면에서 비교 분석합니다.
+  * **철저한 로컬 보안**: 내 PC의 Ollama 모델(Gemma 4 등)을 기본 활용하여 공문 본문이 외부로 유출되지 않습니다.
+  * **안전한 조작 승인**: 브라우저 조작이 필요한 경우 사전에 사용자 승인을 받습니다.
+
+* **요구사항:** PC에 Ollama가 설치되어 있어야 하며, 기본 모델(`gemma4:e2b`, `bge-m3:latest`) 다운로드가 필요합니다.
 
 ### English
 
-sAIde is a Chrome side panel that uses an Ollama model to summarize and translate pages, answer questions, and help explain or polish selected text. Models with vision support can also explain the visible page screenshot.
+**onNara.sAIde — Local AI Side Panel Assistant for OnNara Electronic Document System**
 
-The agent can read pages and find elements. Clicking, typing, and navigation require your approval. Optional memory stores excerpts from pages you have shown to sAIde and lets you search them later.
+onNara.sAIde is a Microsoft Edge extension designed to help administrative personnel read, summarize, and manage official documents directly from the browser side panel.
 
-Ollama and downloaded models are required. The default endpoint is local; configuring a remote endpoint sends request data to that server. Browsing and caption retrieval may require internet access. Screenshot capture requests access to all sites; text extraction can use per-site permission.
+* **Key Features:**
+  * **Action Cards & Summary**: Extracts summaries, to-do items, required deliverables, and deadlines from official documents.
+  * **Source Verification**: Verifies extracted deadlines and sentences against the original document text to prevent hallucinations.
+  * **Sequential Attachment Downloads**: Safely downloads document attachments in the background without manual clicks.
+  * **Document Comparison**: Compares multiple notices or guidelines side-by-side.
+  * **Local-First Privacy**: Runs inference locally via Ollama (e.g., Gemma 4), keeping sensitive document content on your PC.
+  * **Approval-Gated Safety**: Every browser interaction requires explicit user confirmation.
 
-## 권한 사유
+---
 
-| 권한 | 실제 사용 |
+## 4. 권한 명세 및 사유
+
+| 권한 (Permission) | 실제 활용 사유 |
 |---|---|
-| sidePanel | 주 사용자 인터페이스 |
-| activeTab | 사용자 확장 호출로 부여되는 임시 탭 접근. 상주 패널에서는 이것만을 전제로 하지 않음 |
-| scripting | 요청 시 본문/DOM 처리 코드를 주입 |
-| storage | 설정과 사용자 프리셋을 로컬에 저장 |
-| contextMenus | 선택한 문장 번역·설명·다듬기·보내기 |
-| tabs | 현재 창 탭 제목·URL 확인 및 에이전트 탭 목록 |
-| localhost/127.0.0.1:11434 host_permissions | 기본 로컬 Ollama 연결 |
-| optional_host_permissions: all_urls | 사이트별 접근 요청, 캡처의 전체 사이트 권한, 설정의 선택적 전체 허용 |
-
-단일 목적은 사용자가 보고 있는 페이지를 이해하고 승인하에 작업하도록 보조하는 것이다. 페이지 본문·선택 문장·화면·탭 정보 중 작업에 쓰이는 데이터는 설정된 모델 서버로 전달될 수 있다. 대화·추론·행동 기록 및 opt-in 기억은 로컬에 저장한다. 앱 수준 암호화는 없다.
-
-소스에서 추적/분석 서비스와 원격 실행 코드 다운로드는 확인되지 않았다. 이것을 실제 네트워크 감사 완료 또는 모든 외부 통신 0건으로 표현하지 않는다. YouTube 자막 요청과 일반 페이지 이동, 원격 endpoint 가능성을 포함해 개인정보 고지를 작성한다.
+| `sidePanel` | 온나라 업무와 병행할 수 있는 우측 사이드패널 인터페이스 제공 |
+| `activeTab` | 사용자가 온나라 화면에서 확장을 호출할 때 현재 탭 접근 허용 |
+| `scripting` | 온나라 문서 목록 및 본문 DOM 구조화를 위한 스크립트 실행 |
+| `storage` | 사용자 환경설정, 프리셋, 세션 문맥 경계 정보의 로컬 보관 |
+| `downloads` | 공문 첨부파일의 백그라운드 순차 다운로드 및 다운로드 상태 감시 |
+| `offscreen` | PDF 뷰어로 렌더링된 공문에서 텍스트 레이어를 안전하게 파싱 (`PDF.js`) |
+| `host_permissions` (`http://localhost:11434/*`) | 로컬 Ollama AI 데몬과의 안전한 로컬 통신 |
+| `optional_host_permissions` (`<all_urls>`) | 온나라 전용 뷰어 등 서로 다른 출처의 프레임에 대해 사용자가 승인한 경우에만 동적 요청 |

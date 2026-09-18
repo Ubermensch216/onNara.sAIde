@@ -1,6 +1,9 @@
 # onNara.sAIde 참조 프로젝트 분석 및 서비스 제안
 
-분석일: 2026-09-17. 대상은 이 작업 폴더의 두 참조 프로젝트 복사본이다. 현재 구현에 대한 관찰, 통합 시 예상 문제, 신규 서비스 제안을 구분한다. 새 제품 구현이나 운영 온나라 접수는 수행하지 않았다.
+분석일: 2026-09-17 · 갱신일: 2026-09-18. 대상은 작업 폴더 내 두 참조 프로젝트(`sAIde` 및 `onnara-ai-document-distributor`) 복사본이다. 현재 구현에 대한 관찰, 통합 시 예상 문제, 신규 서비스 제안을 구분한다.
+
+> 📌 **2026-09-18 현행화 업데이트:**  
+> 본 분석 결과를 토대로 독립 프로젝트 `onnara-saide`가 구축되었으며, 현재 0단계·1단계·2단계 및 3단계 핵심 MVP가 성공적으로 구현되었습니다. (Vitest 45개 파일 449개 테스트 전체 통과, Edge MV3 빌드 및 verify 통과). 상세한 구축 완료 내역은 [`docs/IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md) 및 사용자 매뉴얼인 [`README.md`](../README.md)를 참고하십시오.
 
 ## 1. 종합 판단
 
@@ -11,18 +14,17 @@
 - 신규 핵심: 문서 ID 중심 맥락 관리, 본문·첨부 읽기, 업무용 지식 저장소, 서비스별 구조화 결과와 근거 표시.
 - 두 확장의 UI와 상태 저장 방식을 그대로 중첩하기보다, sAIde 기반 안에 온나라 전용 어댑터와 업무 서비스를 분리해 이식하는 편이 적합하다.
 
-## 2. 이번에 확인한 환경과 검증
+## 2. 초기 확인 환경 및 검증 이력
 
-| 확인 | 이번 결과 |
-|---|---|
-| `ollama list` | `gemma4:e2b`, `bge-m3:latest` 설치 |
-| Gemma `/api/show` | completion, vision, audio, tools, thinking 표시 |
-| BGE `/api/show` | embedding 표시 |
-| 문서배부기 Node 테스트 | 34개 통과 |
-| sAIde Vitest | 28파일, 346개 통과 |
-| sAIde 타입 검사 | 통과 |
-| sAIde 프로덕션 빌드 | 통과, Chrome MV3 산출물 약 1.86 MB |
-| 빌드 manifest·참조 파일 검사 | 통과 |
+| 확인 항목 | 참조 프로젝트 당시 결과 | 현재 onnara-saide 상태 (2026-09-18) |
+|---|---|---|
+| `ollama list` | `gemma4:e2b`, `bge-m3:latest` 설치 | 동일 (로컬 데몬 연동 확인) |
+| Gemma `/api/show` | completion, vision, audio, tools, thinking | 동일 (기본 대화 모델 활용) |
+| BGE `/api/show` | embedding 표시 | 동일 (기본 임베딩 모델 활용) |
+| 단위/통합 테스트 | sAIde 28파일 346개 / 배부기 34개 통과 | **onnara-saide 45파일 449개 전체 통과** |
+| TypeScript 정적 검사 | 통과 | **`npm run compile` 통과** |
+| 브라우저 빌드 | Chrome MV3 (약 1.86 MB) | **Microsoft Edge MV3 프로덕션 번들 생성** |
+| 빌드 검증 및 접근성 | manifest 및 참조 파일 통과 | **`verify-build` 및 WCAG AA 13쌍 통과** |
 
 사용자가 언급한 bge-m2와 달리 이 PC에서 실제 조회된 임베딩 모델은 bge-m3:latest다. 이 문서는 실제 설치값을 기준으로 한다. 모델 기능 표시는 API 메타데이터 확인이며 한국어 공문 정확도, OCR 정확도, 업무 수행 성능을 실측했다는 뜻이 아니다.
 

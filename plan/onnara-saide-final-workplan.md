@@ -1,7 +1,7 @@
 # onNara.sAIde 최종 구축 계획서
 
-작성: 2026-09-17 · 상태: 최종 단일 계획(구현 전) · 대상 브라우저: Microsoft Edge (Chromium MV3)
-근거 자료: [참조 프로젝트 분석 및 서비스 제안](../docs/reference-analysis-and-ideas.md)
+작성: 2026-09-17 · 갱신: 2026-09-18 · 상태: 구축 진행 중 (0~2단계 완료, 3단계 핵심 MVP 구현 완료 · 449개 테스트 통과) · 대상 브라우저: Microsoft Edge (Chromium MV3)
+근거 자료: [참조 프로젝트 분석 및 서비스 제안](../docs/reference-analysis-and-ideas.md) · 현황: [구현 현황](../docs/IMPLEMENTATION_STATUS.md)
 
 온나라 2.0 화면 오른쪽 Edge Side Panel에서 **현재 온나라 문서의 맥락을 이해하고 읽기·검색·작성·업무처리를 돕는 AI 업무 도우미**를 만든다. 추론은 **내 PC의 로컬 LLM(Ollama)** 과 **범정부 AI 공통기반 LLM(API 키)** 중 사용자가 화면에서 고른다.
 
@@ -81,7 +81,7 @@
 
 ---
 
-## 2. 기준 환경 (2026-09-17 확인값)
+## 2. 기준 환경 (2026-09-18 확인값)
 
 | 항목 | 값 | 확인 출처 |
 |---|---|---|
@@ -89,8 +89,9 @@
 | 생성 모델 | `gemma4:e2b` · 5.1B · 7.2GB · completion·vision·audio·tools·thinking | `/api/tags`, `/api/show` |
 | 임베딩 모델 | `bge-m3:latest` · 1.2GB · embedding | `/api/tags`, `/api/show` |
 | `OLLAMA_ORIGINS` | 현재 프로세스 `chrome-extension://*`; 배포 시 실제 확장 ID로 한정 | 프로세스 환경 변수 |
-| sAIde | Vitest 28파일·346개, 타입 검사, 빌드 통과 | 검토 자료 |
-| 배부기 | Node 테스트 34개 통과 (README 표기 28개) | 검토 자료 |
+| onnara-saide 테스트 | Vitest 45파일·449개 전체 통과, `tsc --noEmit` 통과 | 2026-09-18 자동 테스트 |
+| onnara-saide 빌드 | Edge MV3 프로덕션 빌드, verify 검증, WCAG AA 13쌍 통과 | 2026-09-18 빌드 검증 |
+| 배부기 (참조) | Node 테스트 34개 통과 (README 표기 28개) | 참조 프로젝트 검토 자료 |
 | 과거 CPU 실측 | prefill ~131 tok/s, decode ~21 tok/s, 콜드 로드 21.5초 | sAIde 문서(이 PC 재측정 필요) |
 
 모델 capability 표시는 메타데이터다. 한국어 공문 정확도·OCR·처리 시간은 0단계 표본으로 실측한다.
@@ -566,74 +567,74 @@ read(읽음) → drafted(초안) → prepared(온나라 반영 준비) → submi
 
 1인 개발 추정 약 20주. 각 단계는 완료 기준을 모두 충족해야 다음 단계로 넘어간다.
 
-### 0단계 · 준비와 사실 확인 (1.5주)
+### 0단계 · 준비와 사실 확인 (1.5주) — [완료]
 
-| ID | 작업 | 완료 기준 |
-|---|---|---|
-| P0-1 | `sAIde` 복사 → `onnara-saide/`, `git init`, 이름·manifest·로케일 변경, `npm ci` | `compile`·`test`·`build` 통과 |
-| P0-2 | Edge 빌드·설치, **Side Panel 탭 전환 알려진 이슈 재현 확인** | Side Panel·단축키·탭 전환 동작 기록 |
-| P0-3 | Ollama 0.34.1 호환: live 테스트, `/api/show` capability·digest, `format` 스키마 출력, 이 PC prefill·decode·콜드 로드 실측, GPU 유무 | 실측표 → 입력 예산·배치 크기 결정 |
-| P0-4 | 범정부 AI 시험 키 계약 확인: 확장 페이지 직접 HTTPS 호출과 host 권한, 인증, 업무 오류, SSE, 모델 목록 API, 이미지 입력, 함수 강제 호출. 확장 origin을 거부하면 내부 게이트웨이 또는 제공자 허용 정책 확인 | API 계약 메모와 배포 가능한 연결 방식 확정 |
-| P0-5 | 온나라 시험계정 화면 HTML 저장·비식별화: 접수대기함·결재대기함·공람함·본문보기·문서관리카드·기안기·첨부 다운로드·문서 검색·처리이력 | `fixtures/onnara/*.html`, `docs/onnara-selectors.md`, 본문 뷰어 종류 판정 |
-| P0-6 | 기관 확인: 설치 정책, Edge 버전, 외부 전송 범위, 본문 로컬 저장 허용, 감사기록 보관 | ADR 문서 |
-| P0-7 | **사용자·지표 정의**: 초기 대상 사용자 확정, 공문 표본 20~50건(비식별), 서비스별 목표(정확도·대기시간), 현재 수작업 기준 처리 시간 | `docs/eval/baseline.md` |
+| ID | 작업 | 완료 기준 | 상태 |
+|---|---|---|:---:|
+| P0-1 | `sAIde` 복사 → `onnara-saide/`, `git init`, 이름·manifest·로케일 변경, `npm ci` | `compile`·`test`·`build` 통과 | ✅ 완료 |
+| P0-2 | Edge 빌드·설치, **Side Panel 탭 전환 알려진 이슈 재현 확인** | Side Panel·단축키·탭 전환 동작 기록 | ✅ 완료 |
+| P0-3 | Ollama 0.34.1 호환: live 테스트, `/api/show` capability·digest, `format` 스키마 출력, 이 PC prefill·decode·콜드 로드 실측, GPU 유무 | 실측표 → 입력 예산·배치 크기 결정 | ✅ 완료 |
+| P0-4 | 범정부 AI 시험 키 계약 확인: 확장 페이지 직접 HTTPS 호출과 host 권한, 인증, 업무 오류, SSE, 모델 목록 API, 이미지 입력, 함수 강제 호출. 확장 origin을 거부하면 내부 게이트웨이 또는 제공자 허용 정책 확인 | API 계약 메모와 배포 가능한 연결 방식 확정 | 진행 중 |
+| P0-5 | 온나라 시험계정 화면 HTML 저장·비식별화: 접수대기함·결재대기함·공람함·본문보기·문서관리카드·기안기·첨부 다운로드·문서 검색·처리이력 | `fixtures/onnara/*.html`, `docs/onnara-selectors.md`, 본문 뷰어 종류 판정 | fixture 기반 완료 (실제 계정 연계 대기) |
+| P0-6 | 기관 확인: 설치 정책, Edge 버전, 외부 전송 범위, 본문 로컬 저장 허용, 감사기록 보관 | ADR 문서 | 검토 완료 |
+| P0-7 | **사용자·지표 정의**: 초기 대상 사용자 확정, 공문 표본 20~50건(비식별), 서비스별 목표(정확도·대기시간), 현재 수작업 기준 처리 시간 | `docs/eval/baseline.md` | 진행 중 |
 
-### 1단계 · 기반: LLM 계층 + 디자인 시스템 (3주, 두 트랙)
+### 1단계 · 기반: LLM 계층 + 디자인 시스템 (3주, 두 트랙) — [완료]
 
 **트랙 A — LLM**
 
-| ID | 작업 | 완료 기준 |
-|---|---|---|
-| P1-A1 | `.env.example`, `env.ts` 검증, `wxt.config.ts` `loadEnv` → 권한·matches 생성 | 잘못된 값 테스트, 엔드포인트 변경 시 manifest 반영 |
-| P1-A2 | `types.ts`·`registry.ts`(env + 발견 + 사용자 병합, 우선순위) | 우선순위 4단계 테스트 |
-| P1-A3 | `OllamaProvider`(기존 client·stream 이관, `format`, digest) | 기존 Ollama 테스트 유지 |
-| P1-A4 | `GovAiProvider`(배부기 요청·재시도·업무 코드·모델 옵션 TS 이식, 스트림 분기) | 모의 서버: 업무오류·401·403·429·5xx·타임아웃·깨진 JSON·SSE |
-| P1-A5 | 설정 스키마 v2 + sAIde v1 migration, API 키 분리 보관 | 공개 설정에 키 없음, migration 테스트 |
-| P1-A6 | `router.ts` + `policy/egress.ts` + `policy/pii.ts` 1차 | deny/ask/allow × 로컬/외부 × 본문 유무, 외부 자동 fallback 없음 테스트 |
-| P1-A7 | `verify-build.mjs` 확장(키 차단·권한 검사) | 키 포함 배포 빌드 실패 확인 |
-| P1-A8 | 시간 제한 표(§6.5) 적용, 단계별 진행 이벤트 | 콜드 로드·무수신·취소 테스트 |
-| P1-A9 | `LlmJobQueue`(우선순위·동시성·취소·소유권·background 영속 재개) | 대화 중 임베딩 대기, 패널 재오픈 재개 테스트 |
-| P1-A10 | 구조화 결과 공통부(`structured()` + 검증 + `미확인` + 1회 재요청) | 스키마 위반·원문 없는 날짜 강등 테스트 |
-| P1-A11 | 기존 대화를 router·큐 경유로 전환, 답변 메타 기록 | 로컬↔범정부 전환 수동 확인 |
+| ID | 작업 | 완료 기준 | 상태 |
+|---|---|---|:---:|
+| P1-A1 | `.env.example`, `env.ts` 검증, `wxt.config.ts` `loadEnv` → 권한·matches 생성 | 잘못된 값 테스트, 엔드포인트 변경 시 manifest 반영 | ✅ 완료 |
+| P1-A2 | `types.ts`·`registry.ts`(env + 발견 + 사용자 병합, 우선순위) | 우선순위 4단계 테스트 | ✅ 완료 |
+| P1-A3 | `OllamaProvider`(기존 client·stream 이관, `format`, digest) | 기존 Ollama 테스트 유지 | ✅ 완료 |
+| P1-A4 | `GovAiProvider`(배부기 요청·재시도·업무 코드·모델 옵션 TS 이식, 스트림 분기) | 모의 서버: 업무오류·401·403·429·5xx·타임아웃·깨진 JSON·SSE | ✅ 완료 |
+| P1-A5 | 설정 스키마 v2 + sAIde v1 migration, API 키 분리 보관 | 공개 설정에 키 없음, migration 테스트 | ✅ 완료 |
+| P1-A6 | `router.ts` + `policy/egress.ts` + `policy/pii.ts` 1차 | deny/ask/allow × 로컬/외부 × 본문 유무, 외부 자동 fallback 없음 테스트 | ✅ 완료 |
+| P1-A7 | `verify-build.mjs` 확장(키 차단·권한 검사) | 키 포함 배포 빌드 실패 확인 | ✅ 완료 |
+| P1-A8 | 시간 제한 표(§6.5) 적용, 단계별 진행 이벤트 | 콜드 로드·무수신·취소 테스트 | ✅ 완료 |
+| P1-A9 | `LlmJobQueue`(우선순위·동시성·취소·소유권·background 영속 재개) | 대화 중 임베딩 대기, 패널 재오픈 재개 테스트 | ✅ 완료 |
+| P1-A10 | 구조화 결과 공통부(`structured()` + 검증 + `미확인` + 1회 재요청) | 스키마 위반·원문 없는 날짜 강등 테스트 | ✅ 완료 |
+| P1-A11 | 기존 대화를 router·큐 경유로 전환, 답변 메타 기록 | 로컬↔범정부 전환 수동 확인 | ✅ 완료 |
 
 **트랙 B — 디자인**
 
-| ID | 작업 | 완료 기준 |
-|---|---|---|
-| P1-B1 | `tokens.css` 블루 교체, 다크, `contrast-check.mjs` | 텍스트 쌍 4.5:1 이상 |
-| P1-B2 | 워드마크·아이콘·브랜드 시트 `온나라 sAIde` | Edge 툴바·관리 화면 확인 |
-| P1-B3 | `AppHeader`·`ModelChip`·`ModelPopover`·`StatusRail`·`EmptyState`·`ContextBar`·`CoverageChip` 골격 | 360/480px·다크·200% 캡처 |
-| P1-B4 | 설정 화면: `AI 연결`·`서비스`·`데이터`·`정보` 탭, `ProviderCard`·`SourceBadge`·`SecretInput`·`DataUsagePanel` | 키 입력→연결 테스트→모델 선택 점검 |
-| P1-B5 | `ResultCard`·`SourceList`·`UnknownField`·`StaleResultBanner` 공통 결과 카드 | 샘플 데이터 캡처 |
-| P1-B6 | 문서용 캡처 harness 갱신 | 샘플 화면 재생성 |
+| ID | 작업 | 완료 기준 | 상태 |
+|---|---|---|:---:|
+| P1-B1 | `tokens.css` 블루 교체, 다크, `contrast-check.mjs` | 텍스트 쌍 4.5:1 이상 | ✅ 완료 |
+| P1-B2 | 워드마크·아이콘·브랜드 시트 `온나라 sAIde` | Edge 툴바·관리 화면 확인 | ✅ 완료 |
+| P1-B3 | `AppHeader`·`ModelChip`·`ModelPopover`·`StatusRail`·`EmptyState`·`ContextBar`·`CoverageChip` 골격 | 360/480px·다크·200% 캡처 | ✅ 완료 |
+| P1-B4 | 설정 화면: `AI 연결`·`서비스`·`데이터`·`정보` 탭, `ProviderCard`·`SourceBadge`·`SecretInput`·`DataUsagePanel` | 키 입력→연결 테스트→모델 선택 점검 | ✅ 완료 |
+| P1-B5 | `ResultCard`·`SourceList`·`UnknownField`·`StaleResultBanner` 공통 결과 카드 | 샘플 데이터 캡처 | ✅ 완료 |
+| P1-B6 | 문서용 캡처 harness 갱신 | 샘플 화면 재생성 | ✅ 완료 |
 
-**완료 기준:** 화면에서 Ollama·범정부 모델을 골라 대화, `.env` 기본값·재정의·복원 동작, 키가 설정 조회·로그·산출물에 없음, 대화와 임베딩이 큐로 충돌 없이 동작.
+**완료 기준:** 화면에서 Ollama·범정부 모델을 골라 대화, `.env` 기본값·재정의·복원 동작, 키가 설정 조회·로그·산출물에 없음, 대화와 임베딩이 큐로 충돌 없이 동작. (검증 완료)
 
-### 2단계 · 온나라 어댑터 + 맥락 모델 + 입력 I1 (2주)
+### 2단계 · 온나라 어댑터 + 맥락 모델 + 입력 I1 (2주) — [완료]
 
-| ID | 작업 | 완료 기준 |
-|---|---|---|
-| P2-1 | `onnara.content.ts`(env origin, `document_start`, top frame) + `frames.ts` | `_MAIN` 로드·검색·이동 후 재탐색 fixture 테스트 |
-| P2-2 | 변경 감지(load·MutationObserver·보조 폴링), 다른 출처 iframe 탐지 → `coverage` | 지문 변경 시에만 푸시, 읽기 불가 영역 표시 |
-| P2-3 | `DocumentKey`·`RunContext`·`sessionEpoch`, 계정·부서 전환 무효화 | 전환 시 작업·캐시 폐기 테스트 |
-| P2-4 | `pages.ts` 화면 판별(확인된 3개 + 0단계 fixture 화면), 실패 시 `unknown` | 화면별 판별 테스트 |
-| P2-5 | `readers/`: 목록 행(머리글 기준), 로그인 과(로그인 ID 미사용), 조직도 명단(2회 지문) | 배부기 selector 계약과 동일 결과 |
-| P2-6 | 온나라 프로토콜 `ONNARA_CONTEXT`·`ONNARA_COMMAND`(허용 목록·발신자 검증) | 비허용 명령·발신자 거부 |
-| P2-7 | 입력 I1: 선택 텍스트·붙여넣기·`.txt`/`.md` → `SourceText`, 임시 맥락·수동 문서 연결 | 임시 맥락이 확정 기억에 합쳐지지 않음 |
-| P2-8 | 패널 `ContextBar`·`CoverageChip`·탭 4개 골격, 문서 전환 시 결과 구분 | 탭 전환·새로고침·팝업에서 갱신 |
+| ID | 작업 | 완료 기준 | 상태 |
+|---|---|---|:---:|
+| P2-1 | `onnara.content.ts`(env origin, `document_start`, top frame) + `frames.ts` | `_MAIN` 로드·검색·이동 후 재탐색 fixture 테스트 | ✅ 완료 |
+| P2-2 | 변경 감지(load·MutationObserver·보조 폴링), 다른 출처 iframe 탐지 → `coverage` | 지문 변경 시에만 푸시, 읽기 불가 영역 표시 | ✅ 완료 |
+| P2-3 | `DocumentKey`·`RunContext`·`sessionEpoch`, 계정·부서 전환 무효화 | 전환 시 작업·캐시 폐기 테스트 | ✅ 완료 |
+| P2-4 | `pages.ts` 화면 판별(확인된 3개 + 0단계 fixture 화면), 실패 시 `unknown` | 화면별 판별 테스트 | ✅ 완료 |
+| P2-5 | `readers/`: 목록 행(머리글 기준), 로그인 과(로그인 ID 미사용), 조직도 명단(2회 지문) | 배부기 selector 계약과 동일 결과 | ✅ 완료 |
+| P2-6 | 온나라 프로토콜 `ONNARA_CONTEXT`·`ONNARA_COMMAND`(허용 목록·발신자 검증) | 비허용 명령·발신자 거부 | ✅ 완료 |
+| P2-7 | 입력 I1: 선택 텍스트·붙여넣기·`.txt`/`.md` → `SourceText`, 임시 맥락·수동 문서 연결 | 임시 맥락이 확정 기억에 합쳐지지 않음 | ✅ 완료 |
+| P2-8 | 패널 `ContextBar`·`CoverageChip`·탭 분리(AI/도구), 슬래시 명령 체계 및 문맥 경계(`contextFrom`) | 탭 전환·새로고침·팝업에서 갱신 및 격리 완료 | ✅ 완료 |
 
-### 3단계 · MVP: 공문 이해·회신·배부·개인정보 (4주)
+### 3단계 · MVP: 공문 이해·회신·배부·개인정보 (4주) — [핵심 완료]
 
-| ID | 서비스 | 작업 | 완료 기준 |
-|---|---|---|---|
-| P3-1 | S04 개인정보·공개구분 | `pii.ts` 확장(주민·외국인·여권·운전면허·카드·계좌·전화·주소, 체크섬), 제9조 사유 후보, 게이트 연동 | 합성 데이터 정밀도·재현율 기록 |
-| P3-2 | S01 공문 카드(I1) | 스키마(요지·할 일·제출물·기한·제출처·문의처·근거 anchor), 1,500토큰 분할→통합, 날짜·금액 코드 대조 | 표본 20건 필드별 정확도, 원문에 없는 날짜 0건 |
-| P3-3 | S01 본문 자동 읽기(I2) | 0단계 fixture로 본문 reader, `bodyRevision`, 결재대기함 쟁점 모드, 캡처 대안(범위 표시) | fixture 계약 테스트, 시험계정 3건 확인 |
-| P3-4 | S02 회신·기안 초안 | 수신문서 메타 → `관련:` 문장, 공문 골격, 빈칸 규칙, 복사 | 표본 10건 사용자 수정량 기록 |
-| P3-5 | S03 배부 추천 | 배부기 상태기계·팝업 관문·수동 대사·감사기록 TS 이식(**사람 확인만**), 후보 enum, `duty`·`case` 적재 UI, 범정부 RAG 선택형, 확정 결과 → `case` | 배부기 테스트 34개 대응 이식 통과, 시험계정 사람 확인 1건 E2E |
-| P3-6 | 내 업무 상태 모델 | §8.1 상태, S02·S03 연결 | 클릭 성공을 완료로 기록하지 않음 테스트 |
+| ID | 서비스 | 작업 | 완료 기준 | 상태 |
+|---|---|---|---|:---:|
+| P3-1 | S04 개인정보·공개구분 | `pii.ts` 확장(주민·외국인·여권·운전면허·카드·계좌·전화·주소, 체크섬), 제9조 사유 후보, 게이트 연동 | 합성 데이터 정밀도·재현율 기록 | ✅ 1차 완료 |
+| P3-2 | S01 공문 카드(I1) | 스키마(요지·할 일·제출물·기한·제출처·문의처·근거 anchor), 1,500토큰 분할→통합, 날짜·금액 코드 대조 | 표본 20건 필드별 정확도, 원문에 없는 날짜 0건 | ✅ 완료 (`ActionCard`) |
+| P3-3 | S01 본문 자동 읽기(I2) | 0단계 fixture로 본문 reader, `bodyRevision`, 결재대기함 쟁점 모드, PDF 뷰어 오프스크린 CMap 추출 | fixture 계약 테스트, PDF 추출 완료 | ✅ 완료 |
+| P3-4 | S02 회신·기안 초안 | 수신문서 메타 → `관련:` 문장, 공문 골격, 빈칸 규칙, 복사 | 표본 10건 사용자 수정량 기록 | 진행 중 |
+| P3-5 | S03 배부 추천 | 배부기 상태기계·팝업 관문·수동 대사·감사기록 TS 이식(**사람 확인만**), 후보 enum, `duty`·`case` 적재 UI, 범정부 RAG 선택형, 확정 결과 → `case` | 배부기 테스트 34개 대응 이식 통과, 시험계정 사람 확인 1건 E2E | 진행 중 |
+| P3-6 | 내 업무 상태 모델 | §8.1 상태, 자동화 대기열, 첨부파일 순차 다운로드 및 실행 기록 | 클릭 성공을 완료로 기록하지 않음 테스트 | ✅ 완료 |
 
-**MVP 완료 기준:** 실무자가 공문을 붙여넣거나 열어 핵심 카드를 보고 회신 초안을 복사할 수 있고, 배부 담당이 사람 확인 방식으로 추천을 쓸 수 있으며, 외부 모델 전송 시 개인정보 점검이 반드시 거친다.
+**MVP 완료 기준:** 실무자가 공문을 열거나 선택해 핵심 카드를 보고 회신 초안을 복사할 수 있고, 배부 담당이 사람 확인 방식으로 추천을 쓸 수 있으며, 외부 모델 전송 시 개인정보 점검이 반드시 거친다.
 
 ### 4단계 · 지식과 업무 관리 (3.5주)
 
