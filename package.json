@@ -3,7 +3,10 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "engines": { "node": ">=24 <25", "npm": ">=11 <12" },
+  "engines": {
+    "node": ">=24 <25",
+    "npm": ">=11 <12"
+  },
   "packageManager": "npm@11.16.0",
   "description": "온나라 sAIde — 온나라 업무를 돕는 Edge AI 사이드패널.",
   "scripts": {
@@ -24,7 +27,7 @@
     "dexie": "^4.4.5",
     "dompurify": "^3.4.13",
     "marked": "^18.0.10",
-    "pdfjs-dist": "^5.7.284",
+    "pdfjs-dist": "^6.3.289",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "shiki": "^4.4.3",
