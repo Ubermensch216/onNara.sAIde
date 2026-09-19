@@ -15,6 +15,7 @@ import { requestHostAccess } from '@/lib/permissions';
 import {
   cancelAutomation,
   clearAutomationHistory,
+  clearJobFocus,
   loadAutomationHistory,
   useAutomation,
   type AutomationJob,
@@ -55,9 +56,32 @@ async function currentTab(known: TabSummary | null): Promise<TabSummary | null> 
 export function AutomationPanel({ tab, onDownloadLink, onTabChange }: Props) {
   const t = useT();
   const jobs = useAutomation(state => state.jobs);
+  const loaded = useAutomation(state => state.loaded);
+  const focus = useAutomation(state => state.focus);
   const [screen, setScreen] = useState<Screen>({ state: 'idle' });
+  /** 링크로 찾아온 작업. 잠깐 강조했다가 스스로 꺼진다. */
+  const [spotlight, setSpotlight] = useState<string | null>(null);
 
   useEffect(() => { void loadAutomationHistory(); }, []);
+
+  /**
+   * 답변 안의 링크로 찾아온 작업을 짚는다.
+   *
+   * ★ 기록을 아직 못 읽었으면 기다린다. 목록이 비어 있는 동안 초점을 비우면 눌러도
+   *   아무 일이 없는 것처럼 보인다.
+   */
+  useEffect(() => {
+    if (!focus || !loaded) return;
+    setSpotlight(focus.jobId);
+    clearJobFocus();
+  }, [focus?.at, loaded]);
+
+  // 강조는 "여기다"라고 알리는 것이지 선택 상태가 아니다. 잠깐 뒤 스스로 꺼진다.
+  useEffect(() => {
+    if (spotlight === null) return;
+    const timer = setTimeout(() => setSpotlight(null), 4000);
+    return () => clearTimeout(timer);
+  }, [spotlight]);
 
   const tabId = tab?.tabId;
   const tabUrl = tab?.url;
@@ -180,7 +204,7 @@ export function AutomationPanel({ tab, onDownloadLink, onTabChange }: Props) {
             <h2 className="auto-section-title">{t('auto.queue')}<span className="auto-section-count running">{active.length}</span></h2>
           </div>
           <ul className="auto-job-list">
-            {active.map(job => <JobRow key={job.id} job={job} onDownloadLink={onDownloadLink} />)}
+            {active.map(job => <JobRow key={job.id} job={job} spotlight={spotlight} onDownloadLink={onDownloadLink} />)}
           </ul>
         </section>
       )}
@@ -199,7 +223,7 @@ export function AutomationPanel({ tab, onDownloadLink, onTabChange }: Props) {
           {history.length
             ? (
               <ul className="auto-job-list">
-                {history.map(job => <JobRow key={job.id} job={job} onDownloadLink={onDownloadLink} />)}
+                {history.map(job => <JobRow key={job.id} job={job} spotlight={spotlight} onDownloadLink={onDownloadLink} />)}
               </ul>
             )
             : <p className="auto-empty">{t('auto.empty')}</p>}
@@ -211,12 +235,22 @@ export function AutomationPanel({ tab, onDownloadLink, onTabChange }: Props) {
   );
 }
 
-function JobRow({ job, onDownloadLink }: { job: AutomationJob; onDownloadLink: Props['onDownloadLink'] }) {
+function JobRow({ job, spotlight = null, onDownloadLink }: {
+  job: AutomationJob; spotlight?: string | null; onDownloadLink: Props['onDownloadLink'];
+}) {
   const t = useT();
+  const row = useRef<HTMLLIElement>(null);
   const running = job.status === 'queued' || job.status === 'running';
   const files = job.files ?? [];
+  const lit = spotlight === job.id;
+
+  // 링크로 찾아왔으면 화면 안으로 끌어온다. 기록이 길면 강조만으로는 보이지 않는다.
+  useEffect(() => {
+    if (lit) row.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }, [lit]);
+
   return (
-    <li className={`auto-job ${job.status}`}>
+    <li ref={row} className={`auto-job ${job.status} ${lit ? 'lit' : ''}`}>
       <div className="auto-job-head">
         <span className="auto-status">{t(`auto.status.${job.status}`)}</span>
         <span className="auto-job-title" title={job.label}>{job.label}</span>

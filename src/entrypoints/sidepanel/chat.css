@@ -851,6 +851,11 @@
   background: var(--surface);
 }
 
+.auto-job.lit {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
 .auto-job.running, .auto-job.queued { border-left-color: var(--accent); }
 .auto-job.done { border-left-color: var(--ok); }
 .auto-job.failed { border-left-color: var(--danger); }
@@ -1015,6 +1020,13 @@
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface);
+}
+
+/* 링크로 찾아온 항목. "여기다"라고 알리는 표시이지 선택 상태가 아니므로 잠깐 뒤 스스로 꺼진다.
+ * 글자색은 건드리지 않는다 — 강조하려다 본문 대비를 떨어뜨리면 읽기가 더 어려워진다. */
+.sched-task.lit {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
 }
 
 .sched-task.done { background: var(--surface-2); }

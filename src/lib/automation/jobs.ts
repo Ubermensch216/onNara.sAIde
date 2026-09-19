@@ -39,15 +39,38 @@ export interface JobOutcome {
 
 type Runner = (signal: AbortSignal) => Promise<JobOutcome>;
 
+/**
+ * 도구 탭이 열릴 때 짚을 작업.
+ *
+ * ★ 답변 안의 링크를 눌렀을 때에만 채워진다. 첨부 받기를 실행했다고 화면을 옮기지 않는다 —
+ *   사용자는 AI 창에서 다음 지시를 잇는 중이다(lib/panel/links.ts).
+ */
+export interface AutomationFocus {
+  jobId: string;
+  /** 같은 작업을 두 번 눌러도 화면이 반응하게 하는 일련번호. */
+  at: number;
+}
+
 interface AutomationState {
   jobs: AutomationJob[];
   loaded: boolean;
+  focus: AutomationFocus | null;
 }
 
 const HISTORY_KEY = 'saide.automationHistory';
 const HISTORY_LIMIT = 50;
 
-export const useAutomation = create<AutomationState>(() => ({ jobs: [], loaded: false }));
+export const useAutomation = create<AutomationState>(() => ({ jobs: [], loaded: false, focus: null }));
+
+/** 도구 탭에서 이 작업을 짚어 달라고 남긴다. 탭 전환 자체는 화면(App)이 한다. */
+export function focusJob(jobId: string): void {
+  useAutomation.setState({ focus: { jobId, at: Date.now() } });
+}
+
+/** 반영했다. 다음 지시가 올 때까지 비워 둔다. */
+export function clearJobFocus(): void {
+  if (useAutomation.getState().focus) useAutomation.setState({ focus: null });
+}
 
 const runners = new Map<string, { run: Runner; controller: AbortController; done: (job: AutomationJob) => void }>();
 let draining = false;

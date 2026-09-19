@@ -1,8 +1,11 @@
 /**
- * 슬래시 커맨드 자동완성. 계획서 §5 Phase 4-3
+ * 명령 자동완성. 계획서 §5 Phase 4-3
  *
- * 입력창 바로 위에 뜬다. 첫 글자가 `/`이고 공백이 없을 때만 나타난다 —
- * 본문 중간의 `/`(URL, 날짜)를 건드리면 방해만 된다.
+ * 입력창 바로 위에 뜬다. 첫 글자가 `/` 또는 `@`이고 공백이 없을 때만 나타난다 —
+ * 본문 중간의 `/`(URL, 날짜)나 `@`(전자우편 주소)를 건드리면 방해만 된다.
+ *
+ * ★ `@` 명령에는 넘어갈 탭 이름을 뱃지로 붙인다. 접두 문자가 "결과가 다른 곳에
+ *   나타난다"는 사실만 알린다면, 뱃지는 그 곳이 어디인지를 말한다.
  */
 
 import { useEffect, useRef } from 'react';
@@ -48,6 +51,11 @@ export function SlashMenu({ commands, active, onPick, onHover }: Props) {
           {c.hint && <span className="slash-hint">{c.hint}</span>}
           {c.needs === 'page' && <span className="slash-badge">{t('composer.needsPage')}</span>}
           {c.needs === 'screen' && <span className="slash-badge">{t('composer.needsScreen')}</span>}
+          {c.opensTab && (
+            <span className="slash-badge opens">
+              {t(c.opensTab === 'schedule' ? 'composer.opensSchedule' : 'composer.opensAutomation')}
+            </span>
+          )}
         </li>
       ))}
     </ul>

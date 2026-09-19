@@ -11,6 +11,7 @@ import { TaskRegisterCard } from './TaskRegisterCard';
 import { Markdown } from './Markdown';
 import { CopyIcon, DeleteIcon } from './ChatActionIcons';
 import { parseDownloadLink, type DownloadLinkAction } from '@/lib/downloads/links';
+import { parsePanelLink, type PanelLink } from '@/lib/panel/links';
 
 interface Props {
   messages: UiMessage[];
@@ -20,18 +21,29 @@ interface Props {
   onDelete: (id: UiMessage['id']) => Promise<void>;
   /** 답변 안의 다운로드 파일 링크를 눌렀을 때. 사용자 제스처가 살아 있도록 클릭 중에 동기로 호출한다. */
   onDownloadLink?: (action: DownloadLinkAction, downloadId: number) => void;
+  /** 답변 안의 `일정 탭에서 보기` · `도구 탭에서 보기` 링크를 눌렀을 때. */
+  onPanelLink?: (link: PanelLink) => void;
   /** 일정을 등록한 뒤 일정 탭으로 넘어가는 길. */
   onOpenSchedule?: () => void;
 }
 
-export function MessageList({ messages, dark, showThinking, deleteDisabled, onDelete, onDownloadLink, onOpenSchedule }: Props) {
+export function MessageList({ messages, dark, showThinking, deleteDisabled, onDelete, onDownloadLink, onPanelLink, onOpenSchedule }: Props) {
   // 마크다운 HTML 안의 링크에는 React 핸들러를 달 수 없어 목록에서 한 번에 가로챈다.
   const onClick = (event: React.MouseEvent) => {
-    const anchor = (event.target as Element).closest?.('a');
-    const link = parseDownloadLink(anchor?.getAttribute('href'));
-    if (!link) return;
-    event.preventDefault();
-    onDownloadLink?.(link.action, link.downloadId);
+    const href = (event.target as Element).closest?.('a')?.getAttribute('href');
+
+    const download = parseDownloadLink(href);
+    if (download) {
+      event.preventDefault();
+      onDownloadLink?.(download.action, download.downloadId);
+      return;
+    }
+
+    const panel = parsePanelLink(href);
+    if (panel) {
+      event.preventDefault();
+      onPanelLink?.(panel);
+    }
   };
   const endRef = useRef<HTMLDivElement>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);

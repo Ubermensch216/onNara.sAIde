@@ -136,6 +136,34 @@ export function presentError(e: AppError, model = ''): ErrorPresentation {
         body: e.message || t('err.denied.body'),
       };
 
+    case 'MEMORY_OFF':
+      return {
+        ...base,
+        severity: 'blocked',
+        title: t('err.memoryOff.title'),
+        body: t('err.memoryOff.body'),
+        action: 'open-settings',
+        actionLabel: t('ui.openSettings'),
+      };
+
+    case 'MEMORY_QUERY_REQUIRED':
+      // 오류가 아니라 명령이 덜 완성된 것이다. 무엇을 덧붙이면 되는지만 알린다.
+      return {
+        ...base,
+        severity: 'info',
+        title: t('err.memoryQuery.title'),
+        body: t('err.memoryQuery.body'),
+      };
+
+    case 'SCHEDULE_INPUT_REQUIRED':
+      // 명령 이름만 쳤다. 문법이 아니라 예문을 보여 준다 — 외울 문법이 없는 명령이다.
+      return {
+        ...base,
+        severity: 'info',
+        title: t('err.scheduleInput.title'),
+        body: t('err.scheduleInput.body'),
+      };
+
     case 'UNKNOWN':
       return {
         ...base,
@@ -165,5 +193,8 @@ export const ALL_ERROR_CODES: ErrorCode[] = [
   'TAB_RESTRICTED',
   'HOST_PERMISSION_REQUIRED',
   'ACTION_DENIED',
+  'MEMORY_OFF',
+  'MEMORY_QUERY_REQUIRED',
+  'SCHEDULE_INPUT_REQUIRED',
   'UNKNOWN',
 ];

@@ -13,9 +13,9 @@
  * ★ 근거와 검증 결과를 항목에 붙여 보인다(원문 확인 / 연도 추정). 계획서 §9.1 "근거와 범위를 숨기지 않는다".
  */
 
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useT, type MessageKey } from '@/lib/i18n';
-import { refreshTasks, addTask, clearDoneTasks, deleteTask, setTaskDone, updateTask, useSchedule } from '@/lib/schedule/store';
+import { clearScheduleFocus, refreshTasks, addTask, clearDoneTasks, deleteTask, setTaskDone, updateTask, useSchedule } from '@/lib/schedule/store';
 import { downloadText, exportFileName, tasksToCsv, tasksToIcs } from '@/lib/schedule/export';
 import {
   isCalendarMode, monthGrid, monthOf, shiftCursor, shortDate, tasksByDate, undatedTasks, weekDates, weekday,
@@ -43,15 +43,52 @@ export function SchedulePanel() {
   const t = useT();
   const tasks = useSchedule(state => state.tasks);
   const loaded = useSchedule(state => state.loaded);
+  const focus = useSchedule(state => state.focus);
   const [mode, setMode] = useState<CalendarMode>(initialMode);
   const [cursor, setCursor] = useState<string>(todayISO);
   const [editing, setEditing] = useState<Editing>(null);
   const [showDone, setShowDone] = useState(false);
+  /** 링크로 찾아온 항목. 잠깐 강조했다가 스스로 꺼진다. */
+  const [spotlight, setSpotlight] = useState<number | null>(null);
 
   useEffect(() => { void refreshTasks(); }, []);
   useEffect(() => {
     try { localStorage.setItem(MODE_KEY, mode); } catch { /* 기억하지 못해도 동작에는 지장 없다 */ }
   }, [mode]);
+
+  /**
+   * 답변 안의 링크로 찾아온 자리로 옮긴다.
+   *
+   * ★ `focus.at`으로 구분한다. 같은 항목을 두 번 눌러도 화면이 반응해야 하고,
+   *   반대로 이 효과가 매 렌더마다 돌면 사용자가 손으로 넘겨 둔 달이 자꾸 되돌아온다.
+   *
+   * ★ 목록을 아직 못 읽었으면 기다린다. 링크가 짚은 항목을 찾지 못한 채 초점을 비우면
+   *   눌러도 아무 일이 없는 것처럼 보인다.
+   */
+  useEffect(() => {
+    if (!focus || !loaded) return;
+    const target = focus.taskId === undefined ? null : tasks.find(item => item.id === focus.taskId);
+    if (target) {
+      // 기한 미정 항목은 달력 격자에 자리가 없다. 목록 보기로 보내야 화면에 보인다.
+      setMode(target.dueDate ? 'day' : 'list');
+      if (target.dueDate) setCursor(target.dueDate);
+      setSpotlight(target.id);
+    } else if (focus.taskId !== undefined) {
+      // 그 사이에 지워졌다. 목록으로 보내 무엇이 남았는지 보이게 한다.
+      setMode('list');
+    } else {
+      if (focus.cursor) setCursor(focus.cursor);
+      if (focus.mode) setMode(focus.mode);
+    }
+    clearScheduleFocus();
+  }, [focus?.at, loaded]);
+
+  // 강조는 "여기다"라고 알리는 것이지 선택 상태가 아니다. 잠깐 뒤 스스로 꺼진다.
+  useEffect(() => {
+    if (spotlight === null) return;
+    const timer = setTimeout(() => setSpotlight(null), 4000);
+    return () => clearTimeout(timer);
+  }, [spotlight]);
 
   const today = todayISO();
   const byDate = useMemo(() => tasksByDate(tasks), [tasks]);
@@ -69,7 +106,7 @@ export function SchedulePanel() {
     await clearDoneTasks();
   };
 
-  const rowProps = { onEdit: setEditing, onDelete: (task: ScheduleTask) => void remove(task) };
+  const rowProps = { spotlight, onEdit: setEditing, onDelete: (task: ScheduleTask) => void remove(task) };
 
   return (
     <div className="sched">
@@ -257,10 +294,11 @@ function MonthGrid({ cursor, today, byDate, onPick }: {
 }
 
 /** 하루치 일정. 주 보기에서는 이것을 이레 쌓는다. */
-function DayAgenda({ date, tasks, today, compact = false, quiet = false, onAdd, onEdit, onDelete }: {
+function DayAgenda({ date, tasks, today, compact = false, quiet = false, spotlight = null, onAdd, onEdit, onDelete }: {
   date: string; tasks: ScheduleTask[]; today: string; compact?: boolean;
   /** 등록된 일정이 하나도 없을 때. 위의 안내와 겹치므로 빈 문구를 접는다. */
   quiet?: boolean;
+  spotlight?: number | null;
   onAdd: () => void; onEdit: (task: ScheduleTask) => void; onDelete: (task: ScheduleTask) => void;
 }) {
   const t = useT();
@@ -281,21 +319,31 @@ function DayAgenda({ date, tasks, today, compact = false, quiet = false, onAdd, 
         <button type="button" className="auto-link" onClick={onAdd}>{t('sched.addOnDay')}</button>
       </div>
       {tasks.length
-        ? <ul className="sched-list">{tasks.map(task => <TaskRow key={task.id} task={task} onEdit={onEdit} onDelete={onDelete} />)}</ul>
+        ? <ul className="sched-list">{tasks.map(task => <TaskRow key={task.id} task={task} spotlight={spotlight} onEdit={onEdit} onDelete={onDelete} />)}</ul>
         : !compact && !quiet && <p className="cal-agenda-empty">{t('sched.noTaskOnDay')}</p>}
     </section>
   );
 }
 
-function TaskRow({ task, onEdit, onDelete }: { task: ScheduleTask; onEdit: (task: ScheduleTask) => void; onDelete: (task: ScheduleTask) => void }) {
+function TaskRow({ task, spotlight = null, onEdit, onDelete }: {
+  task: ScheduleTask; spotlight?: number | null;
+  onEdit: (task: ScheduleTask) => void; onDelete: (task: ScheduleTask) => void;
+}) {
   const t = useT();
   const [open, setOpen] = useState(false);
+  const row = useRef<HTMLLIElement>(null);
   const days = task.dueDate ? daysUntil(task.dueDate) : null;
   const bucket = bucketOf(task);
   const detail = Boolean(task.evidence || task.notes || task.deliverables?.length || task.contact || task.source);
+  const lit = spotlight === task.id;
+
+  // 링크로 찾아왔으면 화면 안으로 끌어온다. 강조만 해 두면 접힌 아래에 있을 때 보이지 않는다.
+  useEffect(() => {
+    if (lit) row.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }, [lit]);
 
   return (
-    <li className={`sched-task ${task.status}`}>
+    <li ref={row} className={`sched-task ${task.status} ${lit ? 'lit' : ''}`}>
       <div className="sched-task-head">
         <button
           type="button"

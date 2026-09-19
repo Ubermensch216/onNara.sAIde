@@ -55,8 +55,11 @@ import { findDocumentCommand, type DocumentCommandId } from '@/lib/onnara/comman
 import { ScreenshotChip } from './components/ScreenshotChip';
 import { AutomationPanel } from './components/AutomationPanel';
 import { SchedulePanel } from './components/SchedulePanel';
-import { useAutomation } from '@/lib/automation/jobs';
-import { refreshTasks, useSchedule } from '@/lib/schedule/store';
+import { ScheduleIntentCard } from './components/ScheduleIntentCard';
+import { SCHEDULE_ALIASES, SCHEDULE_PRESET_ID, SCHEDULE_SLASH } from '@/lib/schedule/intent';
+import type { PanelLink } from '@/lib/panel/links';
+import { focusJob, useAutomation } from '@/lib/automation/jobs';
+import { focusSchedule, focusScheduleTask, refreshTasks, useSchedule } from '@/lib/schedule/store';
 import { urgentCount } from '@/lib/schedule/task';
 import type { DownloadLinkAction } from '@/lib/downloads/links';
 import type { AppError } from '@/lib/messaging/protocol';
@@ -112,6 +115,7 @@ export default function App() {
 
   // 일정 배지는 탭을 열지 않아도 맞아야 한다. 패널을 열 때 한 번 읽어 둔다.
   useEffect(() => { void refreshTasks(); }, []);
+
 
   /* ── 설정 ── */
   useEffect(() => {
@@ -372,7 +376,7 @@ export default function App() {
   };
 
   /**
-   * 문서등록대장 목록 명령 실행(버튼·슬래시 공통).
+   * 문서등록대장 목록 명령 실행(버튼·명령 공통).
    *
    * ★ 권한 요청이 첫 동작이어야 한다. 앞에 await가 끼면 사용자 제스처가 사라져
    *   크롬이 사이트 접근 요청을 거부한다(permissions.ts).
@@ -382,6 +386,8 @@ export default function App() {
     if (!(await ensureAccess(tab.url))) return;
     const slash = findDocumentCommand(command)?.slash ?? '';
     const typed = args.trim() ? `${slash} ${args.trim()}` : slash;
+    // ★ `@` 명령이라고 화면을 옮기지 않는다. 결과는 AI 창에 남고, 그 탭으로 가는 길은
+    //   답변 안의 링크다(lib/panel/links.ts). 갈지 말지는 누르는 사람이 정한다.
     await chat.runCommand(typed, command, args, settings);
   };
 
@@ -412,24 +418,52 @@ export default function App() {
     await chat.attachScreenshot(tab.tabId);
   };
 
+  /**
+   * 답변 안의 `일정 탭에서 보기` · `도구 탭에서 보기` 링크를 눌렀을 때.
+   *
+   * ★ 여기서만 화면이 옮겨진다. 어디를 볼지는 스토어에 남기고(focus), 그 탭이 스스로
+   *   반영한 뒤 비운다. 옮기는 일과 맞추는 일을 나눠 두면, 탭이 열려 있든 아니든 같다.
+   */
+  const followPanelLink = (link: PanelLink) => {
+    if (link.tab === 'automation') {
+      if ('jobId' in link) focusJob(link.jobId);
+      setView('automation');
+      return;
+    }
+    if ('taskId' in link) focusScheduleTask(link.taskId);
+    else if ('cursor' in link) focusSchedule(link.cursor, link.mode);
+    setView('schedule');
+  };
+
   /* ── 슬래시 커맨드 (Phase 4-3) ── */
   const commands = useMemo(
     () => [
       ...builtinCommands(),
-      // 기억이 꺼져 있으면 목록에 띄우지 않는다. 눌러도 아무 일이 없는
-      // 항목을 보여 주는 것은 안내가 아니라 소음이다.
-      ...(settings.memoryEnabled
-        ? [
-            {
-              slash: RECALL_SLASH,
-              label: t('mem.search.title'),
-              hint: t('mem.search.hint'),
-              presetId: RECALL_PRESET_ID,
-              needs: 'selection' as const,
-              aliases: RECALL_ALIASES,
-            },
-          ]
-        : []),
+      // ★ 기억이 꺼져 있어도 목록에서 빼지 않는다. 빼 두면 `/기억`이 명령으로
+      //   잡히지 않고 그대로 모델에게 문장으로 전송된다 — 명령이 사라진 것처럼
+      //   보이고 토큰까지 쓴다. resolveTyped가 옛 접두 문자를 잡아 주는 것과 같은
+      //   이유다. 대신 꺼져 있다는 사실과 켜는 길을 안내한다(runSlash).
+      {
+        // 찾은 내용을 AI 창에서 바로 읽는 명령이다.
+        prefix: '/' as const,
+        slash: RECALL_SLASH,
+        label: t('mem.search.title'),
+        hint: settings.memoryEnabled ? t('mem.search.hint') : t('mem.search.disabled'),
+        presetId: RECALL_PRESET_ID,
+        needs: 'selection' as const,
+        aliases: RECALL_ALIASES,
+      },
+      {
+        // 주화면이 일정 탭이므로 `@` 그룹이다. 결과가 어디에 나타나는지를 이름이 알린다.
+        prefix: '@' as const,
+        slash: SCHEDULE_SLASH,
+        label: t('sint.command'),
+        hint: t('sint.commandHint'),
+        presetId: SCHEDULE_PRESET_ID,
+        needs: 'none' as const,
+        aliases: SCHEDULE_ALIASES,
+        opensTab: 'schedule' as const,
+      },
       ...customCommands(customs),
     ],
     [customs, settings.memoryEnabled, t],
@@ -442,7 +476,23 @@ export default function App() {
     //   먼저 돌려야 한다. 찾은 것이 없으면 모델을 부르지 않는다 — 근거 없이
     //   답하게 두면 기억에서 찾은 척 지어낸다.
     if (cmd.presetId === RECALL_PRESET_ID) {
-      if (!rest.trim()) return;
+      // 꺼져 있으면 찾을 기억 자체가 없다. 켜는 길을 배너의 버튼으로 준다.
+      if (!settings.memoryEnabled) {
+        chat.setError({ code: 'MEMORY_OFF', message: '' });
+        return;
+      }
+      /*
+       * ★ 찾을 말이 없으면 입력창을 되돌린다.
+       *
+       *   예전에는 여기서 그냥 return이었다. 위에서 이미 setDraft('')를 한 뒤라
+       *   입력만 사라지고 아무 일도 일어나지 않았다 — 사용자에게는 명령이 먹통인
+       *   것과 구별되지 않는다. 이름을 남겨 두면 그 자리에서 이어 칠 수 있다.
+       */
+      if (!rest.trim()) {
+        setDraft(`${RECALL_SLASH} `);
+        chat.setError({ code: 'MEMORY_QUERY_REQUIRED', message: '' });
+        return;
+      }
       try {
         const { hits, prompt } = await recall(rest, settings);
         if (!hits.length) {
@@ -453,6 +503,23 @@ export default function App() {
       } catch (e) {
         chat.setError(e instanceof Error ? e.message : String(e));
       }
+      return;
+    }
+
+    /**
+     * `@일정`은 온나라 화면과 무관하다. 탭 권한도 본문도 필요 없다.
+     *
+     * ★ 그래서 ensureAccess를 타지 않는다. 일정을 적겠다는데 사이트 접근 권한을 물으면
+     *   사용자는 무엇을 허용하는지 알 수 없다.
+     */
+    if (cmd.presetId === SCHEDULE_PRESET_ID) {
+      // 이름만 치고 보낸 경우다. `/기억`과 같은 규칙 — 입력창을 되돌리고 예문을 보인다.
+      if (!rest.trim()) {
+        setDraft(`${SCHEDULE_SLASH} `);
+        chat.setError({ code: 'SCHEDULE_INPUT_REQUIRED', message: '' });
+        return;
+      }
+      await chat.runSchedule(rest, settings);
       return;
     }
 
@@ -617,6 +684,7 @@ export default function App() {
             deleteDisabled={chat.streaming || chat.loading}
             onDelete={chat.removeMessage}
             onOpenSchedule={() => setView('schedule')}
+            onPanelLink={followPanelLink}
             onDownloadLink={(action, downloadId) => openDownload(action, downloadId, chat.setError)}
           />
         )}
@@ -707,6 +775,14 @@ export default function App() {
           <ApprovalCard
             request={chat.pendingApproval.request}
             onDecide={chat.resolveApproval}
+          />
+        )}
+
+        {/* `@일정`의 쓰기는 예외 없이 이 카드를 거친다. 누르기 전에는 아무것도 저장되지 않는다. */}
+        {chat.pendingSchedule && chat.pendingSchedule.plan.kind !== 'list' && chat.pendingSchedule.plan.kind !== 'none' && (
+          <ScheduleIntentCard
+            plan={chat.pendingSchedule.plan}
+            onDecide={(ids) => void chat.commitSchedule(ids)}
           />
         )}
 

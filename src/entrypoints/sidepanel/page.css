@@ -304,6 +304,104 @@
   outline-offset: 2px;
 }
 
+/* ── @일정 확인 카드 ──
+ * 승인 카드와 같은 자리, 같은 골격을 쓴다. 되돌릴 수 없는 동작 앞에 서는 물음이라는
+ * 점이 같으므로, 생김새가 다르면 사용자가 매번 새로 읽어야 한다.
+ *
+ * 삭제만 위험 색으로 테두리를 바꾼다. 등록·수정까지 붉게 하면 경고에 둔감해진다.
+ */
+.sint {
+  border: 1.5px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sint.danger { border-color: var(--danger); }
+
+.sint-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.sint.danger .sint-head { color: var(--danger); }
+
+.sint-what {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.sint-detail {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 3px 10px;
+  font-size: 11.5px;
+  color: var(--fg-muted);
+  margin: 0;
+}
+
+.sint-detail dt { font-weight: 600; }
+.sint-detail dd { margin: 0; min-width: 0; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; overflow-wrap: anywhere; }
+
+.sint-warn { font-size: 11.5px; font-weight: 600; color: var(--warn); }
+.sint-note { font-size: 11px; color: var(--fg-muted); }
+.sint-all { align-self: flex-start; }
+
+/* 목록이 길어도 카드가 화면을 삼키지 않게 한다. 사이드패널은 세로도 넉넉하지 않다. */
+.sint-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 34vh;
+  overflow-y: auto;
+}
+
+.sint-item { border-top: 1px solid var(--border); padding-top: 6px; }
+.sint-item:first-child { border-top: 0; padding-top: 0; }
+
+.sint-item-main { display: flex; align-items: flex-start; gap: 7px; cursor: pointer; }
+.sint-item-main input { margin-top: 2px; flex: none; accent-color: var(--accent); }
+.sint.danger .sint-item-main input { accent-color: var(--danger); }
+.sint-item-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.sint-item-title { font-size: 12.5px; font-weight: 600; overflow-wrap: anywhere; }
+.sint-item-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 11px; color: var(--fg-muted); }
+
+.sint-change { display: flex; flex-direction: column; gap: 2px; font-size: 11px; }
+.sint-change-line { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+.sint-change-field { font-weight: 600; color: var(--fg-muted); }
+/* 지워지는 값에 취소선을 쓰지 않는다. 작은 글자에서 취소선은 글자를 읽기 어렵게만 한다. */
+.sint-change-before { color: var(--fg-muted); }
+.sint-change-after { font-weight: 600; color: var(--fg); }
+.sint-nochange { font-size: 11px; color: var(--fg-muted); }
+
+.sint-actions { display: flex; gap: 8px; }
+
+.sint-actions button {
+  flex: 1;
+  font-size: 12.5px;
+  font-weight: 700;
+  padding: 7px 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--fg);
+}
+
+.sint-actions button:disabled { color: var(--fg-muted); }
+.sint-actions .btn-allow.danger:not(:disabled) { border-color: var(--danger); color: var(--danger); }
+
 .btn-allow {
   background: var(--accent);
   border-color: var(--accent);

@@ -1,5 +1,6 @@
 import { sendToSW, type AppError, type AttachmentDownloadResult, type ExtractedPage } from '@/lib/messaging/protocol';
 import { downloadLink, escapeMarkdownText } from '@/lib/downloads/links';
+import { panelLink } from '@/lib/panel/links';
 import { cancelAutomation, enqueueAutomation, workTabLock, type AutomationJob } from '@/lib/automation/jobs';
 
 /** 서비스 워커 요청 한도(180초)보다 약간 짧게 둔다. 한 문서의 첨부를 모두 받는 시간이다. */
@@ -29,7 +30,7 @@ export async function downloadDocumentAttachments(options: {
   await queueAttachmentDownloads({ tabId, page, titles, origin: 'chat', signal,
     onFinished: async (job, index) => {
       progress(`${index + 1}/${titles.length}번째 문서 첨부 처리 완료 · ${job.label}`);
-      await report(formatAttachmentReport(job.label, { results: job.files, error: job.error }));
+      await report(formatAttachmentReport(job.label, { results: job.files, error: job.error, jobId: job.id }));
     } });
 }
 
@@ -84,14 +85,23 @@ export async function releaseWorkTab(tabId: number): Promise<void> {
   await sendToSW({ type: 'RELEASE_WORK_TAB', tabId, control: { id: '', deadline: 0 } }).catch(() => undefined);
 }
 
-/** 한 문서의 첨부 다운로드 결과를 답변 문구로 만든다. 요약과 함께 받을 때도 같은 형식을 쓴다. */
-export function formatAttachmentReport(label: string, outcome: { results?: AttachmentDownloadResult[]; error?: AppError }): string {
-  if (outcome.error) return `${label}\n첨부 다운로드 실패: ${outcome.error.message}${outcome.error.hint ? `\n${outcome.error.hint}` : ''}`;
+/**
+ * 한 문서의 첨부 다운로드 결과를 답변 문구로 만든다. 요약과 함께 받을 때도 같은 형식을 쓴다.
+ *
+ * ★ `jobId`를 주면 도구 탭의 그 작업으로 가는 길을 끝에 붙인다. 실행했다고 화면을 옮기지
+ *   않으므로(lib/panel/links.ts), 진행 과정을 보려는 사람에게는 길이 있어야 한다.
+ */
+export function formatAttachmentReport(
+  label: string,
+  outcome: { results?: AttachmentDownloadResult[]; error?: AppError; jobId?: string },
+): string {
+  const goto = outcome.jobId ? `\n\n[도구 탭에서 보기](${panelLink({ tab: 'automation', jobId: outcome.jobId })})` : '';
+  if (outcome.error) return `${label}\n첨부 다운로드 실패: ${outcome.error.message}${outcome.error.hint ? `\n${outcome.error.hint}` : ''}${goto}`;
   const results = outcome.results ?? [];
-  if (results.length === 0) return `${label}\n첨부 파일이 없습니다.`;
+  if (results.length === 0) return `${label}\n첨부 파일이 없습니다.${goto}`;
   const done = results.filter(result => result.status === 'complete').length;
   const guide = done ? ' 경로를 누르면 파일이 열리고, "폴더 열기"를 누르면 저장 위치가 탐색기로 열립니다.' : '';
-  return `${label}\n첨부 ${results.length}건 중 ${done}건을 내려받았습니다.${guide}\n${results.map(describeResult).join('\n')}`;
+  return `${label}\n첨부 ${results.length}건 중 ${done}건을 내려받았습니다.${guide}\n${results.map(describeResult).join('\n')}${goto}`;
 }
 
 /** 완료된 파일은 경로 링크(열기)와 폴더 열기 링크로, 나머지는 상태와 사유로 한 줄을 만든다. */

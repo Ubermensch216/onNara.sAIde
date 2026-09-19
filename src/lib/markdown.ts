@@ -7,6 +7,7 @@
 
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
+import { PANEL_LINK_URI_PATTERN } from '@/lib/panel/links';
 import type { HighlighterCore } from 'shiki/core';
 
 /* ── 하이라이터 ────────────────────────────────────────── */
@@ -109,6 +110,20 @@ export async function highlightCode(
 
 marked.setOptions({ gfm: true, breaks: true });
 
+/** 답변의 다운로드 파일 열기 링크(lib/downloads/links.ts). */
+const DOWNLOAD_LINK_URI_PATTERN = /#saide-download=(?:open|show):\d+$/.source;
+
+/**
+ * 링크에 허용하는 주소.
+ *
+ * ★ 조각은 정규식 리터럴의 `.source`로 가져온다. 문자열로 적으면 `\d`가 그냥 `d`가 되어
+ *   허용 목록이 조용히 헐거워진다 — 컴파일도 테스트도 통과하므로 눈치채기 어렵다.
+ */
+const ALLOWED_LINK_URI = new RegExp(
+  `^(?:https?:|mailto:|${DOWNLOAD_LINK_URI_PATTERN}|${PANEL_LINK_URI_PATTERN})`,
+  'i',
+);
+
 /**
  * 스트리밍 중에는 마크다운이 미완성 상태(닫히지 않은 ``` 등)로 들어온다.
  * marked는 이를 관대하게 처리하지만, 코드펜스가 열린 채 끝나면 나머지를
@@ -125,8 +140,9 @@ export function renderMarkdown(md: string): string {
     ],
     ALLOWED_ATTR: ['href', 'title', 'class', 'style'],
     // javascript:, data: 등 실행 가능한 스킴을 링크에서 제거한다.
-    // #saide-download= 조각 주소는 답변의 다운로드 파일 열기 링크다(lib/downloads/links.ts).
-    ALLOWED_URI_REGEXP: /^(?:https?:|mailto:|#saide-download=(?:open|show):\d+$)/i,
+    // 조각 주소 두 가지만 통과시킨다 — 답변의 다운로드 파일 열기(lib/downloads/links.ts)와
+    // 일정·도구 탭으로 건너뛰기(lib/panel/links.ts). 문법은 각 모듈이 정의하고 여기서는 붙이기만 한다.
+    ALLOWED_URI_REGEXP: ALLOWED_LINK_URI,
   });
 }
 

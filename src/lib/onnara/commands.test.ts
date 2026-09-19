@@ -9,10 +9,23 @@ const list = (selectedTitles: string[]) => ({
   selectedTitles,
 });
 
-it('슬래시 이름과 별칭은 서로 겹치지 않는다', () => {
+it('이름과 별칭은 서로 겹치지 않고, 모두 그 명령의 접두 문자로 시작한다', () => {
   const names = DOCUMENT_COMMANDS.flatMap(command => [command.slash, ...command.aliases]);
   expect(new Set(names).size).toBe(names.length);
-  expect(names.every(name => name.startsWith('/'))).toBe(true);
+  for (const command of DOCUMENT_COMMANDS) {
+    for (const name of [command.slash, ...command.aliases]) {
+      expect(name.startsWith(command.prefix)).toBe(true);
+    }
+  }
+});
+
+it('★ 결과가 다른 탭에 쌓이는 명령만 `@`다', () => {
+  // `/`는 답이 AI 창에 남는 명령, `@`는 주화면이 다른 탭인 명령이다. 이 구분이 흐려지면
+  // 사용자는 실행할 때마다 결과를 어디서 볼지 추측해야 한다.
+  const at = DOCUMENT_COMMANDS.filter(command => command.prefix === '@');
+  expect(at.map(command => command.id)).toEqual(['attachments']);
+  expect(at.every(command => command.opensTab)).toBe(true);
+  expect(DOCUMENT_COMMANDS.filter(command => command.prefix === '/').every(command => !command.opensTab)).toBe(true);
 });
 
 it('명령 대상은 체크한 문서이고, "전체"를 붙였을 때만 화면 전체다', () => {
@@ -36,4 +49,5 @@ it('모델 없이 동작하는 명령을 구분해 둔다 (Ollama가 꺼져 있�
   const offline = DOCUMENT_COMMANDS.filter(command => !command.usesModel).map(command => command.id);
   expect(offline).toEqual(['read', 'attachments', 'refresh']);
   expect(findDocumentCommand('summary')?.slash).toBe('/요약');
+  expect(findDocumentCommand('attachments')?.slash).toBe('@첨부');
 });

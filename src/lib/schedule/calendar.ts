@@ -110,6 +110,21 @@ export function visibleRange(cursorISO: string, mode: CalendarMode): { from: str
   return null;
 }
 
+/**
+ * 이 범위를 가장 잘 담는 보기.
+ *
+ * ★ `@일정` 조회가 일정 탭을 열 때 쓴다. 하루를 물었는데 월 격자로 던져 놓으면
+ *   사용자가 그 칸을 다시 찾아야 하고, 한 해를 물었는데 일 보기로 열면 아무것도 없다.
+ */
+export function modeForRange(from: string, to: string): CalendarMode {
+  if (from === to) return 'day';
+  const start = parseDateISO(from);
+  const end = parseDateISO(to);
+  if (!start || !end) return 'month';
+  const days = Math.round((end.getTime() - start.getTime()) / 86_400_000);
+  return days <= 6 ? 'week' : 'month';
+}
+
 /** 커서를 한 칸 옮긴다. 월 보기는 한 달, 주 보기는 한 주, 일 보기는 하루. */
 export function shiftCursor(cursorISO: string, mode: CalendarMode, delta: number): string {
   if (mode === 'month') return addMonths(cursorISO, delta);

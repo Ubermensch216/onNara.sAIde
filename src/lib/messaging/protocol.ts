@@ -40,6 +40,12 @@ export type ErrorCode =
   | 'HOST_PERMISSION_REQUIRED'
   /** 승인 카드에서 사용자가 거부. */
   | 'ACTION_DENIED'
+  /** 기억이 꺼진 채로 `/기억`을 쳤다. 설정에서 켜야 풀린다. */
+  | 'MEMORY_OFF'
+  /** `/기억`을 찾을 말 없이 쳤다. 실패가 아니라 입력이 덜 끝난 것이다. */
+  | 'MEMORY_QUERY_REQUIRED'
+  /** `@일정`을 할 말 없이 쳤다. 마찬가지로 입력이 덜 끝난 것이다. */
+  | 'SCHEDULE_INPUT_REQUIRED'
   | 'UNKNOWN';
 
 export interface AppError {

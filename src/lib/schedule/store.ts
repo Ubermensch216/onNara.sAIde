@@ -9,12 +9,35 @@
 
 import { create } from 'zustand';
 import { db } from '@/lib/storage/db';
+import type { CalendarMode } from './calendar';
 import { compareTasks, type NewScheduleTask, type ScheduleTask } from './task';
+
+/**
+ * 일정 탭이 열릴 때 맞출 자리.
+ *
+ * ★ **답변 안의 링크를 눌렀을 때에만** 채워진다. `@일정`을 실행했다고 저절로 옮기지
+ *   않는다 — 갈지 말지는 누르는 사람이 정한다(lib/panel/links.ts).
+ *
+ * ★ 탭만 바꾸고 이번 달 격자를 보여 주면 "5월 일정"의 답이 화면에 없다. 어디를 볼지도
+ *   함께 넘긴다. `taskId`가 있으면 그 항목의 기한에서 커서와 보기를 정하므로 나머지는 없어도 된다.
+ *
+ * ★ `at`은 같은 자리를 두 번 눌러도 화면이 반응하게 하는 일련번호다. 값이 같으면
+ *   useEffect가 돌지 않아 사용자가 손으로 옮겨 둔 커서가 되돌아오지 않는다.
+ */
+export interface ScheduleFocus {
+  /** 이 항목을 짚는다. 커서·보기는 화면이 그 항목에서 정하고, 잠깐 강조한다. */
+  taskId?: number;
+  cursor?: string;
+  mode?: CalendarMode;
+  at: number;
+}
 
 interface ScheduleState {
   tasks: ScheduleTask[];
   /** 한 번이라도 읽어 왔는가. 빈 목록과 "아직 못 읽음"을 화면이 구분해야 한다. */
   loaded: boolean;
+  /** 일정 탭이 아직 반영하지 않은 초점. 반영한 뒤 스스로 비운다. */
+  focus: ScheduleFocus | null;
 }
 
 /**
@@ -23,7 +46,22 @@ interface ScheduleState {
  * ★ 일정 탭과 AI 탭의 배지가 같은 목록을 본다. 두 곳이 따로 읽으면 등록 직후 한쪽만 바뀐다.
  *   모든 쓰기 함수가 끝에 refresh()를 부르므로 화면은 언제나 저장된 내용과 같다.
  */
-export const useSchedule = create<ScheduleState>(() => ({ tasks: [], loaded: false }));
+export const useSchedule = create<ScheduleState>(() => ({ tasks: [], loaded: false, focus: null }));
+
+/** 일정 탭을 이 날짜·보기로 열어 달라고 남긴다. 탭 전환 자체는 화면(App)이 한다. */
+export function focusSchedule(cursor: string, mode: CalendarMode): void {
+  useSchedule.setState({ focus: { cursor, mode, at: Date.now() } });
+}
+
+/** 이 항목을 짚어 달라고 남긴다. 어느 날짜·보기로 가야 하는지는 화면이 항목에서 읽는다. */
+export function focusScheduleTask(taskId: number): void {
+  useSchedule.setState({ focus: { taskId, at: Date.now() } });
+}
+
+/** 반영했다. 다음 지시가 올 때까지 비워 둔다. */
+export function clearScheduleFocus(): void {
+  if (useSchedule.getState().focus) useSchedule.setState({ focus: null });
+}
 
 export async function listTasks(): Promise<ScheduleTask[]> {
   return (await db.tasks.toArray()).sort(compareTasks);

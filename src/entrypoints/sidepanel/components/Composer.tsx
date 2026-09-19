@@ -10,7 +10,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useT } from '@/lib/i18n';
-import { matchSlash, namesOf, type SlashCommand } from '@/lib/prompts/presets';
+import { matchSlash, namesOf, resolveTyped, type SlashCommand } from '@/lib/prompts/presets';
 import { SlashMenu } from './SlashMenu';
 
 interface Props {
@@ -68,15 +68,11 @@ export function Composer({
     const t = value.trim();
     if (!t || streaming || disabled) return;
 
-    // 커맨드를 정확히 입력하고 Enter를 친 경우도 실행으로 본다. 별칭도 포함.
-    for (const c of commands) {
-      const hit = namesOf(c).find(
-        (n) => t.toLowerCase() === n.toLowerCase() || t.toLowerCase().startsWith(`${n.toLowerCase()} `),
-      );
-      if (hit) {
-        onSlash(c, t.slice(hit.length).trim());
-        return;
-      }
+    // 커맨드를 정확히 입력하고 Enter를 친 경우도 실행으로 본다. 별칭과 옛 접두 문자도 포함.
+    const found = resolveTyped(t, commands);
+    if (found) {
+      onSlash(found.cmd, found.rest);
+      return;
     }
     onSend(t);
   };

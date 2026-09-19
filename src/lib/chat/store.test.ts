@@ -75,7 +75,7 @@ it('연결된 탭도 현재 탭도 읽을 수 없으면 chrome:// 안내 대신 
     tabs: { get: vi.fn(async () => { throw new Error('No tab'); }), query: vi.fn(async () => [{ id: 3, url: 'edge://newtab/', active: true }]) },
   });
   await useChat.getState().openConversation((await storage.db.conversations.get(id))!);
-  await useChat.getState().runCommand('/첨부', 'attachments', '', DEFAULT_SETTINGS);
+  await useChat.getState().runCommand('@첨부', 'attachments', '', DEFAULT_SETTINGS);
   expect(sendMessage).not.toHaveBeenCalled();
   expect(useChat.getState().error).toMatchObject({ code: 'UNKNOWN', message: expect.stringContaining('탭을 찾을 수 없습니다') });
 });
