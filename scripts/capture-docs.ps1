@@ -25,10 +25,11 @@ New-Item -ItemType Directory -Force $screenshotRoot, $captureRoot | Out-Null
 $views = @(
   @('panel', '01-chat.png', '520,940'),
   @('approval', '02-approval.png', '520,940'),
+  @('schedule', '07-schedule.png', '520,940'),
+  @('automation', '06-automation.png', '520,940'),
   @('options', '03-settings.png', '1120,1000'),
   @('memory', '04-memory.png', '1120,1000'),
-  @('presets', '05-presets.png', '1120,1000'),
-  @('automation', '06-automation.png', '520,940')
+  @('presets', '05-presets.png', '1120,1000')
 )
 
 foreach ($view in $views) {

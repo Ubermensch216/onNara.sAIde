@@ -238,11 +238,109 @@ if (mode.startsWith('options') || mode === 'memory' || mode === 'presets') {
 } else {
   await import('@/entrypoints/sidepanel/style.css');
 
+  const sampleScheduleTasks = [
+    {
+      id: 1,
+      title: '시범사업 수요조사서 및 보안서약서 제출',
+      status: 'todo' as const,
+      dueDate: '2026-09-22',
+      due: { date: '2026-09-22', time: '18:00', text: '2026-09-22(화) 18:00까지', yearInferred: false },
+      evidence: '제출 서식: 붙임 2. 시범사업 수요조사서 및 보안서약서 각 1부 (2026-09-22까지)',
+      evidenceVerified: true,
+      deliverables: ['시범사업 수요조사서 1부', '보안서약서 1부'],
+      contact: '행정안전부 디지털정부혁신과 (044-205-0000)',
+      source: {
+        docTitle: '2026년도 인공지능 행정업무 시범사업 추진계획 알림',
+        docUrl: sampleTab.url,
+        conversationId: 1,
+      },
+      dedupeKey: '2026년도 인공지능 행정업무 시범사업 추진계획 알림::시범사업 수요조사서 및 보안서약서 제출',
+      createdAt: now - 86400000,
+      updatedAt: now - 86400000,
+    },
+    {
+      id: 2,
+      title: '온나라 AI 연계 지침 개정안 부서 검토의견 제출',
+      status: 'todo' as const,
+      dueDate: '2026-09-18',
+      due: { date: '2026-09-18', time: '18:00', text: '2026-09-18 18:00한', yearInferred: false },
+      evidence: '온나라 AI 연계 지침 검토의견 제출 (2026-09-18한)',
+      evidenceVerified: true,
+      contact: '행정안전부 정보화기반과',
+      source: {
+        docTitle: '온나라 연계 AI 어시스턴트 보안관리지침(안) 알림',
+        conversationId: 2,
+      },
+      dedupeKey: '온나라 연계 AI 어시스턴트 보안관리지침(안) 알림::온나라 AI 연계 지침 개정안 부서 검토의견 제출',
+      createdAt: now - 86400000 * 2,
+      updatedAt: now - 86400000,
+    },
+    {
+      id: 3,
+      title: '지자체 정보화예산 집행현황 3분기 제출',
+      status: 'todo' as const,
+      dueDate: '2026-09-25',
+      due: { date: '2026-09-25', time: '17:00', text: '2026-09-25 17:00한', yearInferred: false },
+      evidence: '각 지자체는 3분기 정보화예산 집행내역을 2026년 9월 25일까지 온나라 시스템으로 회신 바랍니다.',
+      evidenceVerified: true,
+      deliverables: ['3분기 정보화예산 집행현황 서식'],
+      contact: '행정안전부 지역정보화지원과 (044-205-1111)',
+      source: {
+        docTitle: '2026년도 지자체 정보화예산 편성 및 집행지침 알림',
+        conversationId: 3,
+      },
+      dedupeKey: '2026년도 지자체 정보화예산 편성 및 집행지침 알림::지자체 정보화예산 집행현황 3분기 제출',
+      createdAt: now - 43200000,
+      updatedAt: now - 43200000,
+    },
+    {
+      id: 4,
+      title: '공공부문 클라우드 네이티브 전환 2차 수요 피드백 회신',
+      status: 'todo' as const,
+      dueDate: '2026-09-15',
+      due: { date: '2026-09-15', text: '2026-09-15까지', yearInferred: false },
+      evidence: '수요조사 2차 피드백 9월 15일까지 제출 요망',
+      evidenceVerified: true,
+      source: {
+        docTitle: '공공부문 클라우드 네이티브 전환 2차 안내',
+        conversationId: 4,
+      },
+      dedupeKey: '공공부문 클라우드 네이티브 전환 2차 안내::공공부문 클라우드 네이티브 전환 2차 수요 피드백 회신',
+      createdAt: now - 86400000 * 6,
+      updatedAt: now - 86400000 * 3,
+    },
+    {
+      id: 5,
+      title: '인공지능 윤리 가이드라인 부서 의견 수렴',
+      status: 'todo' as const,
+      dueDate: '',
+      evidence: '가이드라인 개정안에 대해 의견이 있는 부서는 수시 제출',
+      evidenceVerified: false,
+      source: {
+        docTitle: '공공분야 AI 윤리 가이드라인 제정 의견수렴',
+        conversationId: 5,
+      },
+      dedupeKey: '공공분야 AI 윤리 가이드라인 제정 의견수렴::인공지능 윤리 가이드라인 부서 의견 수렴',
+      createdAt: now - 86400000,
+      updatedAt: now - 86400000,
+    },
+  ];
+
   if (mode === 'automation') {
     localStorage.setItem('saide.view', 'automation');
+  } else if (mode === 'schedule') {
+    localStorage.setItem('saide.view', 'schedule');
+    localStorage.setItem('saide.scheduleMode', 'month');
   } else {
     localStorage.setItem('saide.view', 'ai');
   }
+
+  const { db } = await import('@/lib/storage/db');
+  Object.defineProperty(db.table('tasks'), 'toArray', {
+    value: async () => sampleScheduleTasks,
+  });
+  const { useSchedule } = await import('@/lib/schedule/store');
+  useSchedule.setState({ tasks: sampleScheduleTasks, loaded: true });
 
   const { useChat } = await import('@/lib/chat/store');
   const { useAutomation } = await import('@/lib/automation/jobs');
@@ -301,12 +399,26 @@ if (mode.startsWith('options') || mode === 'memory' || mode === 'presets') {
 * 실무 부서의 공문서 신속 검토, 조치사항 도출 및 대용량 첨부 순차 다운로드 지원
 
 **2. 핵심 조치사항 (우리 과 할 일)**
-* **제출 기한**: \`2026-10-15(목) 18:00까지\` *(원문 확인)*
+* **제출 기한**: \`2026-09-22(화) 18:00까지\` *(원문 확인)*
 * **제출 서식**: 붙임 2. 시범사업 수요조사서 및 보안서약서 각 1부
 * **제출 방법**: 온나라 전자문서 회신 (수신: 디지털정부혁신과)
 
 **3. 문의 및 담당 부서**
 * 행정안전부 디지털정부혁신과 (044-205-0000)`,
+      taskCandidates: [
+        {
+          title: '시범사업 수요조사서 및 보안서약서 제출',
+          due: { date: '2026-09-22', time: '18:00', text: '2026-09-22(화) 18:00까지', yearInferred: false },
+          evidence: '제출 서식: 붙임 2. 시범사업 수요조사서 및 보안서약서 각 1부 (2026-09-22까지)',
+          evidenceVerified: true,
+          deliverables: ['시범사업 수요조사서 1부', '보안서약서 1부'],
+          contact: '행정안전부 디지털정부혁신과 (044-205-0000)',
+        },
+      ],
+      sourceDoc: {
+        title: '2026년도 인공지능 행정업무 시범사업 추진계획 알림',
+        url: sampleTab.url,
+      },
       createdAt: now + 1,
     },
   ];
