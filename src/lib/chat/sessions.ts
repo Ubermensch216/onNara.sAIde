@@ -6,7 +6,13 @@ import { sameDocument } from '@/lib/messaging/protocol';
 
 /** The panel displays one session; hidden sessions keep their own async work. */
 export function createChatSessions(makeSession: () => StoreApi<ChatState>) {
-  type Session = { tabId: number; url: string; store: StoreApi<ChatState>; ready: Promise<void> };
+  /**
+   * tabIds: 이 세션이 거쳐 온 탭들.
+   *
+   * ★ 문서 팝업을 따라가면 대상 탭이 바뀐다. 그때 원래 목록 탭을 잊으면,
+   *   목록으로 돌아왔을 때 같은 대화를 찾지 못해 빈 대화가 새로 열린다.
+   */
+  type Session = { tabIds: number[]; url: string; store: StoreApi<ChatState>; ready: Promise<void> };
   const sessions: Session[] = [];
   let active = makeSession();
   let unsubscribe = () => {};
@@ -42,6 +48,17 @@ export function createChatSessions(makeSession: () => StoreApi<ChatState>) {
   const actions = {
     openForTab: (...args: Parameters<ChatState['openForTab']>) => remember(openForTab(...args)),
     openConversation: (...args: Parameters<ChatState['openConversation']>) => remember(openConversation(...args)),
+    /**
+     * 문서 팝업으로 대상 탭만 옮긴다. 세션은 그대로 두되, 그 세션이 기억하는 탭도 함께 옮긴다 —
+     * 다시 목록 탭으로 돌아왔을 때 같은 세션을 찾을 수 있어야 한다.
+     */
+    followTab: async (tabId: number, url: string) => {
+      const session = sessions.find(item => item.store === active);
+      if (session && !session.tabIds.includes(tabId)) session.tabIds.push(tabId);
+      await active.getState().followTab(tabId, url);
+    },
+    /** 화면 변화는 지금 보고 있는 세션에만 적용한다. 숨은 세션은 다시 열릴 때 제 화면을 다시 읽는다. */
+    noteScreenChange: (frameId: number) => active.getState().noteScreenChange(frameId),
     attachPage: (...args: Parameters<ChatState['attachPage']>) => active.getState().attachPage(...args),
     attachScreenshot: (...args: Parameters<ChatState['attachScreenshot']>) => active.getState().attachScreenshot(...args),
     detachPage: () => active.getState().detachPage(),
@@ -78,7 +95,7 @@ export function createChatSessions(makeSession: () => StoreApi<ChatState>) {
 
   async function openForTab(tabId: number, url: string) {
     const request = ++selection;
-    const cached = sessions.find(s => s.tabId === tabId && sameDocument(s.url, url));
+    const cached = sessions.find(s => s.tabIds.includes(tabId) && sameDocument(s.url, url));
     const reusable = cached && await valid(cached);
     if (request !== selection) return;
     if (reusable) {
@@ -87,7 +104,7 @@ export function createChatSessions(makeSession: () => StoreApi<ChatState>) {
       return;
     }
     const store = makeSession();
-    const session = { tabId, url, store, ready: store.getState().openForTab(tabId, url) };
+    const session = { tabIds: [tabId], url, store, ready: store.getState().openForTab(tabId, url) };
     sessions.push(session);
     show(store);
     await session.ready;
@@ -106,7 +123,7 @@ export function createChatSessions(makeSession: () => StoreApi<ChatState>) {
     // A history selection also becomes the session restored for this document.
     const store = makeSession();
     store.setState({ currentUrl: conversation.originUrl });
-    const session = { tabId: conversation.tabId, url: conversation.originUrl, store,
+    const session = { tabIds: [conversation.tabId], url: conversation.originUrl, store,
       ready: store.getState().openConversation(conversation) };
     sessions.unshift(session);
     show(store);

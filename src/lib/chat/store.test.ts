@@ -813,3 +813,117 @@ it('문맥 경계는 저장돼 대화를 다시 열어도 유지된다', async (
   const context = generate.mock.calls.at(-1)![1].messages;
   expect(context.some(message => message.content === '첫 질문')).toBe(false);
 });
+
+/* ── 온나라 화면 전환과 동기화 (문서 팝업·프레임 교체) ── */
+
+/** 온나라 목록 탭은 문서를 열어도 탭 주소가 그대로다. 화면만 프레임 안에서 갈아끼워진다. */
+const onnaraPage = (text: string, extra: Record<string, unknown> = {}) => ({
+  url: 'https://onnara.test/main', title: '받은문서', text, charCount: text.length,
+  truncated: false, keptRatio: 1, estimatedTokens: 10, method: 'innerText' as const,
+  extractedAt: Date.now() - 1000, sourceFrameId: 5, ...extra,
+});
+
+it('탭 주소가 그대로여도 화면이 바뀌면 앞 문서 본문으로 답하지 않고 그 사실을 알린다', async () => {
+  const page = onnaraPage('문서 A의 본문');
+  vi.stubGlobal('chrome', { runtime: { sendMessage: vi.fn(async () => ({ type: 'PAGE_EXTRACTED', payload: page })) } });
+  const generate = vi.spyOn(stream, 'streamChat').mockImplementation(async (_endpoint, _request, handlers) => {
+    handlers.onToken?.('답변');
+    return null;
+  });
+
+  await useChat.getState().openForTab(1, page.url);
+  await useChat.getState().attachPage(1, DEFAULT_SETTINGS);
+  expect(useChat.getState().page!.text).toBe('문서 A의 본문');
+
+  // 사용자가 목록에서 다른 문서를 골라 본문 프레임(5)이 바뀌었다.
+  useChat.getState().noteScreenChange(5);
+  await useChat.getState().send('이 문서 요약해줘', DEFAULT_SETTINGS);
+
+  const context = generate.mock.calls.at(-1)![1].messages;
+  expect(context.some(message => message.content.includes('문서 A의 본문'))).toBe(false);
+  expect(useChat.getState().messages.at(-1)!.notice).toContain('페이지가 바뀌어');
+  expect(useChat.getState().page).toBeNull();
+});
+
+it('붙어 있는 본문과 무관한 프레임이 움직인 것만으로는 본문을 떼지 않는다', async () => {
+  const page = onnaraPage('문서 A의 본문');
+  vi.stubGlobal('chrome', { runtime: { sendMessage: vi.fn(async () => ({ type: 'PAGE_EXTRACTED', payload: page })) } });
+  const generate = vi.spyOn(stream, 'streamChat').mockImplementation(async (_endpoint, _request, handlers) => {
+    handlers.onToken?.('답변');
+    return null;
+  });
+
+  await useChat.getState().openForTab(1, page.url);
+  await useChat.getState().attachPage(1, DEFAULT_SETTINGS);
+  // 알림·메뉴처럼 본문과 상관없는 프레임(9)의 이동
+  useChat.getState().noteScreenChange(9);
+  await useChat.getState().send('이 문서 요약해줘', DEFAULT_SETTINGS);
+
+  expect(generate.mock.calls.at(-1)![1].messages.some(message => message.content.includes('문서 A의 본문'))).toBe(true);
+  expect(useChat.getState().page).not.toBeNull();
+});
+
+it('같은 주소에서 다른 문서를 읽으면 앞 문서 본문을 재사용하지 않는다', async () => {
+  let text = '문서 A의 본문';
+  vi.stubGlobal('chrome', { runtime: { sendMessage: vi.fn(async () => ({ type: 'PAGE_EXTRACTED', payload: onnaraPage(text) })) } });
+  await useChat.getState().openForTab(1, 'https://onnara.test/main');
+  await useChat.getState().attachPage(1, DEFAULT_SETTINGS);
+  text = '문서 B의 본문';
+  // force 없이 다시 붙여도(페이지 읽기 버튼) 주소가 같다는 이유로 앞 본문을 남기면 안 된다.
+  const page = await useChat.getState().attachPage(1, DEFAULT_SETTINGS);
+  expect(page!.text).toBe('문서 B의 본문');
+  expect(useChat.getState().page!.text).toBe('문서 B의 본문');
+});
+
+it('본문이 그대로면 다시 읽어도 접두사 캐시를 깨지 않고 확인 시각만 갱신한다', async () => {
+  const page = onnaraPage('문서 A의 본문');
+  vi.stubGlobal('chrome', { runtime: { sendMessage: vi.fn(async () => ({ type: 'PAGE_EXTRACTED', payload: { ...page, extractedAt: Date.now() } })) } });
+  await useChat.getState().openForTab(1, page.url);
+  const first = await useChat.getState().attachPage(1, DEFAULT_SETTINGS);
+  const again = await useChat.getState().attachPage(1, DEFAULT_SETTINGS);
+  expect(again!.text).toBe(first!.text);
+  expect(again!.extractedAt).toBeGreaterThanOrEqual(first!.extractedAt);
+});
+
+it('문서 팝업으로 옮겨도 대화와 문답은 그대로 두고 읽을 탭만 바뀐다', async () => {
+  const listUrl = 'https://onnara.test/list';
+  const sendMessage = vi.fn(async () => ({ type: 'PAGE_EXTRACTED', payload: onnaraPage('목록') }));
+  vi.stubGlobal('chrome', { runtime: { sendMessage } });
+  vi.spyOn(stream, 'streamChat').mockImplementation(async (_endpoint, _request, handlers) => {
+    handlers.onToken?.('답변');
+    return null;
+  });
+
+  await useChat.getState().openForTab(1, listUrl);
+  await useChat.getState().send('목록에 무엇이 있나요', DEFAULT_SETTINGS);
+  const conversationId = useChat.getState().conversation!.id;
+
+  // 사용자가 목록에서 문서를 팝업으로 열었다.
+  await useChat.getState().followTab(7, 'https://onnara.test/doc/123');
+  expect(useChat.getState().conversation!.id).toBe(conversationId);
+  expect(useChat.getState().messages.map(message => message.content)).toContain('목록에 무엇이 있나요');
+  expect(useChat.getState().conversation!.tabId).toBe(7);
+  expect((await storage.db.conversations.get(conversationId))!.tabId).toBe(7);
+
+  // 팝업을 닫고 목록으로 돌아와도 같은 대화가 이어진다.
+  await useChat.getState().openForTab(1, listUrl);
+  expect(useChat.getState().conversation!.id).toBe(conversationId);
+});
+
+it('문서 팝업으로 옮기면 목록 화면에서 붙인 본문은 떼어낸다', async () => {
+  const listUrl = 'https://onnara.test/list';
+  const page = { ...onnaraPage('받은문서 목록'), url: listUrl };
+  vi.stubGlobal('chrome', { runtime: { sendMessage: vi.fn(async () => ({ type: 'PAGE_EXTRACTED', payload: page })) } });
+  const generate = vi.spyOn(stream, 'streamChat').mockImplementation(async (_endpoint, _request, handlers) => {
+    handlers.onToken?.('답변');
+    return null;
+  });
+
+  await useChat.getState().openForTab(1, listUrl);
+  await useChat.getState().attachPage(1, DEFAULT_SETTINGS);
+  await useChat.getState().followTab(7, 'https://onnara.test/doc/123');
+  await useChat.getState().send('이 문서 요약해줘', DEFAULT_SETTINGS);
+
+  expect(generate.mock.calls.at(-1)![1].messages.some(message => message.content.includes('받은문서 목록'))).toBe(false);
+  expect(useChat.getState().messages.at(-1)!.notice).toContain('페이지가 바뀌어');
+});

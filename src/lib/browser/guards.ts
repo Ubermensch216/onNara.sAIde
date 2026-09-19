@@ -35,7 +35,8 @@ export function trustedPanel(sender: chrome.runtime.MessageSender): boolean {
 export function validPanelRequest(v: unknown): v is PanelToSW {
   if (!record(v)) return false;
   if (v.type === 'CANCEL_REQUEST') return text(v.requestId, 100);
-  if (v.type === 'GET_ACTIVE_TAB' || v.type === 'LIST_TABS') return true;
+  if (v.type === 'GET_ACTIVE_TAB') return v.windowId === undefined || (Number.isInteger(v.windowId) && (v.windowId as number) >= 0);
+  if (v.type === 'LIST_TABS') return true;
   if (!Number.isInteger(v.tabId) || (v.tabId as number) < 0 || !validControl(v.control)) return false;
   if (v.type === 'CAPTURE_SCREENSHOT') return true;
   if (v.type === 'RELEASE_WORK_TAB') return true;

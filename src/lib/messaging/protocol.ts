@@ -171,7 +171,7 @@ export type PanelToSW = (
   | { type: 'CAPTURE_SCREENSHOT'; tabId: number }
   | { type: 'EXEC_ACTION'; tabId: number; action: PageAction }
   | { type: 'LIST_TABS' }
-  | { type: 'GET_ACTIVE_TAB' }
+  | { type: 'GET_ACTIVE_TAB'; windowId?: number }
   | { type: 'PREPARE_ACTION'; tabId: number; action: PageAction }
   | { type: 'CANCEL_REQUEST'; requestId: string }
 ) & { control?: RequestControl };
@@ -194,6 +194,16 @@ export interface TabSummary {
   url: string;
   title: string;
   active: boolean;
+  /**
+   * 이 탭이 속한 창.
+   *
+   * ★ 온나라 문서는 새 창 팝업으로 열린다. 창 구분이 없으면 패널이 다른 창의
+   *   팝업까지 따라가 대화를 갈아끼운다 — 사용자가 보는 화면은 그대로인데
+   *   패널만 빈 대화로 바뀌는 증상이 여기서 나온다.
+   */
+  windowId?: number;
+  /** 이 탭을 띄운 탭. 문서 팝업이면 목록 탭이 들어온다. 대화를 유지한 채 대상만 옮기는 근거다. */
+  openedFrom?: number;
 }
 
 export type SWToPanel =
@@ -206,6 +216,15 @@ export type SWToPanel =
   | { type: 'TABS'; tabs: TabSummary[] }
   | { type: 'ACTIVE_TAB'; tab: TabSummary | null }
   | { type: 'TAB_CHANGED'; tab: TabSummary }
+  /** 패널이 붙들고 있던 탭이 닫혔다. 문서 팝업을 닫은 경우가 대부분이다. */
+  | { type: 'TAB_CLOSED'; tabId: number }
+  /**
+   * 같은 탭 안에서 화면(프레임)이 바뀌었다.
+   *
+   * ★ 온나라는 목록에서 문서를 골라도 탭 주소가 그대로인 경우가 많다.
+   *   주소 비교만으로는 알 수 없어, 붙여 둔 본문이 다른 문서인 채로 답이 만들어진다.
+   */
+  | { type: 'SCREEN_CHANGED'; tabId: number; frameId: number; url: string }
   | { type: 'CONTEXT_MENU'; preset: string; selectionText: string; tab: TabSummary }
   | { type: 'ERROR'; error: AppError };
 

@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { chooseBestExtraction, handlePanelMessage, mergeDetailFrames, readDocumentInBackground, releaseKeptWorkTab } from '@/entrypoints/background';
+import { chooseBestExtraction, handlePanelMessage, mergeDetailFrames, notifyScreenChange, readDocumentInBackground, releaseKeptWorkTab, toSummary } from '@/entrypoints/background';
+import { forgetPanelSpawn, notePanelSpawn, rememberPanelTab, resetPanelSpawns } from '@/lib/browser/panel-sync';
 import { noteNavigationTarget, noteTopCommit, workTabs } from '@/lib/browser/work-tabs';
 
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
@@ -580,4 +581,43 @@ it('상세 본문 추출 결과가 권한 불가 안내 문구이면 60초 대�
     },
   });
   vi.useRealTimers();
+});
+
+it('사용자 탭의 프레임 이동은 패널에 알리고, 백그라운드 작업 탭의 이동은 알리지 않는다', () => {
+  const sendMessage = vi.fn(async () => undefined);
+  vi.stubGlobal('chrome', { runtime: { sendMessage } });
+  workTabs.clear();
+
+  notifyScreenChange({ tabId: 3, frameId: 5, url: 'https://onnara.test/doc/123' });
+  expect(sendMessage).toHaveBeenCalledWith({ type: 'SCREEN_CHANGED', tabId: 3, frameId: 5, url: 'https://onnara.test/doc/123' });
+
+  sendMessage.mockClear();
+  workTabs.add(9);
+  notifyScreenChange({ tabId: 9, frameId: 0, url: 'https://onnara.test/work' });
+  expect(sendMessage).not.toHaveBeenCalled();
+  workTabs.clear();
+  resetPanelSpawns();
+});
+
+it('패널이 보고 있지 않은 탭의 프레임 이동으로는 패널을 깨우지 않는다', () => {
+  const sendMessage = vi.fn(async () => undefined);
+  vi.stubGlobal('chrome', { runtime: { sendMessage } });
+  resetPanelSpawns();
+  rememberPanelTab({ tabId: 1, windowId: 10 });
+
+  notifyScreenChange({ tabId: 55, frameId: 3, url: 'https://ads.test/frame' });
+  expect(sendMessage).not.toHaveBeenCalled();
+
+  notifyScreenChange({ tabId: 1, frameId: 3, url: 'https://onnara.test/doc/123' });
+  expect(sendMessage).toHaveBeenCalledTimes(1);
+  resetPanelSpawns();
+});
+
+it('탭 요약에는 창과 팝업 출처가 실린다. 새 창 팝업은 webNavigation 기록에서 출처를 찾는다', () => {
+  notePanelSpawn({ sourceTabId: 1, tabId: 7 });
+  expect(toSummary({ id: 7, url: 'https://onnara.test/doc/123', title: '문서', active: true, windowId: 42 } as chrome.tabs.Tab))
+    .toMatchObject({ tabId: 7, windowId: 42, openedFrom: 1 });
+  expect(toSummary({ id: 1, url: 'https://onnara.test/list', title: '목록', active: true, windowId: 10 } as chrome.tabs.Tab).openedFrom)
+    .toBeUndefined();
+  forgetPanelSpawn(7);
 });

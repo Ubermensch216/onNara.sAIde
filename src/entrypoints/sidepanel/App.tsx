@@ -18,7 +18,8 @@ import {
 } from '@/lib/memory/recall';
 import { useChat } from '@/lib/chat/store';
 import { listMessages, pruneEmptyConversations, type Conversation } from '@/lib/storage/db';
-import { isRestrictedUrl, sameDocument, sendToSW } from '@/lib/messaging/protocol';
+import { isRestrictedUrl, sendToSW } from '@/lib/messaging/protocol';
+import { decideTabChange } from '@/lib/browser/panel-sync';
 import type { SWToPanel, TabSummary } from '@/lib/messaging/protocol';
 import {
   builtinCommands,
@@ -171,58 +172,79 @@ export default function App() {
 
   // 지금 패널이 붙들고 있는 탭. 중복 이벤트를 걸러내는 기준이다.
   const currentTab = useRef<TabSummary | null>(null);
+  /** 이 패널이 들어 있는 창. 다른 창에서 벌어지는 탭 전환은 이 패널의 일이 아니다. */
+  const panelWindowId = useRef<number | null>(null);
+  const aliveRef = useRef(true);
 
-  /** 자동화 탭이 다시 찾은 탭으로 패널 전체를 맞춘다. 같은 문서면 세션을 갈아끼우지 않는다. */
-  const adoptTab = (t: TabSummary) => {
-    const prev = currentTab.current;
+  /**
+   * 탭 이벤트 하나를 처리한다.
+   *
+   * ★ 세 가지뿐이다 — 무시 / 따라가기 / 갈아끼우기.
+   *   ignore: 다른 창의 탭 전환. 온나라 문서 팝업이 다른 창에 떠도 이 패널은 흔들리지 않는다.
+   *   follow: 같은 작업의 연장(문서 팝업, 같은 문서 재방문). 대화는 그대로 두고 대상 탭만 옮긴다.
+   *   switch: 다른 문서. 그 문서의 대화로 갈아끼운다. 숨겨진 세션의 작업은 계속된다.
+   */
+  const routeTab = useCallback((t: TabSummary | null) => {
+    if (!aliveRef.current || !t) return;
+    const decision = decideTabChange({ windowId: panelWindowId.current, tab: currentTab.current }, t);
+    if (decision === 'ignore') return;
+    const previous = currentTab.current;
     currentTab.current = t;
     setTab(t);
-    if (!(prev && prev.tabId === t.tabId && sameDocument(prev.url, t.url))) void chat.openForTab(t.tabId, t.url);
-  };
+    if (decision === 'follow') {
+      if (previous && previous.tabId !== t.tabId) void chat.followTab(t.tabId, t.url);
+      return;
+    }
+    void chat.openForTab(t.tabId, t.url);
+    // chat은 zustand 스토어라 참조가 안정적이다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /** 자동화 탭이 다시 찾은 탭으로 패널 전체를 맞춘다. 같은 문서면 세션을 갈아끼우지 않는다. */
+  const adoptTab = routeTab;
 
   useEffect(() => {
-    let alive = true;
+    aliveRef.current = true;
 
-    /**
-     * ★ 같은 문서로 다시 들어오면 세션을 갈아끼우지 않는다.
-     *
-     *   onUpdated / onActivated는 새로고침이나 탭 왕복만으로도 여러 번 온다.
-     *   그때마다 openForTab을 부르면 붙여 둔 페이지가 떨어져, 사용자는
-     *   "방금 붙였는데 왜 없어졌지" 상태가 된다.
-     *   문서가 바뀌면 해당 세션을 표시하되, 숨겨진 세션의 작업은 계속된다.
-     */
-    const open = (t: TabSummary | null) => {
-      if (!alive || !t || t.tabId < 0) return;
-
-      const prev = currentTab.current;
-      const same = prev && prev.tabId === t.tabId && sameDocument(prev.url, t.url);
-
-      currentTab.current = t;
-      setTab(t);
-      if (same) return;
-
-      void chat.openForTab(t.tabId, t.url);
+    /** 붙들던 탭이 사라졌을 때, 이 패널이 있는 창에서 지금 보이는 탭으로 되돌아온다. */
+    const resync = async () => {
+      const windowId = panelWindowId.current ?? undefined;
+      const res = await sendToSW({ type: 'GET_ACTIVE_TAB', ...(windowId === undefined ? {} : { windowId }) })
+        .catch(() => null);
+      if (res?.type !== 'ACTIVE_TAB') return;
+      // 창을 알아내지 못했더라도 지금 보고 있는 탭의 창이 곧 이 패널의 창이다.
+      if (panelWindowId.current === null && typeof res.tab?.windowId === 'number') panelWindowId.current = res.tab.windowId;
+      routeTab(res.tab);
     };
 
-    sendToSW({ type: 'GET_ACTIVE_TAB' }).then((res) => {
-      if (res.type === 'ACTIVE_TAB') open(res.tab);
-    });
+    void (async () => {
+      // 창을 먼저 확인한다. 이 값이 없으면 다른 창의 팝업까지 따라가 대화가 뒤바뀐다.
+      const id = await chrome.windows?.getCurrent?.().then(w => w?.id ?? null).catch(() => null);
+      if (!aliveRef.current) return;
+      if (typeof id === 'number') panelWindowId.current = id;
+      await resync();
+    })();
 
     const listener = (msg: SWToPanel) => {
       if (msg.type === 'TAB_CHANGED') {
-        open(msg.tab);
+        routeTab(msg.tab);
+      } else if (msg.type === 'TAB_CLOSED') {
+        if (currentTab.current?.tabId === msg.tabId) void resync();
+      } else if (msg.type === 'SCREEN_CHANGED') {
+        // 탭 주소가 그대로여도 화면은 바뀐다. 붙어 있는 본문이 지난 화면의 것이면 떼어낸다.
+        if (currentTab.current?.tabId === msg.tabId) chat.noteScreenChange(msg.frameId);
       } else if (msg.type === 'CONTEXT_MENU') {
         handleContextMenu(msg.preset, msg.selectionText);
       }
     };
     chrome.runtime.onMessage.addListener(listener);
     return () => {
-      alive = false;
+      aliveRef.current = false;
       chrome.runtime.onMessage.removeListener(listener);
     };
     // chat은 zustand 스토어라 참조가 안정적이다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [routeTab]);
 
   /**
    * 컨텍스트 메뉴에서 온 선택 텍스트 처리.

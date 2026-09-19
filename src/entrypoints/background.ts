@@ -1,5 +1,6 @@
 import { assertCurrent, captureTab, trustedPanel, validPanelRequest } from '@/lib/browser/guards';
 import { committedSince, duplicateWorkTab, forgetWorkTab, panelTab, registerWorkTabListeners, tabsSpawnedBy, workTabs } from '@/lib/browser/work-tabs';
+import { forgetPanelSpawn, isReportedPanelTab, notePanelSpawn, panelOpener, rememberPanelTab } from '@/lib/browser/panel-sync';
 import type { AppError, AttachmentDownloadResult, ExtractedPage, RequestControl, SWToContent } from '@/lib/messaging/protocol';
 import { isHtmlAttachmentName } from '@/lib/onnara/attachments';
 import { sameDocumentTitle } from '@/lib/onnara/document-list';
@@ -51,6 +52,8 @@ export default defineBackground(() => {
 
   // 작업 탭이 새 창으로 띄운 문서 팝업을 추적한다. 서비스 워커가 깨어날 때마다 최상위에서 등록해야 한다.
   registerWorkTabListeners();
+  // 사용자가 직접 연 문서 팝업도 같은 방식으로 출처를 기록해 둔다(새 창 팝업은 openerTabId가 비어 있다).
+  registerPanelSyncListeners();
 
   // 기한 알림(S07). 패널이 닫혀 있어도 알람이 워커를 깨워 확인한다.
   registerTaskAlerts();
@@ -94,6 +97,23 @@ export default defineBackground(() => {
       const visible = await panelTab(_tabId);
       if (visible?.active) pushToPanel({ type: 'TAB_CHANGED', tab: toSummary(visible) });
     }
+  });
+
+  /**
+   * ★ 탭 주소가 그대로여도 화면은 바뀐다.
+   *
+   *   온나라는 목록에서 문서를 고르면 iframe만 갈아끼우거나 같은 주소로 다시
+   *   POST한다. onUpdated의 url은 오지 않고 와도 값이 같아, 패널은 앞 문서 본문을
+   *   그대로 붙들고 답을 만든다 — 다른 문서를 근거로 한 그럴듯한 오답이다.
+   *   프레임 단위 이동을 그대로 알려, 붙어 있던 본문을 떼어낼 수 있게 한다.
+   */
+  chrome.webNavigation.onCommitted.addListener(details => notifyScreenChange(details));
+  chrome.webNavigation.onHistoryStateUpdated?.addListener(details => notifyScreenChange(details));
+
+  // 팝업을 닫으면 패널이 붙들던 탭이 사라진다. 알려 주지 않으면 없는 탭을 계속 읽으려 한다.
+  chrome.tabs.onRemoved.addListener(tabId => {
+    forgetPanelSpawn(tabId);
+    pushToPanel({ type: 'TAB_CLOSED', tabId });
   });
 
   chrome.contextMenus.onClicked.addListener(async (info, tab) => {
@@ -163,8 +183,11 @@ export async function handlePanelMessage(msg: PanelToSW): Promise<SWToPanel> {
       return downloadAttachmentsInTab(msg.tabId, control);
     }
     case 'GET_ACTIVE_TAB': {
-      const tab = await activeTab();
-      return { type: 'ACTIVE_TAB', tab: tab ? toSummary(tab) : null };
+      const tab = await activeTab(msg.windowId);
+      const summary = tab ? toSummary(tab) : null;
+      // 패널이 보고 있는 탭을 기억해 둔다. 화면 변화 알림을 그 탭에만 보낸다.
+      if (summary) rememberPanelTab(summary);
+      return { type: 'ACTIVE_TAB', tab: summary };
     }
 
     case 'LIST_TABS': {
@@ -1227,21 +1250,49 @@ function accessError(error: unknown): AppError {
 
 /* ── 유틸 ──────────────────────────────────────────────── */
 
-async function activeTab(): Promise<chrome.tabs.Tab | undefined> {
+/**
+ * 패널이 보고 있는 창의 활성 탭.
+ *
+ * ★ 워커에는 창이 없다. currentWindow는 "마지막으로 초점을 받은 창"이라,
+ *   문서 팝업이 떠 있으면 패널이 있는 창이 아니라 그 팝업을 돌려준다.
+ *   패널이 알려 준 창을 우선한다.
+ */
+async function activeTab(windowId?: number): Promise<chrome.tabs.Tab | undefined> {
+  if (typeof windowId === 'number') {
+    const [tab] = await chrome.tabs.query({ active: true, windowId }).catch(() => [] as chrome.tabs.Tab[]);
+    if (tab) return tab;
+  }
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   return tab;
 }
 
-function toSummary(tab: chrome.tabs.Tab): TabSummary {
+function registerPanelSyncListeners(): void {
+  chrome.webNavigation.onCreatedNavigationTarget.addListener(details => {
+    notePanelSpawn({ sourceTabId: details.sourceTabId, tabId: details.tabId });
+  });
+}
+
+/** 작업 탭(백그라운드 읽기)의 이동은 패널과 무관하다. 사용자가 보는 탭의 화면 변화만 알린다. */
+export function notifyScreenChange(details: { tabId: number; frameId: number; url?: string }): void {
+  if (workTabs.has(details.tabId) || !isReportedPanelTab(details.tabId)) return;
+  pushToPanel({ type: 'SCREEN_CHANGED', tabId: details.tabId, frameId: details.frameId, url: details.url ?? '' });
+}
+
+export function toSummary(tab: chrome.tabs.Tab): TabSummary {
   return {
     tabId: tab.id ?? -1,
     url: tab.url ?? '',
     title: tab.title ?? '',
     active: tab.active ?? false,
+    ...(typeof tab.windowId === 'number' ? { windowId: tab.windowId } : {}),
+    ...(typeof (tab.openerTabId ?? panelOpener(tab.id)) === 'number'
+      ? { openedFrom: tab.openerTabId ?? panelOpener(tab.id)! }
+      : {}),
   };
 }
 
 /** 패널이 닫혀 있으면 수신자가 없어 예외가 난다. 정상 상황이므로 삼킨다. */
 function pushToPanel(msg: SWToPanel) {
+  if (msg.type === 'TAB_CHANGED') rememberPanelTab(msg.tab);
   chrome.runtime.sendMessage(msg).catch(() => undefined);
 }

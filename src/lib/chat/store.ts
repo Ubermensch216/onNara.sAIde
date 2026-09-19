@@ -94,6 +94,16 @@ export interface ChatState {
    * 붙어 있는 첨부물이 아직 이 페이지의 것인지 대조하는 데 쓴다.
    */
   currentUrl: string;
+  /**
+   * 같은 탭 안에서 화면이 바뀐 시각(ms).
+   *
+   * ★ 주소 비교만으로는 온나라의 문서 전환을 알 수 없다. 목록에서 다른 문서를 열어도
+   *   탭 주소가 그대로이기 때문이다. 프레임 이동 시각을 붙어 있는 본문의 추출 시각과
+   *   견줘, 지난 화면의 본문으로 답이 만들어지는 것을 막는다.
+   */
+  screenChangedAt: number;
+  /** 붙어 있는 화면 캡처를 찍은 시각(ms). 화면이 바뀌면 캡처도 함께 떼어내기 위한 기준이다. */
+  screenshotAt: number;
 
   streaming: boolean;
   startedAt: number | null;
@@ -130,6 +140,10 @@ export interface ChatState {
   pendingApproval: { request: ApprovalRequest; resolve: (ok: boolean) => void } | null;
 
   openForTab: (tabId: number, url: string) => Promise<void>;
+  /** 같은 작업의 다른 탭(문서 팝업)으로 대상만 옮긴다. 대화와 메시지는 그대로 둔다. */
+  followTab: (tabId: number, url: string) => Promise<void>;
+  /** 탭 안에서 화면이 바뀌었음을 기록한다. 붙어 있는 본문이 그 화면의 것이면 떼어낸다. */
+  noteScreenChange: (frameId: number) => void;
   openConversation: (conversation: Conversation) => Promise<void>;
   attachPage: (tabId: number, settings: Settings, force?: boolean) => Promise<ExtractedPage | null>;
   attachScreenshot: (tabId: number) => Promise<string | null>;
@@ -190,6 +204,8 @@ export function createChatSession() {
     screenshot: null,
     extracting: false,
     currentUrl: '',
+    screenChangedAt: 0,
+    screenshotAt: 0,
     streaming: false,
     startedAt: null,
     expectedPrefillSec: 0,
@@ -206,7 +222,7 @@ export function createChatSession() {
       get().stop();
       const epoch = ++epochs.view;
       ++epochs.attachment;
-      set({ loading: true, extracting: false, conversation: null, pending: null, messages: [], page: null, screenshot: null, currentUrl: url, error: null, lastContext: null, agentSteps: [] });
+      set({ loading: true, extracting: false, conversation: null, pending: null, messages: [], page: null, screenshot: null, currentUrl: url, screenChangedAt: 0, error: null, lastContext: null, agentSteps: [] });
       await during((async () => {
         try {
           const conversation = await findForTab(tabId, url);
@@ -220,13 +236,49 @@ export function createChatSession() {
       get().stop();
       const epoch = ++epochs.view;
       ++epochs.attachment;
-      set({ loading: true, extracting: false, page: null, screenshot: null, messages: [], pending: null, conversation: null, agentSteps: [], lastContext: null, error: null });
+      set({ loading: true, extracting: false, page: null, screenshot: null, messages: [], pending: null, conversation: null, agentSteps: [], lastContext: null, screenChangedAt: 0, error: null });
       await during((async () => {
         try {
           const messages = await listMessages(conversation.id);
           if (epoch === epochs.view) set({ conversation, messages, loading: false, contextFrom: conversation.contextFrom ?? 0 });
         } catch (error) { if (epoch === epochs.view) set({ loading: false, error: toAppError(null, error) }); }
       })());
+    },
+
+    /**
+     * 문서 팝업처럼 같은 작업이 다른 탭으로 이어질 때 대상만 옮긴다.
+     *
+     * ★ 대화를 갈아끼우지 않는다. 목록에서 문서를 하나 열었을 뿐인데 화면이 빈 대화로
+     *   바뀌면, 사용자는 방금까지의 문답과 붙여 둔 본문을 잃는다.
+     *   대신 읽고 쓸 대상 탭을 옮기고, 화면이 달라졌으므로 지난 본문은 떼어낸다.
+     */
+    async followTab(tabId, url) {
+      const state = get();
+      if (state.currentUrl === url && state.conversation?.tabId === tabId) return;
+      const moved = Boolean(state.currentUrl) && !sameDocument(state.currentUrl, url);
+      set({
+        currentUrl: url,
+        ...(moved ? { screenChangedAt: Date.now() } : {}),
+        ...(state.pending ? { pending: { ...state.pending, tabId } } : {}),
+      });
+      const conversation = state.conversation;
+      if (!conversation || conversation.tabId === tabId) return;
+      set({ conversation: { ...conversation, tabId } });
+      await db.conversations.update(conversation.id, { tabId }).catch(() => undefined);
+    },
+
+    /**
+     * 탭 주소는 그대로인데 화면만 바뀌는 경우(온나라 목록 → 문서)를 잡는다.
+     *
+     * ★ 관계없는 프레임(알림 폴링 등)까지 받아 본문을 떼면 사용자는 붙여 둔 문서를
+     *   자꾸 잃는다. 붙어 있는 본문을 뽑은 프레임과 최상위 프레임의 이동만 센다.
+     */
+    noteScreenChange(frameId) {
+      const page = get().page;
+      if (!page && !get().screenshot) return;
+      const attachedFrame = page?.sourceFrameId ?? 0;
+      if (frameId !== 0 && page && frameId !== attachedFrame) return;
+      set({ screenChangedAt: Date.now() });
     },
 
     /**
@@ -259,8 +311,18 @@ export function createChatSession() {
         if (res.type !== 'PAGE_EXTRACTED') return null;
 
         const page = res.payload;
-        // 같은 URL이면 기존 것을 유지해 접두사를 보존한다.
-        if (!force && current && current.url === page.url) return current;
+        /**
+         * 같은 URL이면 기존 것을 유지해 접두사를 보존한다.
+         *
+         * ★ 단, 본문까지 같을 때만이다. 온나라는 같은 주소에서 문서를 갈아끼우므로,
+         *   주소만 보고 재사용하면 앞 문서 본문이 그대로 남는다.
+         */
+        if (!force && current && current.url === page.url && current.text === page.text) {
+          // 내용이 같으니 접두사는 그대로 두고, 이 화면을 방금 확인했다는 사실만 갱신한다.
+          const confirmed = { ...current, extractedAt: page.extractedAt };
+          set({ page: confirmed, currentUrl: page.url });
+          return confirmed;
+        }
 
         set({ page, currentUrl: page.url, lastContext: null });
         return page;
@@ -295,7 +357,7 @@ export function createChatSession() {
 
         // Ollama의 images 필드는 순수 base64를 받는다. data: 프리픽스를 떼어낸다.
         const base64 = res.dataUrl.replace(/^data:image\/\w+;base64,/, '');
-        set({ screenshot: base64, lastContext: null });
+        set({ screenshot: base64, screenshotAt: Date.now(), lastContext: null });
         return base64;
       } catch (error) {
         if (epoch === epochs.attachment) set({ error: toAppError(null, error) });
@@ -888,7 +950,12 @@ function freshAttachment(
 ): { page: ExtractedPage | null; screenshot: string | null; stale: boolean } {
   const currentUrl = get().currentUrl;
   const rawPage = get().page;
-  const stale = Boolean(rawPage && currentUrl && !sameDocument(rawPage.url, currentUrl));
+  const movedAway = Boolean(rawPage && currentUrl && !sameDocument(rawPage.url, currentUrl));
+  // 주소가 같아도 화면이 바뀌었으면 지난 본문이다(온나라 목록 → 문서).
+  const changedAt = get().screenChangedAt;
+  const screenChanged = Boolean(rawPage && changedAt > rawPage.extractedAt) ||
+    Boolean(get().screenshot && changedAt > get().screenshotAt);
+  const stale = movedAway || screenChanged;
 
   if (stale) set({ page: null, screenshot: null, lastContext: null });
 
