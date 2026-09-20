@@ -1,4 +1,5 @@
-import { sendToSW, type AppError, type AttachmentDownloadResult, type ExtractedPage } from '@/lib/messaging/protocol';
+import { sendToSW, type AppError, type AttachmentDownloadResult, type AttachmentNaming, type ExtractedPage } from '@/lib/messaging/protocol';
+import { loadSettings } from '@/lib/storage/settings';
 import { downloadLink, escapeMarkdownText } from '@/lib/downloads/links';
 import { panelLink } from '@/lib/panel/links';
 import { cancelAutomation, enqueueAutomation, workTabLock, type AutomationJob } from '@/lib/automation/jobs';
@@ -45,14 +46,16 @@ export async function queueAttachmentDownloads(options: {
 }): Promise<AutomationJob[]> {
   const { tabId, page, titles, origin, signal, onFinished } = options;
   const keepWorkTab = titles.filter(Boolean).length > 1;
+  const naming = await namingPlans(page, titles);
   // 앞 문서의 파일이 아직 내려받는 중이면 동시 다운로드를 피하려고 뒤 문서는 실행하지 않는다.
   let stalled = false;
-  const pending = titles.map(title => enqueueAutomation({
+  const pending = titles.map((title, index) => enqueueAutomation({
     kind: 'download-attachments', label: title ?? page.title, origin,
     run: async jobSignal => {
       if (stalled) return { error: { code: 'UNKNOWN', message: '앞 문서의 다운로드가 아직 끝나지 않아 실행하지 않았습니다. 다운로드가 끝난 뒤 다시 요청하세요.' } };
       const response = await sendToSW({
         type: 'DOWNLOAD_ATTACHMENTS', tabId, ...(title ? { title, keepWorkTab } : {}),
+        ...(naming[index] ? { naming: naming[index]! } : {}),
         control: { id: '', deadline: 0, expectedUrl: page.url },
       }, jobSignal, DOCUMENT_DOWNLOAD_TIMEOUT_MS);
       if (response.type === 'ERROR') return { error: response.error };
@@ -78,6 +81,28 @@ export async function queueAttachmentDownloads(options: {
     signal?.removeEventListener('abort', cancel);
     if (keepWorkTab) await workTabLock(() => releaseWorkTab(tabId));
   }
+}
+
+/**
+ * 문서마다 파일명 정규화 계획을 만든다 (B5).
+ *
+ * ★ 보고일자는 목록 행에서 읽는다. 상세 화면 한 건(title이 없는 경우)은 화면 제목만 쓴다.
+ * ★ 설정이 'browser'면 아무 계획도 만들지 않는다 — 그때는 브라우저가 정한 이름 그대로다.
+ */
+async function namingPlans(page: ExtractedPage, titles: Array<string | undefined>): Promise<Array<AttachmentNaming | null>> {
+  const settings = await loadSettings().catch(() => null);
+  if (settings?.attachmentNaming !== 'normalized') return titles.map(() => null);
+  const rows = page.structuredData?.rows ?? [];
+  return titles.map(title => {
+    const docTitle = title ?? page.title;
+    if (!docTitle.trim()) return null;
+    const reportDate = title ? rows.find(row => row.title === title)?.reportDate : undefined;
+    return {
+      docTitle,
+      ...(reportDate ? { reportDate } : {}),
+      ...(settings.attachmentFolder ? { folder: true } : {}),
+    };
+  });
 }
 
 /** 남겨 둔 작업 탭을 닫는다. 중단·오류 뒤에도 탭이 남지 않게 요청 취소 신호와 무관하게 보낸다. */

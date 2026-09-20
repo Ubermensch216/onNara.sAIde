@@ -1361,3 +1361,141 @@
 }
 
 .cal-undated:hover { color: var(--accent); border-color: var(--accent); }
+
+/* ── 분석 결과 캐시 (B1) ──
+ * 재사용한 답변임을 숨기지 않는다. 배지는 출처 배지 옆에 붙어 같은 줄에서 읽힌다.
+ */
+
+.cached-badge {
+  margin-left: 6px;
+  font-weight: 500;
+  color: var(--fg-muted);
+  background: var(--surface-2);
+  border-radius: 999px;
+  padding: 1px 6px;
+}
+
+/* 되돌릴 길은 입력창 바로 위에 둔다 — 결과를 읽은 자리에서 판단한다. */
+.cache-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 6px 8px;
+  font-size: 11.5px;
+  color: var(--fg-muted);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+/* ── 정확도 피드백 (B4) ── */
+
+.feedback {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+
+.feedback.compact { margin: 2px 0 0 26px; }
+
+.feedback-ask { margin-right: 2px; }
+
+.feedback-btn {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--fg-muted);
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.feedback-btn:hover { border-color: var(--border-strong); }
+.feedback-btn.on.good { color: var(--ok); background: var(--ok-soft); border-color: var(--ok); }
+.feedback-btn.on.bad { color: var(--danger); background: var(--danger-soft); border-color: var(--danger); }
+
+/* ── 첫 실행 안내 (B3) ──
+ * 화면을 덮되 길을 막지 않는다. 어느 장에서든 건너뛸 수 있고 Esc로도 닫힌다.
+ */
+
+.onboard-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: var(--scrim);
+}
+
+.onboard {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  max-width: 360px;
+  padding: 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+}
+
+.onboard-head { display: flex; align-items: center; justify-content: space-between; }
+
+.onboard-step { font-size: 11px; color: var(--fg-muted); }
+
+.onboard-skip {
+  border: 0;
+  background: none;
+  color: var(--fg-muted);
+  font-size: 11.5px;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.onboard-skip:hover { color: var(--fg); text-decoration: underline; }
+
+.onboard-title { margin: 0; font-size: 15px; line-height: 1.4; color: var(--fg); }
+
+.onboard-lines {
+  margin: 0;
+  padding-left: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--fg-muted);
+}
+
+.onboard-dots { display: flex; gap: 5px; justify-content: center; }
+
+.onboard-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--border-strong);
+}
+
+.onboard-dot.on { background: var(--accent); }
+
+.onboard-actions { display: flex; align-items: center; gap: 8px; }
+
+.onboard-next {
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-radius: var(--radius);
+  padding: 6px 14px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.onboard-next:hover { filter: brightness(1.08); }

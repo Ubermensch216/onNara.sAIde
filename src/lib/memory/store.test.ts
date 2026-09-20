@@ -154,6 +154,80 @@ describe('검색', () => {
   });
 });
 
+/**
+ * 하이브리드 검색 (B9 · 계획서 §7.3).
+ *
+ * ★ 공문 질의는 `2026-1234호`처럼 **정확히 그 글자**를 찾는 경우가 많다. 그런 표기는 의미
+ *   공간에서 서로 가깝게 몰려 있어 벡터 단독으로는 1234호와 5678호를 가르지 못한다.
+ */
+describe('하이브리드 검색', () => {
+  beforeEach(async () => {
+    await savePage({
+      url: 'https://a.example.com/1',
+      title: '예산 편성 지침 통보',
+      chunks: ['2026-1234호에 따라 예산을 편성한다'],
+      // 질의 벡터와 가까운 쪽. 벡터만으로도 잘 걸린다.
+      vectors: [V.a],
+      model: MODEL,
+    });
+    await savePage({
+      url: 'https://b.example.com/1',
+      title: '실적 제출 요청',
+      chunks: ['2026-5678호 실적을 제출하라'],
+      // 질의 벡터와 직교한다. 벡터만으로는 절대 1위가 되지 않는다.
+      vectors: [V.b],
+      model: MODEL,
+    });
+  });
+
+  it('질의 문장이 없으면 예전처럼 벡터 단독이다', async () => {
+    const hits = await search(V.a, 5, MODEL);
+    expect(hits[0]!.url).toContain('a.example.com');
+    expect(hits[0]!.matched).toBeUndefined();
+  });
+
+  // ★ 이것이 하이브리드를 들인 이유다. 벡터 순위로는 꼴찌인 조각이 1위로 올라온다.
+  it('★ 벡터가 놓친 문서번호를 키워드가 끌어올린다', async () => {
+    const vectorOnly = await search(V.a, 5, MODEL);
+    expect(vectorOnly[0]!.url).toContain('a.example.com');
+
+    const hits = await search(V.a, 5, MODEL, { query: '2026-5678호' });
+    expect(hits[0]!.url).toContain('b.example.com');
+    expect(hits[0]!.keywordScore).toBeGreaterThan(0);
+  });
+
+  it('둘 다 걸린 조각은 both로 표시한다', async () => {
+    const hits = await search(V.a, 5, MODEL, { query: '예산 편성' });
+    const hit = hits.find(item => item.url.includes('a.example.com'))!;
+    expect(hit.matched).toBe('both');
+    expect(hit.vectorScore).toBeGreaterThan(0);
+    expect(hit.keywordScore).toBeGreaterThan(0);
+  });
+
+  // ★ 임베딩 모델이 없거나 Ollama가 꺼져 있어도 "찾아는 준다"가 못 찾는 것보다 낫다.
+  it('★ 임베딩이 없어도 질의 문장만으로 찾는다', async () => {
+    const hits = await search([], 5, MODEL, { query: '실적 제출' });
+    expect(hits[0]!.url).toContain('b.example.com');
+  });
+
+  it('최소 점수는 벡터 목록에만 건다 — 키워드로 걸린 것은 살아남는다', async () => {
+    const hits = await search(V.a, 5, MODEL, { query: '2026-5678호', minScore: 0.9 });
+    expect(hits.map(hit => hit.url)).toContain('https://b.example.com/1');
+  });
+
+  it('한 페이지는 여전히 조각 하나로만 나온다', async () => {
+    await savePage({
+      url: 'https://c.example.com/1',
+      title: '교육 안내',
+      chunks: ['예산 교육 1차 안내', '예산 교육 2차 안내'],
+      vectors: [V.ab, V.a],
+      model: MODEL,
+    });
+    const hits = await search(V.a, 5, MODEL, { query: '예산 교육' });
+    expect(hits.filter(hit => hit.url.includes('c.example.com'))).toHaveLength(1);
+  });
+});
+
 describe('통제 — 저장 범위', () => {
   it('제외 도메인은 서브도메인까지 막는다', () => {
     const ex = ['example.com'];

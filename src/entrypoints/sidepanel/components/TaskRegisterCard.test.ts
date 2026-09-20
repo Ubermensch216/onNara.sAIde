@@ -38,7 +38,7 @@ async function settle() {
 }
 
 async function open(props: Partial<Parameters<typeof TaskRegisterCard>[0]> = {}) {
-  await act(() => root.render(createElement(TaskRegisterCard, { candidates: CANDIDATES, source, conversationId: 1, ...props })));
+  await act(() => root.render(createElement(TaskRegisterCard, { candidates: CANDIDATES, source, conversationId: 1, model: 'm', ...props })));
   await settle();
   await act(async () => document.querySelector<HTMLButtonElement>('.task-register .minibtn')!.click());
   await settle();
@@ -48,7 +48,7 @@ const boxes = () => [...document.querySelectorAll<HTMLInputElement>('.task-candi
 const submitButton = () => document.querySelector<HTMLButtonElement>('.minibtn.primary')!;
 
 it('★ 펼치기 전에는 아무것도 저장하지 않는다 — 등록은 사용자가 시작한다', async () => {
-  await act(() => root.render(createElement(TaskRegisterCard, { candidates: CANDIDATES, source, conversationId: 1 })));
+  await act(() => root.render(createElement(TaskRegisterCard, { candidates: CANDIDATES, source, conversationId: 1, model: 'm' })));
   await settle();
   expect(document.querySelector('.minibtn')!.textContent).toContain('일정으로 등록 (2건)');
   expect(await db.tasks.count()).toBe(0);

@@ -1,8 +1,18 @@
 import { abortable } from '@/lib/async';
 import { downloadDocumentAttachments, formatAttachmentReport, releaseWorkTab } from '@/lib/onnara/download';
-import { recordAutomation, workTabLock } from '@/lib/automation/jobs';
+import { cancelAutomation, enqueueAutomation, recordAutomation, workTabLock } from '@/lib/automation/jobs';
+import { notifyJobFinished } from '@/lib/automation/notify';
+import { t } from '@/lib/i18n';
 import { ACTION_CARD_SCHEMA, actionCardInstruction, parseActionCard, renderActionCard } from '@/lib/ai/action-card';
-import { buildTaskCandidates } from '@/lib/schedule/candidates';
+import { buildTaskCandidates, type TaskCandidate } from '@/lib/schedule/candidates';
+import {
+  bodyRevision,
+  documentIdentity,
+  readDocResult,
+  saveDocResult,
+  type DocResult,
+  type DocResultLookup,
+} from '@/lib/cache/doc-results';
 import { classifyScheduleIntent } from '@/lib/schedule/classify';
 import { patchFor, planFor, type SchedulePlan } from '@/lib/schedule/resolve';
 import { renderCancelled, renderList, renderOutcome, renderProblem } from '@/lib/schedule/report';
@@ -154,6 +164,19 @@ export interface ChatState {
    */
   pendingSchedule: { plan: SchedulePlan; typed: string } | null;
 
+  /* ── 분석 결과 캐시 (B1) ── */
+
+  /**
+   * 마지막으로 실행한 목록 명령. `다시 분석`이 같은 지시를 캐시 없이 되풀이하는 데 쓴다.
+   *
+   * ★ 메시지마다 "다시 분석" 버튼을 달지 않는다. 문서 한 건만 다시 돌리려면 그 문서만
+   *   체크된 상태를 되살려야 하는데, 그 사이 목록은 이미 달라져 있을 수 있다.
+   *   명령 전체를 다시 돌리는 편이 정직하다.
+   */
+  lastCommand: { text: string; command: DocumentCommandId; args: string } | null;
+  /** 직전 명령에서 모델을 부르지 않고 재사용한 문서 수. 0이면 안내를 보이지 않는다. */
+  cacheReused: number;
+
   openForTab: (tabId: number, url: string) => Promise<void>;
   /** 같은 작업의 다른 탭(문서 팝업)으로 대상만 옮긴다. 대화와 메시지는 그대로 둔다. */
   followTab: (tabId: number, url: string) => Promise<void>;
@@ -166,7 +189,9 @@ export interface ChatState {
   detachScreenshot: () => void;
   send: (text: string, settings: Settings) => Promise<void>;
   /** 문서등록대장 목록 명령 실행. 무엇을 할지는 문장이 아니라 명령 id가 정한다. */
-  runCommand: (text: string, command: DocumentCommandId, args: string, settings: Settings) => Promise<void>;
+  runCommand: (text: string, command: DocumentCommandId, args: string, settings: Settings, options?: { bypassCache?: boolean }) => Promise<void>;
+  /** 직전 목록 명령을 캐시 없이 다시 실행한다(B1의 `다시 분석`). */
+  rerunLastCommand: (settings: Settings) => Promise<void>;
   /** `@일정` 자연어 명령. 조회는 바로 답하고, 쓰기는 확인 카드를 띄운다. */
   runSchedule: (text: string, settings: Settings) => Promise<void>;
   /** 확인 카드의 응답. `null`이면 취소, 배열이면 그 항목만 실행한다. */
@@ -236,6 +261,8 @@ export function createChatSession() {
     agentTurn: 0,
     pendingApproval: null,
     pendingSchedule: null,
+    lastCommand: null,
+    cacheReused: 0,
 
     /** 탭별 세션 분리 (Phase 2-5). 탭이 바뀌면 그 탭의 대화로 갈아끼운다. */
     async openForTab(tabId, url) {
@@ -396,9 +423,15 @@ export function createChatSession() {
       await settled();
       await track(submit(set, get, text, settings, epochs));
     },
-    async runCommand(text, command, args, settings) {
+    async runCommand(text, command, args, settings, options) {
       await settled();
-      await track(runDocumentCommand(set, get, text, command, args, settings, epochs));
+      await track(runDocumentCommand(set, get, text, command, args, settings, epochs, options?.bypassCache ?? false));
+    },
+    async rerunLastCommand(settings) {
+      const last = get().lastCommand;
+      if (!last) return;
+      await settled();
+      await track(runDocumentCommand(set, get, last.text, last.command, last.args, settings, epochs, true));
     },
     async sendAgent(text, settings, tab) {
       await settled();
@@ -446,6 +479,7 @@ export function createChatSession() {
           pending: conversation ? { tabId: conversation.tabId, url: conversation.originUrl } : pending,
           messages: [], page: null, screenshot: null, lastContext: null, contextFrom: 0,
           agentSteps: [], agentTurn: 0, expectedPrefillSec: 0,
+          lastCommand: null, cacheReused: 0,
         });
       } catch (error) { set({ error: toAppError(null, error) }); }
       finally { set({ loading: false }); }
@@ -623,13 +657,16 @@ async function runDocumentCommand(
   args: string,
   settings: Settings,
   epochs: SessionEpochs,
+  bypassCache = false,
 ) {
   const trimmed = text.trim();
   if (!trimmed || get().streaming || get().loading) return;
   const epoch = ++epochs.operation;
   const owns = () => epoch === epochs.operation;
   const ownSet = guardedSet(set, owns);
-  ownSet({ streaming: true, startedAt: Date.now(), abort: new AbortController(), error: null });
+  // 이번 실행에서 다시 센다. 앞 실행의 "재사용 n건" 안내가 남아 있으면 안 된다.
+  ownSet({ streaming: true, startedAt: Date.now(), abort: new AbortController(), error: null,
+    lastCommand: { text: trimmed, command, args }, cacheReused: 0 });
   try {
     const conv = await ensureConversation(ownSet, get, trimmed, owns);
     if (!conv || !owns()) return;
@@ -700,20 +737,77 @@ async function runDocumentCommand(
     // 문서별 처리(요약·조치사항)는 한 건씩 읽고 한 건씩 생성한다.
     await requireCapabilities(settings.endpoint, settings.model, [], signal);
     if (!owns()) return;
-    await runDocumentBatch(ownSet, get, {
-      command, settings, epochs, tabId,
-      titles: list ? titles : [page.title],
-      instruction: args.trim() || defaultInstruction(command),
-      detailPage: list ? null : page,
-      list: list ?? null,
-      signal,
+
+    const targets = list ? titles : [page.title];
+    /**
+     * ★ 작업 큐를 거친다(B2). 첨부 다운로드와 같은 줄에 서므로 온나라 작업 탭을 두 작업이
+     *   동시에 만지지 않고, 도구 탭에서 진행·취소가 보이며, 무엇을 언제 분석했는지가 남는다.
+     * ★ `lock: false`인 이유는 jobs.ts의 주석에 있다 — 본문 읽기가 안쪽에서 이미 잠근다.
+     */
+    ownSet({ documentProgress: t('auto.queuedWait') });
+    const startedRun = Date.now();
+    const { id: jobId, finished } = enqueueAutomation({
+      // 명령 id와 작업 종류는 이름이 다르다. `summary`는 명령, `summarize`는 작업이다.
+      kind: command === 'actions' ? 'actions' : 'summarize', origin: 'chat', lock: false,
+      label: targets.length === 1 ? targets[0]! : t('auto.docCount', { n: targets.length }),
+      run: async jobSignal => {
+        // 도구 탭에서 취소를 누르면 여기서 진행 중인 생성도 멈춰야 한다.
+        const stopChat = () => get().abort?.abort();
+        jobSignal.addEventListener('abort', stopChat, { once: true });
+        try {
+          await runDocumentBatch(ownSet, get, {
+            command, settings, epochs, tabId,
+            titles: targets,
+            instruction: args.trim() || defaultInstruction(command),
+            detailPage: list ? null : page,
+            list: list ?? null,
+            signal,
+            bypassCache,
+          });
+          // 중단은 실패가 아니라 취소다. "분석 완료"로 기록하면 하지 않은 일이 기록에 남는다.
+          if (signal?.aborted || jobSignal.aborted) return { error: { code: 'ABORTED', message: '작업을 취소했습니다.' } };
+          const failure = get().error;
+          if (failure) return { error: failure };
+          const reused = get().cacheReused;
+          return { summary: reused
+            ? t('auto.docsAnalyzedCached', { n: targets.length, cached: reused })
+            : t('auto.docsAnalyzed', { n: targets.length }) };
+        } finally { jobSignal.removeEventListener('abort', stopChat); }
+      },
     });
+    // 입력창의 중지 버튼을 눌렀을 때 작업도 함께 취소된 것으로 기록되어야 한다.
+    signal?.addEventListener('abort', () => cancelAutomation(jobId), { once: true });
+    const job = await finished;
+    if (owns()) void notifyJobFinished(job, Date.now() - startedRun);
   } catch (error) { ownSet({ error: toAppError(error instanceof OllamaError ? error : null, error) }); }
   finally { ownSet({ streaming: false, abort: null, startedAt: null, documentProgress: null }); }
 }
 
 function slashOf(command: DocumentCommandId): string {
   return findDocumentCommand(command)?.slash ?? '/요약';
+}
+
+/**
+ * 캐시에서 꺼낸 분석 결과를 대화에 붙인다 (B1).
+ *
+ * ★ `cached`에 **처음 분석한 시각**을 남긴다. 사용자는 "방금 읽고 답한 것"과 "전에 분석해 둔 것을
+ *   다시 보여 주는 것"을 구분할 수 있어야 한다. 구분이 없으면 캐시는 조용한 거짓말이 된다.
+ * ★ 일정 후보와 출처 공문도 함께 복원한다. 그래야 `일정으로 등록` 카드가 그대로 살아난다.
+ */
+async function appendCachedResult(set: Set, get: Get, hit: DocResult): Promise<void> {
+  const conv = get().conversation;
+  if (!conv) return;
+  const message = {
+    conversationId: conv.id,
+    role: 'assistant' as const,
+    content: hit.content,
+    cached: hit.createdAt,
+    ...(hit.taskCandidates?.length ? { taskCandidates: hit.taskCandidates } : {}),
+    ...(hit.sourceDoc ? { sourceDoc: hit.sourceDoc } : {}),
+    createdAt: nextStamp(get()),
+  };
+  const id = await addMessage(message);
+  set(s => ({ messages: [...s.messages, { ...message, id }] }));
 }
 
 /* ── @일정 (S07 자연어 일정 관리) ─────────────────────── */
@@ -887,10 +981,19 @@ async function runDocumentBatch(set: Set, get: Get, options: {
    */
   list: StructuredDocumentList | null;
   signal: AbortSignal | undefined;
+  /** true면 캐시를 읽지 않고 반드시 모델을 부른다(`다시 분석`). 결과는 그대로 새로 저장한다. */
+  bypassCache?: boolean;
 }): Promise<void> {
-  const { command, settings, epochs, tabId, titles, instruction, detailPage, list, signal } = options;
-  const referenceOf = (title: string): Date | null =>
-    parseReferenceDate(list?.rows.find(row => row.title === title)?.reportDate);
+  const { command, settings, epochs, tabId, titles, instruction, detailPage, list, signal, bypassCache = false } = options;
+  const rowOf = (title: string) => list?.rows.find(row => row.title === title);
+  const referenceOf = (title: string): Date | null => parseReferenceDate(rowOf(title)?.reportDate);
+  /** 이 문서·이 명령·이 지시·이 모델의 결과가 저장되는 자리(B1). */
+  const lookupFor = (title: string): DocResultLookup => ({
+    identity: documentIdentity({ listName: list?.listName, title, reportDate: rowOf(title)?.reportDate }),
+    command,
+    instruction,
+    model: settings.model,
+  });
   const controller = get().abort;
   const epoch = ++epochs.attachment;
   const keepWorkTab = titles.length > 1;
@@ -898,13 +1001,39 @@ async function runDocumentBatch(set: Set, get: Get, options: {
   // 배치가 끝난 뒤 도착하는 늦은 갱신까지 붙잡으면 패널이 영원히 "읽는 중"으로 남는다.
   let batching = true;
   const generating = (index: number, title: string) => `${index + 1}/${titles.length}번째 문서 · ${title} · AI가 분석하는 중입니다. CPU에서는 수 분 걸릴 수 있습니다.`;
+  /**
+   * 한 건을 분석한다. 본문 판본이 같은 결과가 이미 있으면 모델을 부르지 않는다(B1).
+   *
+   * ★ 본문은 캐시가 있어도 **언제나 읽고 온 뒤**다. 제목만 같고 내용이 바뀐 공문(정정·재통보)에
+   *   지난 요약을 보여 주지 않기 위해서다. 아끼는 것은 비싼 쪽(모델)이다.
+   */
   const generate = async (title: string, page: ExtractedPage) => {
     const batchSet: Set = patch => set(current => ({
       ...(typeof patch === 'function' ? patch(current) : patch),
       ...(batching ? { streaming: true, abort: controller } : {}),
     }));
-    if (command === 'actions') await runActionCard(batchSet, get, settings, title, page, referenceOf(title));
-    else await runGeneration(batchSet, instructionOnly(get, documentBatchInstruction(title, instruction)), { ...settings, thinkMode: 'off' });
+    const lookup = lookupFor(title);
+    const revision = bodyRevision(page.text);
+
+    if (!bypassCache) {
+      const hit = await readDocResult(lookup, revision);
+      if (hit) {
+        await appendCachedResult(batchSet, get, hit);
+        set(state => ({ cacheReused: state.cacheReused + 1 }));
+        return;
+      }
+    }
+
+    const outcome = command === 'actions'
+      ? await runActionCard(batchSet, get, settings, title, page, referenceOf(title))
+      : await runGeneration(batchSet, instructionOnly(get, documentBatchInstruction(title, instruction)), { ...settings, thinkMode: 'off' });
+    if (!outcome) return;
+    await saveDocResult(lookup, {
+      bodyRevision: revision,
+      content: outcome.content,
+      ...(outcome.taskCandidates ? { taskCandidates: outcome.taskCandidates } : {}),
+      ...(outcome.sourceDoc ? { sourceDoc: outcome.sourceDoc } : {}),
+    });
   };
 
   set({ extracting: true, error: null });
@@ -1118,13 +1247,20 @@ function freshAttachment(
 const STALE_NOTICE =
   '페이지가 바뀌어 이전 본문을 떼어냈습니다. 현재 페이지 내용은 참조하지 않았습니다.';
 
+/** 문서 한 건을 처리해 얻은 결과. 캐시(B1)에 그대로 저장된다. */
+interface DocumentOutcome {
+  content: string;
+  taskCandidates?: TaskCandidate[];
+  sourceDoc?: { title: string; url?: string };
+}
+
 /**
  * 핵심·조치사항 카드(S01). JSON 스키마로만 답하게 하고, 원문 대조 결과를 붙여 보여 준다.
  * 토큰 스트림은 JSON이라 화면에 흘리지 않고 진행 표시만 한다.
  */
-async function runActionCard(set: Set, get: Get, settings: Settings, title: string, page: ExtractedPage, reference: Date | null) {
+async function runActionCard(set: Set, get: Get, settings: Settings, title: string, page: ExtractedPage, reference: Date | null): Promise<DocumentOutcome | null> {
   const conv = get().conversation;
-  if (!conv) return;
+  if (!conv) return null;
   const abort = get().abort ?? new AbortController();
   const startedAt = nextStamp(get());
   const context = buildContext([{ role: 'user', content: actionCardInstruction(title) }], settings.numCtx, toAttachment(page, null));
@@ -1152,16 +1288,18 @@ async function runActionCard(set: Set, get: Get, settings: Settings, title: stri
       messages: s.messages.map(m => m.id === placeholder.id ? { ...m, id, content, perf: perf ?? undefined, ...extra, streaming: false } : m),
       streaming: false, startedAt: null, abort: null, lastContext: null,
     }));
+    return { content, ...extra };
   } catch (e) {
     const err = e instanceof OllamaError ? e : null;
     const aborted = err?.code === 'ABORTED' || abort.signal.aborted;
     set(s => ({ messages: s.messages.filter(m => m.id !== placeholder.id), streaming: false, startedAt: null, abort: null, error: aborted ? null : toAppError(err, e) }));
+    return null;
   }
 }
 
-async function runGeneration(set: Set, get: Get, settings: Settings) {
+async function runGeneration(set: Set, get: Get, settings: Settings): Promise<DocumentOutcome | null> {
   const conv = get().conversation;
-  if (!conv) return;
+  if (!conv) return null;
 
   const abort = get().abort ?? new AbortController();
   const startedAt = nextStamp(get());
@@ -1291,6 +1429,7 @@ async function runGeneration(set: Set, get: Get, settings: Settings) {
       // 다음 턴의 캐시 적중분 계산 기준. 이번 응답까지 포함해야 정확하다.
       lastContext: [...context, { role: 'assistant', content }],
     }));
+    return { content };
   } catch (e) {
     const err = e instanceof OllamaError ? e : null;
     const aborted = err?.code === 'ABORTED' || abort.signal.aborted;
@@ -1319,7 +1458,8 @@ async function runGeneration(set: Set, get: Get, settings: Settings) {
         abort: null,
         lastContext: null, // 중단된 응답은 캐시 기준으로 삼지 않는다
       }));
-      return;
+      // ★ 중단된 답변은 캐시에 넣지 않는다. 반쪽 요약이 다음번에 "완성된 결과"로 나오면 안 된다.
+      return null;
     }
 
     // 실패한 자리표시자는 남기지 않는다. 오류는 배너로 보여준다.
@@ -1331,6 +1471,7 @@ async function runGeneration(set: Set, get: Get, settings: Settings) {
       lastContext: null,
       error: aborted ? null : toAppError(err, e),
     }));
+    return null;
   }
 }
 

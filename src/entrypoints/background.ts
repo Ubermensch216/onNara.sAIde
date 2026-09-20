@@ -1,8 +1,9 @@
 import { assertCurrent, captureTab, trustedPanel, validPanelRequest } from '@/lib/browser/guards';
 import { committedSince, duplicateWorkTab, forgetWorkTab, panelTab, registerWorkTabListeners, tabsSpawnedBy, workTabs } from '@/lib/browser/work-tabs';
 import { forgetPanelSpawn, isReportedPanelTab, notePanelSpawn, panelOpener, rememberPanelTab } from '@/lib/browser/panel-sync';
-import type { AppError, AttachmentDownloadResult, ExtractedPage, RequestControl, SWToContent } from '@/lib/messaging/protocol';
+import type { AppError, AttachmentDownloadResult, AttachmentNaming, ExtractedPage, RequestControl, SWToContent } from '@/lib/messaging/protocol';
 import { isHtmlAttachmentName } from '@/lib/onnara/attachments';
+import { clearDownloadName, registerDownloadNaming, reserveDownloadName } from '@/lib/downloads/rename';
 import { sameDocumentTitle } from '@/lib/onnara/document-list';
 import { fitToBudget } from '@/lib/extract/budget';
 import { pdfText, withPdfSections } from '@/lib/extract/pdf-offscreen';
@@ -57,6 +58,8 @@ export default defineBackground(() => {
 
   // 기한 알림(S07). 패널이 닫혀 있어도 알람이 워커를 깨워 확인한다.
   registerTaskAlerts();
+  // 첨부 파일명 정규화(B5). 브라우저가 이름을 정하기 직전에 한 번 끼어든다.
+  registerDownloadNaming();
 
   chrome.runtime.onMessage.addListener((msg: unknown, sender, sendResponse) => {
     if (!trustedPanel(sender)) return false;
@@ -176,11 +179,11 @@ export async function handlePanelMessage(msg: PanelToSW): Promise<SWToPanel> {
     case 'DOWNLOAD_ATTACHMENTS': {
       if (msg.title) {
         return readDocumentInBackground(msg.tabId, msg.title, 1000, control,
-          target => downloadAttachmentsInTab(target.tabId, target.control), { keepWorkTab: msg.keepWorkTab });
+          target => downloadAttachmentsInTab(target.tabId, target.control, msg.naming), { keepWorkTab: msg.keepWorkTab });
       }
       const tab = await chrome.tabs.get(msg.tabId);
       assertCurrent(control, tab.url ?? '', isCancelled());
-      return downloadAttachmentsInTab(msg.tabId, control);
+      return downloadAttachmentsInTab(msg.tabId, control, msg.naming);
     }
     case 'GET_ACTIVE_TAB': {
       const tab = await activeTab(msg.windowId);
@@ -984,7 +987,7 @@ const ATTACHMENT_SCAN_MS = 5000;
  * 일반 링크는 downloads API로, 온나라의 스크립트 첨부는 화면 요소를 눌러 브라우저가
  * 만든 다운로드를 감지한다. 동시 다운로드를 피하려고 앞 파일이 끝나야 다음을 시작한다.
  */
-export async function downloadAttachmentsInTab(tabId: number, control: RequestControl): Promise<SWToPanel> {
+export async function downloadAttachmentsInTab(tabId: number, control: RequestControl, naming?: AttachmentNaming): Promise<SWToPanel> {
   const frameControl: RequestControl = { ...control, expectedUrl: undefined };
   let frames: Array<{ frameId: number }> = [{ frameId: 0 }];
   try {
@@ -1023,6 +1026,9 @@ export async function downloadAttachmentsInTab(tabId: number, control: RequestCo
     assertCurrent(frameControl, '', cancelled.has(control.id));
     let downloadId: number | undefined;
     try {
+      // ★ 이름 예약은 두 경로(직접 URL·화면 클릭) 모두에서 onDeterminingFilename이 받아 간다.
+      //   여기서 downloads.download에 filename을 직접 넘기면 같은 규칙이 두 번 적용된다.
+      reserveDownloadName(item.name, naming ?? null);
       downloadId = item.url
         ? await chrome.downloads.download({ url: item.url, conflictAction: 'uniquify', saveAs: false })
         : await clickAndCatchDownload(tabId, item, frameControl);
@@ -1046,6 +1052,9 @@ export async function downloadAttachmentsInTab(tabId: number, control: RequestCo
         break;
       }
       results.push({ name: item.name, status: 'failed', message: String(error) });
+    } finally {
+      // 시작되지 않은 다운로드의 예약이 다음 파일에 잘못 붙지 않게 한다.
+      clearDownloadName();
     }
   }
   return { type: 'ATTACHMENTS_DOWNLOADED', results };

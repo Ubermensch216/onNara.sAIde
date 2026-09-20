@@ -11,8 +11,15 @@
 import { create } from 'zustand';
 import type { AppError, AttachmentDownloadResult } from '@/lib/messaging/protocol';
 
-export type AutomationKind = 'download-attachments';
-const KINDS: readonly string[] = ['download-attachments'] satisfies AutomationKind[];
+/**
+ * 작업 종류.
+ *
+ * ★ `summarize`·`actions`는 AI 명령이다(B2). 대화 말풍선으로만 흐르던 것을 여기에 올린 이유는
+ *   셋이다 — ① 첨부 다운로드와 같은 대기열에서 순서가 정해지고 ② 도구 탭에서 진행·취소가
+ *   보이며 ③ 패널을 다시 열어도 "언제 무엇을 분석했는지"가 남는다.
+ */
+export type AutomationKind = 'download-attachments' | 'summarize' | 'actions';
+const KINDS: readonly string[] = ['download-attachments', 'summarize', 'actions'] satisfies AutomationKind[];
 export type AutomationStatus = 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
 
 export interface AutomationJob {
@@ -72,7 +79,7 @@ export function clearJobFocus(): void {
   if (useAutomation.getState().focus) useAutomation.setState({ focus: null });
 }
 
-const runners = new Map<string, { run: Runner; controller: AbortController; done: (job: AutomationJob) => void }>();
+const runners = new Map<string, { run: Runner; controller: AbortController; done: (job: AutomationJob) => void; lock: boolean }>();
 let draining = false;
 
 /* ── 작업 탭 잠금 ─────────────────────────────────────── */
@@ -150,13 +157,23 @@ function pick(outcome: JobOutcome): JobOutcome {
  * 작업을 대기열에 넣고, 끝나면(성공·실패·취소 모두) 최종 상태로 resolve한다.
  * 실행 함수가 던진 예외도 실패 기록으로 바꾼다.
  */
-export function enqueueAutomation(spec: { kind: AutomationKind; label: string; origin?: 'automation' | 'chat'; run: Runner }): { id: string; finished: Promise<AutomationJob> } {
+export function enqueueAutomation(spec: {
+  kind: AutomationKind; label: string; origin?: 'automation' | 'chat'; run: Runner;
+  /**
+   * 실행 전체를 작업 탭 잠금으로 감쌀지. 기본은 감싼다.
+   *
+   * ★ false로 두는 경우: 실행 함수가 **안쪽에서 이미** workTabLock을 쓸 때다.
+   *   문서별 AI 분석(B2)이 그렇다 — 문서 한 건을 읽을 때마다 잠그고 놓는다.
+   *   여기서 또 감싸면 바깥 잠금이 풀리기를 안쪽이 기다려 교착에 빠진다.
+   */
+  lock?: boolean;
+}): { id: string; finished: Promise<AutomationJob> } {
   const job: AutomationJob = {
     id: crypto.randomUUID(), kind: spec.kind, label: spec.label, origin: spec.origin ?? 'automation',
     status: 'queued', createdAt: Date.now(),
   };
   const finished = new Promise<AutomationJob>(resolve => {
-    runners.set(job.id, { run: spec.run, controller: new AbortController(), done: resolve });
+    runners.set(job.id, { run: spec.run, controller: new AbortController(), done: resolve, lock: spec.lock ?? true });
   });
   useAutomation.setState(state => ({ jobs: [job, ...state.jobs] }));
   void drain();
@@ -190,10 +207,11 @@ async function drain(): Promise<void> {
       const entry = runners.get(next.id)!;
       update(next.id, { status: 'running' });
       let outcome: JobOutcome;
+      const start = () => entry.controller.signal.aborted
+        ? Promise.resolve<JobOutcome>({ error: { code: 'ABORTED', message: '작업을 취소했습니다.' } })
+        : entry.run(entry.controller.signal);
       try {
-        outcome = await workTabLock(() => entry.controller.signal.aborted
-          ? Promise.resolve<JobOutcome>({ error: { code: 'ABORTED', message: '작업을 취소했습니다.' } })
-          : entry.run(entry.controller.signal));
+        outcome = entry.lock ? await workTabLock(start) : await start();
       } catch (error) {
         outcome = entry.controller.signal.aborted
           ? { error: { code: 'ABORTED', message: '작업을 취소했습니다.' } }

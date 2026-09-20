@@ -41,10 +41,17 @@ export async function recall(query: string, s: Settings): Promise<RecallResult> 
   const q = query.trim();
   if (!q) return { hits: [], prompt: '' };
 
-  const [vector] = await embed(s.endpoint, s.embedModel, q, '0');
-  if (!vector) return { hits: [], prompt: '' };
+  // ★ 임베딩이 실패해도 포기하지 않는다. 질의 문장만으로 키워드 순위는 낼 수 있다(B9).
+  //   bge-m3가 없거나 Ollama가 꺼진 상태에서도 "찾아는 준다"가 못 찾는 것보다 낫다.
+  const [vector] = await embed(s.endpoint, s.embedModel, q, '0').catch(() => [] as number[][]);
 
-  const hits = await search(vector, RECALL_LIMIT, s.embedModel, { retentionDays: s.memoryRetentionDays, excluded: s.memoryExcludedDomains, minScore: 0.2 });
+  const hits = await search(vector ?? [], RECALL_LIMIT, s.embedModel, {
+    retentionDays: s.memoryRetentionDays,
+    excluded: s.memoryExcludedDomains,
+    minScore: 0.2,
+    // 키워드 순위를 함께 내어 RRF로 섞는다. 문서번호·법령명 같은 정확 일치가 여기서 걸린다.
+    query: q,
+  });
   return { hits, prompt: hits.length ? buildRecallPrompt(q, hits) : '' };
 }
 

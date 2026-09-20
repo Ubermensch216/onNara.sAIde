@@ -41,7 +41,8 @@ describe('카탈로그 완결성', () => {
     // 번역을 깜빡하고 영어를 그대로 둔 항목을 잡는다. 고유명사와, 한국어 화면에서도 'AI'로 쓰기로 정한 탭 이름은 예외.
     // 'view.due'는 탭 배지의 숫자만 넣는 자리라 어느 언어에서도 낱말이 없다(읽어 주는 문장은 view.dueLabel).
     // 'cal.weekLabel'은 "2026.09.13 ~ 2026.09.19"처럼 날짜 범위만 적는 자리라 번역할 낱말이 없다.
-    const allowLatin = new Set<MessageKey>(['msg.coldStart', 'view.ai', 'view.due', 'cal.weekLabel']);
+    // 'onboard.step'은 "2 / 3"처럼 쪽 번호만 적는 자리다.
+    const allowLatin = new Set<MessageKey>(['msg.coldStart', 'view.ai', 'view.due', 'cal.weekLabel', 'onboard.step']);
     for (const k of Object.keys(MESSAGES.ko) as MessageKey[]) {
       if (allowLatin.has(k)) continue;
       expect(/[가-힣]/.test(MESSAGES.ko[k]), k).toBe(true);

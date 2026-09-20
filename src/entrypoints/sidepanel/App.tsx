@@ -56,6 +56,8 @@ import { ScreenshotChip } from './components/ScreenshotChip';
 import { AutomationPanel } from './components/AutomationPanel';
 import { SchedulePanel } from './components/SchedulePanel';
 import { ScheduleIntentCard } from './components/ScheduleIntentCard';
+import { Onboarding } from './components/Onboarding';
+import { shouldShowOnboarding } from '@/lib/storage/onboarding';
 import { SCHEDULE_ALIASES, SCHEDULE_PRESET_ID, SCHEDULE_SLASH } from '@/lib/schedule/intent';
 import type { PanelLink } from '@/lib/panel/links';
 import { focusJob, useAutomation } from '@/lib/automation/jobs';
@@ -101,6 +103,8 @@ export default function App() {
    */
   const [view, setView] = useState<View>(initialView);
   const [automationError, setAutomationError] = useState<AppError | null>(null);
+  /** 첫 실행 안내(B3). 저장소를 읽어 한 번만 켠다. */
+  const [onboarding, setOnboarding] = useState(false);
   const runningJobs = useAutomation(state => state.jobs.filter(job => job.status === 'queued' || job.status === 'running').length);
   // 기한이 임박한 일정은 어느 탭에 있든 보여야 한다. 그러려고 배지를 헤더가 아니라 탭에 둔다.
   const dueTasks = useSchedule(state => urgentCount(state.tasks));
@@ -115,6 +119,9 @@ export default function App() {
 
   // 일정 배지는 탭을 열지 않아도 맞아야 한다. 패널을 열 때 한 번 읽어 둔다.
   useEffect(() => { void refreshTasks(); }, []);
+
+  // 처음 여는 사람에게는 `/`와 `@`의 규칙을 아무도 알려 주지 않았다(B3).
+  useEffect(() => { void shouldShowOnboarding().then(setOnboarding); }, []);
 
 
   /* ── 설정 ── */
@@ -680,6 +687,7 @@ export default function App() {
           <MessageList
             messages={chat.messages}
             dark={dark}
+            model={settings.model}
             showThinking={settings.thinkMode !== 'off'}
             deleteDisabled={chat.streaming || chat.loading}
             onDelete={chat.removeMessage}
@@ -768,6 +776,20 @@ export default function App() {
         )}
 
         {/*
+          캐시에서 꺼낸 결과가 섞여 있으면 그 사실과 되돌릴 길을 함께 보인다(B1).
+          ★ 메시지마다 버튼을 달지 않는다 — 문서 한 건만 다시 돌리려면 그 문서가 체크된 상태를
+            되살려야 하는데, 그 사이 목록은 이미 달라져 있을 수 있다.
+        */}
+        {!chat.streaming && chat.cacheReused > 0 && chat.lastCommand && (
+          <div className="cache-bar" role="status">
+            <span>{t('cache.reused', { n: chat.cacheReused })}</span>
+            <button type="button" className="minibtn" onClick={() => void chat.rerunLastCommand(settings)}>
+              {t('cache.rerun')}
+            </button>
+          </div>
+        )}
+
+        {/*
           승인 카드는 입력창 바로 위에 둔다. 화면을 덮는 대화상자로 만들면
           사용자가 무엇에 대한 승인인지(직전 대화 맥락) 볼 수 없게 된다.
         */}
@@ -805,6 +827,9 @@ export default function App() {
 
       </>
       )}
+
+      {/* 첫 실행 안내(B3). 설정에서 "사용법 다시 보기"를 누르면 다시 뜬다. */}
+      {onboarding && <Onboarding onClose={() => setOnboarding(false)} />}
 
       {menuOpen && (
         <ConversationMenu

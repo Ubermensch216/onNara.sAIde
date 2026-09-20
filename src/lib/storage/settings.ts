@@ -62,6 +62,22 @@ export interface Settings {
   taskAlerts: boolean;
   /** 알릴 시각(0~23시). 업무 시작 무렵이 기본이다. */
   taskAlertHour: number;
+
+  /**
+   * 오래 걸린 작업이 끝나면 알린다(B2). 30초를 넘긴 작업에만 울린다.
+   * 기본 켜짐 — 작업을 큐에 맡기게 만든 이유가 "끝난 줄 모르는 것"이다.
+   */
+  jobAlerts: boolean;
+
+  /**
+   * 첨부 파일명 정규화(B5). 'normalized'면 `보고일자_공문제목_원래이름`으로 저장한다.
+   *
+   * ★ 기본값을 정규화로 둔다. `붙임1.hwp` 다섯 개가 한 폴더에 떨어지는 것이 지금의 기본값인데,
+   *   그것은 아무도 원한 적 없는 결과다. 원래 이름 그대로가 필요하면 'browser'로 되돌린다.
+   */
+  attachmentNaming: 'browser' | 'normalized';
+  /** 공문마다 하위 폴더를 만들지. 기본 꺼짐 — 폴더가 늘어나는 것을 싫어하는 사용자가 있다. */
+  attachmentFolder: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -88,6 +104,10 @@ export const DEFAULT_SETTINGS: Settings = {
 
   taskAlerts: true,
   taskAlertHour: 9,
+
+  jobAlerts: true,
+  attachmentNaming: 'normalized',
+  attachmentFolder: false,
 };
 
 const KEY = 'saide.settings';
@@ -95,12 +115,15 @@ const KEY = 'saide.settings';
 export function normalizeSettings(input: unknown): Settings {
   const raw = input && typeof input === 'object' ? input as Partial<Settings> : {};
   const next = { ...DEFAULT_SETTINGS };
-  const enums = { thinkMode: ['off', 'agent-only', 'always'], theme: ['light', 'dark', 'system'], locale: ['ko', 'en'] };
+  const enums = {
+    thinkMode: ['off', 'agent-only', 'always'], theme: ['light', 'dark', 'system'], locale: ['ko', 'en'],
+    attachmentNaming: ['browser', 'normalized'],
+  };
   for (const [key, values] of Object.entries(enums)) {
     const value = raw[key as keyof Settings];
     if (values.includes(String(value))) Object.assign(next, { [key]: value });
   }
-  for (const key of ['agentEnabled', 'memoryEnabled', 'warmupOnOpen', 'taskAlerts'] as const) if (typeof raw[key] === 'boolean') next[key] = raw[key];
+  for (const key of ['agentEnabled', 'memoryEnabled', 'warmupOnOpen', 'taskAlerts', 'jobAlerts', 'attachmentFolder'] as const) if (typeof raw[key] === 'boolean') next[key] = raw[key];
   for (const key of ['model', 'embedModel'] as const) if (typeof raw[key] === 'string' && /^[\w.:/-]{1,200}$/.test(raw[key])) next[key] = raw[key];
   if (typeof raw.endpoint === 'string') {
     try {

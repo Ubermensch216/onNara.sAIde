@@ -165,7 +165,8 @@ export interface RequestControl {
 
 export type PanelToSW = (
   /** title이 있으면 목록에서 그 문서를 백그라운드로 열고, 없으면 현재 상세 화면의 첨부를 받는다. */
-  | { type: 'DOWNLOAD_ATTACHMENTS'; tabId: number; title?: string; keepWorkTab?: boolean }
+  /** naming: 저장할 파일 이름을 정규화한다(B5). 없으면 브라우저가 정한 이름을 그대로 쓴다. */
+  | { type: 'DOWNLOAD_ATTACHMENTS'; tabId: number; title?: string; keepWorkTab?: boolean; naming?: AttachmentNaming }
   | { type: 'EXTRACT_PAGE'; tabId: number; budgetTokens: number }
   /**
    * withAttachments: 본문을 읽은 같은 상세 화면에서 첨부도 받는다(문서를 두 번 열지 않는다).
@@ -183,6 +184,13 @@ export type PanelToSW = (
 ) & { control?: RequestControl };
 
 /* ── Service Worker → Panel ────────────────────────────── */
+
+/** 첨부 파일명 정규화 계획(B5). 구현은 lib/downloads/naming.ts에 있다. */
+export interface AttachmentNaming {
+  docTitle: string;
+  reportDate?: string;
+  folder?: boolean;
+}
 
 export interface AttachmentDownloadResult {
   name: string;

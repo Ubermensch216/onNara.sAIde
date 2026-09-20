@@ -10,8 +10,10 @@
  * ★ 이미 등록한 후보는 "등록됨"으로만 표시한다. 같은 공문을 다시 분석해도 중복이 쌓이지 않는다.
  */
 
-import { useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useT } from '@/lib/i18n';
+import { FeedbackButtons } from './FeedbackButtons';
+import { loadFeedbackMap, type FeedbackVerdict } from '@/lib/feedback/store';
 import type { TaskCandidate } from '@/lib/schedule/candidates';
 import { addTasks, useSchedule } from '@/lib/schedule/store';
 import { ddayLabel, daysUntil, dedupeKeyOf, type NewScheduleTask } from '@/lib/schedule/task';
@@ -20,11 +22,13 @@ interface Props {
   candidates: TaskCandidate[];
   source: { title: string; url?: string };
   conversationId: number;
+  /** 어떤 모델이 뽑은 후보인가. 정확도 피드백(B4)에 함께 기록한다. */
+  model: string;
   /** 등록 후 일정 탭으로 넘어가는 길. 없으면 버튼을 보이지 않는다. */
   onOpenSchedule?: () => void;
 }
 
-export function TaskRegisterCard({ candidates, source, conversationId, onOpenSchedule }: Props) {
+export function TaskRegisterCard({ candidates, source, conversationId, model, onOpenSchedule }: Props) {
   const t = useT();
   const registered = useSchedule(state => state.tasks);
   const [open, setOpen] = useState(false);
@@ -34,6 +38,20 @@ export function TaskRegisterCard({ candidates, source, conversationId, onOpenSch
 
   const keys = useMemo(() => candidates.map(candidate => dedupeKeyOf(source.title, candidate.title)), [candidates, source.title]);
   const done = useMemo(() => new Set(registered.map(task => task.dedupeKey).filter(Boolean)), [registered]);
+
+  /**
+   * 후보마다 이미 눌러 둔 평가(B4).
+   *
+   * ★ 기한 추출의 정확도는 답변 전체의 정확도와 성격이 다르다. 여기서 받은 값이 계획서 §12의
+   *   "기한 필드 정확도"에 해당한다. 그래서 답변 단위 평가와 따로 센다.
+   */
+  const [verdicts, setVerdicts] = useState<Map<string, FeedbackVerdict>>(new Map());
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    void loadFeedbackMap('task-candidate').then(map => { if (alive) setVerdicts(map); });
+    return () => { alive = false; };
+  }, [open]);
 
   // 처음 펼칠 때의 기본 체크: 원문에서 근거를 확인했고 아직 등록하지 않은 후보.
   const checked = chosen ?? new Set(candidates.flatMap((candidate, index) =>
@@ -115,6 +133,9 @@ export function TaskRegisterCard({ candidates, source, conversationId, onOpenSch
                   {candidate.evidence && <span className="task-candidate-evidence">{candidate.evidence}</span>}
                 </span>
               </label>
+              {/* 이 기한이 맞았는지만 받는다. 사유를 물으면 아무도 누르지 않는다. */}
+              <FeedbackButtons kind="task-candidate" targetKey={keys[index]!} model={model}
+                initial={verdicts.get(keys[index]!)} compact />
             </li>
           );
         })}

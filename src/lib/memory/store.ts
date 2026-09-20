@@ -22,6 +22,7 @@
 
 import { db } from '@/lib/storage/db';
 import { estimateTokens } from '@/lib/extract/budget';
+import { bm25, fuseByRank, tokenize } from './keyword';
 
 /** 한 조각에 담을 대략의 토큰. bge-m3는 여유가 있지만 검색 정밀도를 위해 짧게 쥔다. */
 export const CHUNK_TOKENS = 400;
@@ -187,15 +188,43 @@ export interface SearchHit {
   url: string;
   title: string;
   text: string;
+  /** 순위를 정한 점수. 벡터 단독이면 코사인 유사도, 하이브리드면 RRF 융합 점수다. */
   score: number;
+  /** 어느 쪽이 이 조각을 끌어올렸는가. 하이브리드 검색에서만 채워진다. */
+  matched?: 'vector' | 'keyword' | 'both';
+  vectorScore?: number;
+  keywordScore?: number;
   visitedAt: number;
 }
 
+export interface SearchPolicy {
+  retentionDays?: number;
+  excluded?: string[];
+  /** 벡터 목록에 넣을 최소 유사도. 키워드로 걸린 조각은 이 값과 무관하게 살아남는다. */
+  minScore?: number;
+  /**
+   * 질의 문장. 주면 키워드(BM25) 순위를 함께 내어 RRF로 섞는다(B9).
+   *
+   * ★ 없으면 예전처럼 벡터 단독이다. 질의 문장이 없는 호출(테스트·내부 비교)의
+   *   동작을 바꾸지 않기 위해서다.
+   */
+  query?: string;
+}
+
+/** 조각 하나를 가리키는 자리. 같은 URL의 조각을 서로 구분한다. */
+function chunkKey(row: PageVector): string {
+  return `${row.url}#${row.chunk}`;
+}
+
 /**
- * 코사인 유사도 상위 N건. 계획서 6-2의 완료 기준은 상위 5건이다.
+ * 기억에서 찾는다. 계획서 6-2의 완료 기준은 상위 5건이다.
  *
  * ★ 전량 스캔이다. IndexedDB에 벡터 인덱스는 없고, 이 규모(수천 조각)에서는
  *   1024차원 내적 수천 번이 수 밀리초다. ANN 색인을 들일 이유가 없다.
+ *
+ * ★ `policy.query`가 있으면 **하이브리드**다(B9). 벡터 순위와 키워드(BM25) 순위를
+ *   따로 내고 RRF로 섞는다. 공문 질의에 잦은 `2026-1234호` 같은 정확 일치를
+ *   벡터 단독으로는 가리지 못하기 때문이다. lib/memory/keyword.ts 머리말 참조.
  *
  * ★ 같은 URL은 가장 잘 맞는 조각 하나만 남긴다. 그러지 않으면 상위 5건이
  *   한 페이지의 조각 다섯 개로 채워진다.
@@ -204,34 +233,64 @@ export async function search(
   queryVector: number[] | Float32Array,
   limit = 5,
   model?: string,
-  policy: { retentionDays?: number; excluded?: string[]; minScore?: number } = {},
+  policy: SearchPolicy = {},
 ): Promise<SearchHit[]> {
   const q = normalize(queryVector);
+  const query = policy.query?.trim() ?? '';
   // ★ 영벡터는 "빈 질의"다. 길이만 보면 0으로 채워진 벡터를 놓치고, 그러면
   //   모든 기록이 점수 0으로 나와 아무 뜻 없는 순서가 상위 5건이 된다.
-  if (dot(q, q) === 0) return [];
+  //   다만 질의 문장이 있으면 키워드만으로도 찾을 수 있다(임베딩 모델이 없을 때).
+  if (dot(q, q) === 0 && !query) return [];
 
-  const best = new Map<string, SearchHit>();
+  const rows: PageVector[] = [];
   await table().each((row) => {
     // 다른 모델로 만든 벡터와는 비교하지 않는다. 좌표계가 다르다.
     if (model && row.model !== model) return;
-    if (row.vector.length !== q.length || !shouldRemember(row.url, policy.excluded ?? [])) return;
+    if (!shouldRemember(row.url, policy.excluded ?? [])) return;
     if (policy.retentionDays && row.visitedAt < Date.now() - policy.retentionDays * 86_400_000) return;
-    const score = dot(q, row.vector);
-    if (!Number.isFinite(score) || score < (policy.minScore ?? -1)) return;
-    const prev = best.get(row.url);
-    if (!prev || score > prev.score) {
-      best.set(row.url, {
-        url: row.url,
-        title: row.title,
-        text: row.text,
-        score,
-        visitedAt: row.visitedAt,
-      });
-    }
+    rows.push(row);
   });
+  if (!rows.length) return [];
 
-  return [...best.values()].sort((a, b) => b.score - a.score).slice(0, limit);
+  const comparable = rows.filter(row => row.vector.length === q.length);
+  const vectorScores = new Map<string, number>();
+  for (const row of comparable) {
+    const score = dot(q, row.vector);
+    if (!Number.isFinite(score) || score < (policy.minScore ?? -1)) continue;
+    vectorScores.set(chunkKey(row), score);
+  }
+  const vectorRanked = comparable
+    .filter(row => vectorScores.has(chunkKey(row)))
+    .sort((a, b) => vectorScores.get(chunkKey(b))! - vectorScores.get(chunkKey(a))!);
+
+  if (!query) return bestPerUrl(vectorRanked.map(row => toHit(row, vectorScores.get(chunkKey(row))!)), limit);
+
+  const keywordHits = bm25(query, rows.map(row => ({ row, tokens: tokenize(`${row.title}\n${row.text}`) })));
+  const keywordScores = new Map(keywordHits.map(hit => [chunkKey(hit.row), hit.score]));
+  const fused = fuseByRank([vectorRanked, keywordHits.map(hit => hit.row)], chunkKey);
+
+  return bestPerUrl(fused.map(entry => {
+    const vectorScore = vectorScores.get(chunkKey(entry.item));
+    const keywordScore = keywordScores.get(chunkKey(entry.item));
+    return {
+      ...toHit(entry.item, entry.score),
+      matched: vectorScore !== undefined && keywordScore !== undefined ? 'both'
+        : vectorScore !== undefined ? 'vector' : 'keyword',
+      ...(vectorScore !== undefined ? { vectorScore } : {}),
+      ...(keywordScore !== undefined ? { keywordScore } : {}),
+    } satisfies SearchHit;
+  }), limit);
+}
+
+function toHit(row: PageVector, score: number): SearchHit {
+  return { url: row.url, title: row.title, text: row.text, score, visitedAt: row.visitedAt };
+}
+
+/** 점수 내림차순으로 이미 정렬된 목록에서 URL마다 첫 조각만 남긴다. */
+function bestPerUrl(hits: SearchHit[], limit: number): SearchHit[] {
+  const best = new Map<string, SearchHit>();
+  for (const hit of hits) if (!best.has(hit.url)) best.set(hit.url, hit);
+  return [...best.values()].slice(0, limit);
 }
 
 /* ── 통제 (계획서 6-3 / 6-4) ───────────────────────────── */

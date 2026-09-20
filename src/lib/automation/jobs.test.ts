@@ -91,3 +91,46 @@ it('대화에서 실행한 자동화도 기록하고, 기록 지우기는 실행
   release.resolve();
   await running.finished;
 });
+
+/**
+ * AI 명령의 큐 이관 (B2).
+ *
+ * ★ 문서별 분석은 본문 한 건을 읽을 때마다 **안쪽에서** workTabLock을 잡는다. 바깥에서 또 감싸면
+ *   바깥 잠금이 풀리기를 안쪽이 기다려 영원히 끝나지 않는다. 이 시험이 그 교착을 막는다.
+ */
+it('★ lock:false 작업은 안쪽에서 작업 탭 잠금을 써도 끝난다', async () => {
+  const steps: string[] = [];
+  const job = enqueueAutomation({
+    kind: 'summarize', label: '문서 3건', origin: 'chat', lock: false,
+    run: async () => {
+      for (const title of ['A', 'B', 'C']) {
+        await workTabLock(async () => { steps.push(title); });
+      }
+      return { summary: '문서 3건 분석 완료' };
+    },
+  });
+
+  const finished = await Promise.race([
+    job.finished,
+    new Promise(resolve => setTimeout(() => resolve('시간 초과'), 200)),
+  ]);
+
+  expect(finished).not.toBe('시간 초과');
+  expect(steps).toEqual(['A', 'B', 'C']);
+  expect((finished as { summary?: string }).summary).toBe('문서 3건 분석 완료');
+});
+
+it('AI 작업도 첨부 다운로드와 같은 줄에 서서 하나씩 실행된다', async () => {
+  const order: string[] = [];
+  const hold = deferred<void>();
+  const download = enqueueAutomation({ kind: 'download-attachments', label: '첨부', run: async () => { order.push('첨부 시작'); await hold.promise; return {}; } });
+  const analyze = enqueueAutomation({ kind: 'actions', label: '문서 1건', origin: 'chat', lock: false, run: async () => { order.push('분석 시작'); return { summary: '완료' }; } });
+
+  await Promise.resolve();
+  expect(order).toEqual(['첨부 시작']);
+
+  hold.resolve();
+  await download.finished;
+  await analyze.finished;
+  expect(order).toEqual(['첨부 시작', '분석 시작']);
+});

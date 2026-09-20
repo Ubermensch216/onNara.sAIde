@@ -10,6 +10,9 @@ import { AgentSteps } from './AgentSteps';
 import { TaskRegisterCard } from './TaskRegisterCard';
 import { Markdown } from './Markdown';
 import { CopyIcon, DeleteIcon } from './ChatActionIcons';
+import { FeedbackButtons } from './FeedbackButtons';
+import { loadFeedbackMap } from '@/lib/feedback/store';
+import type { FeedbackVerdict } from '@/lib/feedback/store';
 import { parseDownloadLink, type DownloadLinkAction } from '@/lib/downloads/links';
 import { parsePanelLink, type PanelLink } from '@/lib/panel/links';
 
@@ -18,6 +21,8 @@ interface Props {
   dark: boolean;
   showThinking: boolean;
   deleteDisabled: boolean;
+  /** 어떤 모델이 만든 답변인가. 정확도 피드백(B4)에 함께 기록한다. */
+  model: string;
   onDelete: (id: UiMessage['id']) => Promise<void>;
   /** 답변 안의 다운로드 파일 링크를 눌렀을 때. 사용자 제스처가 살아 있도록 클릭 중에 동기로 호출한다. */
   onDownloadLink?: (action: DownloadLinkAction, downloadId: number) => void;
@@ -27,7 +32,7 @@ interface Props {
   onOpenSchedule?: () => void;
 }
 
-export function MessageList({ messages, dark, showThinking, deleteDisabled, onDelete, onDownloadLink, onPanelLink, onOpenSchedule }: Props) {
+export function MessageList({ messages, dark, showThinking, deleteDisabled, model, onDelete, onDownloadLink, onPanelLink, onOpenSchedule }: Props) {
   // 마크다운 HTML 안의 링크에는 React 핸들러를 달 수 없어 목록에서 한 번에 가로챈다.
   const onClick = (event: React.MouseEvent) => {
     const href = (event.target as Element).closest?.('a')?.getAttribute('href');
@@ -49,6 +54,21 @@ export function MessageList({ messages, dark, showThinking, deleteDisabled, onDe
   const scrollerRef = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
 
+  /**
+   * 이미 눌러 둔 평가. 목록에서 한 번만 읽어 메시지마다 나눠 준다(B4).
+   *
+   * ★ 메시지마다 저장소를 읽으면 대화 하나에 조회가 수십 번 걸린다. 평가는 자주 바뀌지 않으므로
+   *   목록이 바뀔 때만 다시 읽는다.
+   */
+  const [verdicts, setVerdicts] = useState<Map<string, FeedbackVerdict>>(new Map());
+  useEffect(() => {
+    let alive = true;
+    void Promise.all([loadFeedbackMap('action-card'), loadFeedbackMap('summary')]).then(([cards, summaries]) => {
+      if (alive) setVerdicts(new Map([...cards, ...summaries]));
+    });
+    return () => { alive = false; };
+  }, [messages.length]);
+
   // 사용자가 위로 스크롤해 과거를 읽는 중이면 자동 스크롤로 끌어내리지 않는다.
   const onScroll = () => {
     const el = scrollerRef.current;
@@ -63,11 +83,23 @@ export function MessageList({ messages, dark, showThinking, deleteDisabled, onDe
   return (
     <div className="msgs" ref={scrollerRef} onScroll={onScroll} onClick={onClick}>
       {messages.map((m) => (
-        <Message key={String(m.id)} msg={m} dark={dark} showThinking={showThinking} deleteDisabled={deleteDisabled} onDelete={onDelete} onOpenSchedule={onOpenSchedule} />
+        <Message key={String(m.id)} msg={m} dark={dark} showThinking={showThinking} deleteDisabled={deleteDisabled}
+          model={model} verdict={verdicts.get(feedbackKey(m))} onDelete={onDelete} onOpenSchedule={onOpenSchedule} />
       ))}
       <div ref={endRef} />
     </div>
   );
+}
+
+/** 평가가 붙는 자리. 대화와 메시지를 함께 써야 다른 대화의 같은 번호와 겹치지 않는다. */
+function feedbackKey(msg: UiMessage): string {
+  return `${msg.conversationId}:${msg.id}`;
+}
+
+/** 이 답변에 평가를 받을 만한가. 자동화 실행 기록은 AI가 쓴 글이 아니므로 묻지 않는다. */
+function feedbackKindOf(msg: UiMessage): 'action-card' | 'summary' | null {
+  if (msg.role !== 'assistant' || msg.origin === 'automation' || msg.streaming || !msg.content) return null;
+  return msg.taskCandidates?.length ? 'action-card' : 'summary';
 }
 
 function Message({
@@ -75,6 +107,8 @@ function Message({
   dark,
   showThinking,
   deleteDisabled,
+  model,
+  verdict,
   onDelete,
   onOpenSchedule,
 }: {
@@ -82,6 +116,8 @@ function Message({
   dark: boolean;
   showThinking: boolean;
   deleteDisabled: boolean;
+  model: string;
+  verdict?: FeedbackVerdict | undefined;
   onDelete: Props['onDelete'];
   onOpenSchedule?: Props['onOpenSchedule'];
 }) {
@@ -114,6 +150,12 @@ function Message({
       {!empty && (
         <div className={`origin-badge ${msg.origin === 'automation' ? 'automation' : 'ai'}`}>
           {msg.origin === 'automation' ? t('msg.originAutomation') : t('msg.originAi')}
+          {/* 캐시에서 꺼낸 답변임을 숨기지 않는다(B1). 언제 분석한 것인지까지 밝힌다. */}
+          {msg.cached !== undefined && (
+            <span className="cached-badge" title={t('msg.cachedHint')}>
+              {t('msg.cached', { when: new Date(msg.cached).toLocaleDateString() })}
+            </span>
+          )}
         </div>
       )}
 
@@ -129,12 +171,17 @@ function Message({
           candidates={msg.taskCandidates}
           source={msg.sourceDoc}
           conversationId={msg.conversationId}
+          model={model}
           {...(onOpenSchedule ? { onOpenSchedule } : {})}
         />
       ) : null}
 
       {msg.aborted && <div className="aborted">{t('msg.aborted')}</div>}
       {msg.perf && !msg.streaming && <PerfLine perf={msg.perf} />}
+      {/* 평가는 복사·삭제와 성격이 다르다. 같은 줄에 섞지 않고 답변 아래 제 줄을 준다(B4). */}
+      {feedbackKindOf(msg) && (
+        <FeedbackButtons kind={feedbackKindOf(msg)!} targetKey={feedbackKey(msg)} model={model} initial={verdict} />
+      )}
       <MessageActions msg={msg} deleteDisabled={deleteDisabled} onDelete={onDelete} />
     </div>
   );

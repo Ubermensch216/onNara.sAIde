@@ -26,6 +26,7 @@ import { setLocale, useRichT, useT } from '@/lib/i18n';
 import { SaideIcon } from '../sidepanel/components/BrandMark';
 import { PresetEditor } from './PresetEditor';
 import { PerfDashboard } from './PerfDashboard';
+import { QualityPanel } from './QualityPanel';
 import { MemoryPanel } from './MemoryPanel';
 import {
   grantedOrigins,
@@ -325,6 +326,42 @@ export default function OptionsApp() {
 
       <PerfDashboard />
 
+      <QualityPanel />
+
+      {/* ── 첨부 파일 저장 (B5) ── */}
+      <section>
+        <h2>{t('opt.files.h')}</h2>
+
+        <div className="field">
+          <div className="row">
+            <label htmlFor="naming">{t('opt.files.naming')}</label>
+            <select
+              id="naming"
+              value={s.attachmentNaming}
+              onChange={(e) => patch({ attachmentNaming: e.target.value as typeof s.attachmentNaming })}
+            >
+              <option value="normalized">{t('opt.files.naming.normalized')}</option>
+              <option value="browser">{t('opt.files.naming.browser')}</option>
+            </select>
+          </div>
+          <p className="desc">{t('opt.files.namingDesc')}</p>
+        </div>
+
+        <div className="field">
+          <div className="row">
+            <label htmlFor="folder">{t('opt.files.folder')}</label>
+            <input
+              id="folder"
+              type="checkbox"
+              checked={s.attachmentFolder}
+              disabled={s.attachmentNaming !== 'normalized'}
+              onChange={(e) => patch({ attachmentFolder: e.target.checked })}
+            />
+          </div>
+          <p className="desc">{t('opt.files.folderDesc')}</p>
+        </div>
+      </section>
+
       <PresetEditor />
 
       <MemoryPanel />
@@ -361,6 +398,19 @@ export default function OptionsApp() {
             </select>
           </div>
           <p className="desc">{t('opt.alert.hourDesc')}</p>
+        </div>
+
+        <div className="field">
+          <div className="row">
+            <label htmlFor="jobAlerts">{t('opt.alert.job')}</label>
+            <input
+              id="jobAlerts"
+              type="checkbox"
+              checked={s.jobAlerts}
+              onChange={(e) => patch({ jobAlerts: e.target.checked })}
+            />
+          </div>
+          <p className="desc">{t('opt.alert.jobDesc')}</p>
         </div>
       </section>
 
