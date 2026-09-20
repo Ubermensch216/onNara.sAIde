@@ -668,14 +668,14 @@ export default function App() {
       </header>
 
       <nav className="view-tabs" role="tablist" aria-label={t('view.tabs')}>
+        <button type="button" role="tab" aria-selected={view === 'ai'} className={`view-tab ${view === 'ai' ? 'on' : ''}`} onClick={() => setView('ai')}>
+          {t('view.ai')}
+        </button>
         <button type="button" role="tab" aria-selected={view === 'inbox'} onClick={() => setView('inbox')}
           className={`view-tab inbox ${view === 'inbox' ? 'on' : ''}`}
           {...(inboxPending > 0 ? { 'aria-label': t('view.inboxLabel', { n: inboxPending }) } : {})}>
           {t('view.inbox')}
           {inboxPending > 0 && <span className="view-tab-count">{inboxPending}</span>}
-        </button>
-        <button type="button" role="tab" aria-selected={view === 'ai'} className={`view-tab ${view === 'ai' ? 'on' : ''}`} onClick={() => setView('ai')}>
-          {t('view.ai')}
         </button>
         <button type="button" role="tab" aria-selected={view === 'schedule'} onClick={() => setView('schedule')}
           className={`view-tab sched ${view === 'schedule' ? 'on' : ''}`}
