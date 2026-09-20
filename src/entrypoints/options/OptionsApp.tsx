@@ -28,6 +28,7 @@ import { PresetEditor } from './PresetEditor';
 import { PerfDashboard } from './PerfDashboard';
 import { QualityPanel } from './QualityPanel';
 import { MemoryPanel } from './MemoryPanel';
+import { InboxSettings } from './InboxSettings';
 import {
   grantedOrigins,
   hasAllUrls,
@@ -413,6 +414,8 @@ export default function OptionsApp() {
           <p className="desc">{t('opt.alert.jobDesc')}</p>
         </div>
       </section>
+
+      <InboxSettings s={s} patch={patch} />
 
       {/* ── 페이지 접근 권한 ── */}
       <section>

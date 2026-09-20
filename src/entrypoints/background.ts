@@ -4,7 +4,9 @@ import { forgetPanelSpawn, isReportedPanelTab, notePanelSpawn, panelOpener, reme
 import type { AppError, AttachmentDownloadResult, AttachmentNaming, ExtractedPage, RequestControl, SWToContent } from '@/lib/messaging/protocol';
 import { isHtmlAttachmentName } from '@/lib/onnara/attachments';
 import { clearDownloadName, registerDownloadNaming, reserveDownloadName } from '@/lib/downloads/rename';
-import { sameDocumentTitle } from '@/lib/onnara/document-list';
+import { isReceivedDocumentList, sameDocumentTitle, type StructuredDocumentList } from '@/lib/onnara/document-list';
+import { loadInboxLocation, saveInboxLocation } from '@/lib/inbox/location';
+import { isWorkTabBusy, runExclusive } from '@/lib/browser/sw-lock';
 import { fitToBudget } from '@/lib/extract/budget';
 import { pdfText, withPdfSections } from '@/lib/extract/pdf-offscreen';
 import type { DocumentListLocation } from '@/lib/onnara/document-navigation';
@@ -22,6 +24,7 @@ import type { DocumentListLocation } from '@/lib/onnara/document-navigation';
 
 import { setLocale, t } from '@/lib/i18n';
 import { registerTaskAlerts } from '@/lib/schedule/alerts';
+import { registerInboxBriefing } from '@/lib/inbox/schedule';
 import { loadSettings, onSettingsChanged } from '@/lib/storage/settings';
 import {
   isRestrictedUrl,
@@ -58,6 +61,8 @@ export default defineBackground(() => {
 
   // 기한 알림(S07). 패널이 닫혀 있어도 알람이 워커를 깨워 확인한다.
   registerTaskAlerts();
+  // 아침 접수함 브리핑(N1). 기본 꺼짐이며, 켠 사용자에게만 알람이 동작한다.
+  registerInboxBriefing(BRIEFING_DEPS);
   // 첨부 파일명 정규화(B5). 브라우저가 이름을 정하기 직전에 한 번 끼어든다.
   registerDownloadNaming();
 
@@ -159,6 +164,34 @@ function registerContextMenus() {
   });
 }
 
+/**
+ * 브리핑이 서비스 워커에서 쓸 통로.
+ *
+ * ★ 스케줄러에 수집 함수를 **넘겨 준다**. 스케줄러가 background를 직접 가져오면 순환 참조가 되고,
+ *   무엇보다 시험할 수 없게 된다 — 조건 판정(shouldBriefNow)은 브라우저 없이 돌아야 한다.
+ */
+const BRIEFING_DEPS = {
+  collect: (budgetTokens: number, control: RequestControl) => runExclusive(() => collectInbox(undefined, budgetTokens, control)),
+  panelOpen: panelIsOpen,
+  notifyPanel: pushToPanel,
+  busy: isWorkTabBusy,
+};
+
+/**
+ * 사이드패널 문서가 열려 있는가.
+ *
+ * ★ `sendMessage`의 성공 여부로 가리지 않는다. 오프스크린 문서처럼 다른 수신자가 있으면
+ *   패널이 닫혀 있어도 성공하고, 그러면 브리핑이 아무도 받지 않는 요청을 보낸 채 끝난다.
+ */
+async function panelIsOpen(): Promise<boolean> {
+  try {
+    const contexts = await chrome.runtime.getContexts({ contextTypes: [chrome.runtime.ContextType.SIDE_PANEL] });
+    return contexts.length > 0;
+  } catch {
+    return false;
+  }
+}
+
 /* ── 패널 요청 처리 ────────────────────────────────────── */
 
 const cancelled = new Map<string, number>();
@@ -178,13 +211,26 @@ export async function handlePanelMessage(msg: PanelToSW): Promise<SWToPanel> {
   switch (msg.type) {
     case 'DOWNLOAD_ATTACHMENTS': {
       if (msg.title) {
-        return readDocumentInBackground(msg.tabId, msg.title, 1000, control,
-          target => downloadAttachmentsInTab(target.tabId, target.control, msg.naming), { keepWorkTab: msg.keepWorkTab });
+        return runExclusive(() => readDocumentInBackground(msg.tabId, msg.title!, 1000, control,
+          target => downloadAttachmentsInTab(target.tabId, target.control, msg.naming), { keepWorkTab: msg.keepWorkTab }));
       }
       const tab = await chrome.tabs.get(msg.tabId);
       assertCurrent(control, tab.url ?? '', isCancelled());
-      return downloadAttachmentsInTab(msg.tabId, control, msg.naming);
+      return runExclusive(() => downloadAttachmentsInTab(msg.tabId, control, msg.naming));
     }
+
+    case 'CAPTURE_INBOX_LOCATION': {
+      const located = await withContentScript(msg.tabId, { type: 'LOCATE_INBOX', control });
+      if (located.type === 'FAILED') return { type: 'ERROR', error: located.error };
+      if (located.type !== 'INBOX_LOCATED') return { type: 'ERROR', error: { code: 'UNKNOWN', message: '받은문서 화면을 확인하지 못했습니다.' } };
+      const saved = await saveInboxLocation(located.location, located.listName);
+      return saved
+        ? { type: 'INBOX_LOCATION_SAVED', listName: saved.listName }
+        : { type: 'ERROR', error: { code: 'UNKNOWN', message: '접수함 위치를 저장하지 못했습니다.' } };
+    }
+
+    case 'COLLECT_INBOX':
+      return runExclusive(() => collectInbox(msg.tabId, msg.budgetTokens, control));
     case 'GET_ACTIVE_TAB': {
       const tab = await activeTab(msg.windowId);
       const summary = tab ? toSummary(tab) : null;
@@ -222,7 +268,7 @@ export async function handlePanelMessage(msg: PanelToSW): Promise<SWToPanel> {
             };
           }
         : undefined;
-      return readDocumentInBackground(msg.tabId, title, msg.budgetTokens, control, withAttachments, { keepWorkTab: msg.keepWorkTab });
+      return runExclusive(() => readDocumentInBackground(msg.tabId, title, msg.budgetTokens, control, withAttachments, { keepWorkTab: msg.keepWorkTab }));
     }
 
     case 'RELEASE_WORK_TAB':
@@ -579,7 +625,7 @@ export async function readDocumentInBackground(
       temporary.add(chosenTabId);
       await keepBackground(chosenTabId, source);
       try {
-        chosenList = await waitForDocumentList(chosenTabId, title, budgetTokens, taskControl, located.location);
+        chosenList = await waitForDocumentList(chosenTabId, documentTarget(title), budgetTokens, taskControl, located.location);
       } catch (listError) {
         if (cancelled.has(control.id)) throw listError;
         // 복제 탭에서 검색 조건이나 세션 상태를 복원하지 못했더라도,
@@ -808,6 +854,95 @@ export async function releaseKeptWorkTab(sourceTabId: number): Promise<void> {
   if (workTabId === undefined) return;
   await chrome.tabs.remove(workTabId).catch(() => undefined);
   forgetWorkTab(workTabId);
+}
+
+/* ── 접수함 수집 (N1) ─────────────────────────────────── */
+
+/** 목록 대신 로그인 화면이 왔는가. 세션이 끊긴 것과 화면을 못 읽은 것은 사용자가 할 일이 다르다. */
+export function looksLikeLogin(text: string): boolean {
+  return /로그인|인증서|세션이\s*만료|다시\s*로그인|sign\s*in|gpki/i.test(text.slice(0, 2000));
+}
+
+const INBOX_COLLECT_BUDGET_MS = 25_000;
+
+/**
+ * 지정해 둔 받은문서 목록을 읽어 온다.
+ *
+ * ★ **본문을 열지 않는다.** 목록 표만 읽는다 — 그것이 열람 상태를 미열람으로 두는 유일한 방법이다.
+ * ★ 사용자가 보던 화면을 바꾸지 않는다. 지금 화면이 이미 받은문서면 그대로 읽고,
+ *   아니면 탭을 복제해 백그라운드에서 목록을 복원한 뒤 그 탭을 닫는다.
+ */
+export async function collectInbox(
+  hintTabId: number | undefined,
+  budgetTokens: number,
+  control: RequestControl,
+): Promise<SWToPanel> {
+  const saved = await loadInboxLocation();
+  if (!saved) {
+    return { type: 'ERROR', error: {
+      code: 'UNKNOWN',
+      message: '접수함으로 지정한 화면이 없습니다.',
+      hint: '온나라 공유/공람 > 받은문서 목록을 연 뒤 접수함 탭에서 "이 화면을 접수함으로 지정"을 누르세요.',
+    } };
+  }
+
+  const source = await findOnnaraTab(hintTabId, saved.origin);
+  if (!source || typeof source.id !== 'number') {
+    return { type: 'ERROR', error: {
+      code: 'UNKNOWN',
+      message: '온나라 탭이 열려 있지 않습니다.',
+      hint: `${saved.origin} 에 로그인한 탭을 연 뒤 다시 확인하세요. 확장은 브라우저가 열려 있고 온나라 세션이 살아 있을 때만 목록을 읽을 수 있습니다.`,
+    } };
+  }
+
+  const current = await dispatchContent(source.id, { type: 'EXTRACT', budgetTokens, purpose: 'page', control });
+  if (current.type === 'FAILED') return { type: 'ERROR', error: current.error };
+  if (current.type === 'EXTRACTED') {
+    // ① 지금 보고 있는 화면이 이미 받은문서면 복제하지 않는다. 가장 싸고 가장 덜 침입적이다.
+    if (isReceivedDocumentList(current.payload.structuredData)) {
+      return { type: 'INBOX_COLLECTED', list: current.payload.structuredData!, via: 'active-tab' };
+    }
+    if (!current.payload.structuredData && looksLikeLogin(current.payload.text)) {
+      return { type: 'ERROR', error: {
+        code: 'UNKNOWN',
+        message: '온나라 세션이 만료되어 접수함을 읽지 못했습니다.',
+        hint: '온나라에 다시 로그인한 뒤 확인하세요. 로그인은 사용자가 직접 해야 합니다.',
+      } };
+    }
+  }
+
+  // ② 저장해 둔 목록을 백그라운드 작업 탭에서 복원한다.
+  const taskControl: RequestControl = {
+    ...control,
+    deadline: Math.min(control.deadline, Date.now() + INBOX_COLLECT_BUDGET_MS),
+    expectedUrl: undefined,
+  };
+  const duplicate = await duplicateWorkTab(source.id);
+  const workTabId = duplicate?.id;
+  if (typeof workTabId !== 'number') {
+    return { type: 'ERROR', error: { code: 'UNKNOWN', message: '백그라운드 작업 탭을 만들지 못했습니다.' } };
+  }
+  try {
+    await keepBackground(workTabId, source);
+    const list = await waitForDocumentList(workTabId, INBOX_TARGET, budgetTokens, taskControl, saved.location);
+    return { type: 'INBOX_COLLECTED', list: list.structuredData!, via: 'work-tab' };
+  } catch (error) {
+    return { type: 'ERROR', error: error instanceof ReadFailure ? error.appError : accessError(error) };
+  } finally {
+    await chrome.tabs.remove(workTabId).catch(() => undefined);
+    forgetWorkTab(workTabId);
+  }
+}
+
+/** 저장해 둔 출처와 같은 온나라 탭. 작업 탭은 제외한다 — 그 탭은 우리가 만든 것이다. */
+async function findOnnaraTab(hintTabId: number | undefined, origin: string): Promise<chrome.tabs.Tab | null> {
+  if (hintTabId !== undefined) {
+    const hinted = await chrome.tabs.get(hintTabId).catch(() => null);
+    if (hinted && typeof hinted.id === 'number' && !workTabs.has(hinted.id) && originOf(hinted.url) === origin) return hinted;
+  }
+  const tabs = await chrome.tabs.query({}).catch(() => [] as chrome.tabs.Tab[]);
+  const matched = tabs.filter(tab => typeof tab.id === 'number' && !workTabs.has(tab.id) && originOf(tab.url) === origin);
+  return matched.find(tab => tab.active) ?? matched[0] ?? null;
 }
 
 type ReadStage = 'source' | 'list' | 'open' | 'detail' | 'followUp';
@@ -1108,9 +1243,37 @@ async function frameUrls(tabId: number): Promise<string> {
   }
 }
 
+/**
+ * 작업 탭에서 기다릴 목록.
+ *
+ * ★ 예전에는 "그 제목이 든 목록"만 기다렸다. 접수함 브리핑(N1)은 제목이 아니라
+ *   **화면 자체**를 기다린다. 받아들이는 조건만 갈라 두고 복원·재시도 절차는 하나로 둔다 —
+ *   목록 복원은 이 제품에서 가장 깨지기 쉬운 절차라, 두 벌로 갈라 두면 한쪽만 고쳐진다.
+ */
+interface ListTarget {
+  /** 오류 문구에 쓸 이름. */
+  label: string;
+  /** 추출기에 함께 보낼 대상 제목(제목 칸을 고르는 데 쓴다). */
+  title?: string;
+  accepts(list: StructuredDocumentList | undefined): boolean;
+}
+
+function documentTarget(title: string): ListTarget {
+  return {
+    label: title,
+    title,
+    accepts: list => Boolean(list?.rows.some(row => row.title && sameDocumentTitle(row.title, title))),
+  };
+}
+
+const INBOX_TARGET: ListTarget = {
+  label: '받은문서',
+  accepts: list => isReceivedDocumentList(list) && list!.rows.length > 0,
+};
+
 async function waitForDocumentList(
   tabId: number,
-  title: string,
+  target: ListTarget,
   budgetTokens: number,
   control: RequestControl,
   location: DocumentListLocation,
@@ -1123,8 +1286,8 @@ async function waitForDocumentList(
   let seen = '화면을 한 번도 읽지 못함';
   while (Date.now() < listDeadline) {
     assertCurrent(control, '', cancelled.has(control.id));
-    const result = await dispatchContent(tabId, { type: 'EXTRACT', budgetTokens, purpose: 'page', targetTitle: title, control });
-    if (result.type === 'EXTRACTED' && result.payload.structuredData?.rows.some(row => row.title && sameDocumentTitle(row.title, title))) {
+    const result = await dispatchContent(tabId, { type: 'EXTRACT', budgetTokens, purpose: 'page', ...(target.title ? { targetTitle: target.title } : {}), control });
+    if (result.type === 'EXTRACTED' && target.accepts(result.payload.structuredData)) {
       return result.payload;
     }
     if (result.type === 'FAILED' && result.error.code === 'HOST_PERMISSION_REQUIRED') throw new ReadFailure(result.error);
@@ -1160,7 +1323,7 @@ async function waitForDocumentList(
   assertCurrent(control, '', cancelled.has(control.id));
   throw new ReadFailure({
     code: 'UNKNOWN',
-    message: `작업 탭에서 원본 문서 목록을 복원하지 못했습니다: ${title}`,
+    message: `작업 탭에서 원본 문서 목록을 복원하지 못했습니다: ${target.label}`,
     hint: `복원 시도 ${restores}회(${accepted ? '목록 프레임에 조회 조건 전송' : '목록 프레임을 찾지 못함'}), 마지막 화면: ${seen}. `
       + '원본 목록을 새로 고쳐 문서가 그대로 있는지 확인한 뒤 다시 요청하거나, 원본에서 해당 문서를 직접 열고 요약을 요청하세요.',
   });

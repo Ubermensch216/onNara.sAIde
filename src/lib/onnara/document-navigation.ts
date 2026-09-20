@@ -39,13 +39,28 @@ function collectFields(form: HTMLFormElement): Array<[string, string]> {
 
 export function captureDocumentListLocation(title: string, doc = document): DocumentListLocation | null {
   const target = findDocumentOpenTarget(title, doc);
+  return target ? locationOf(doc, target) : null;
+}
+
+/**
+ * 문서를 가리지 않고 **지금 이 목록 화면** 자체의 위치를 잡는다(접수함 지정 · N1).
+ *
+ * ★ 문서 한 건을 여는 길(`captureDocumentListLocation`)과 같은 정보를 쓴다. 다른 점은
+ *   기준이 되는 요소가 없다는 것뿐이다. 조회 폼을 고르는 규칙은 한 함수에 둔다 —
+ *   갈라 두면 목록 복원이 한쪽에서만 고쳐지는 날이 온다.
+ */
+export function captureListLocation(doc = document): DocumentListLocation | null {
+  return locationOf(doc, null);
+}
+
+function locationOf(doc: Document, target: HTMLElement | null): DocumentListLocation | null {
   const view = doc.defaultView;
-  if (!target || !view) return null;
+  if (!view) return null;
   const location: DocumentListLocation = { url: view.location.href, framePath: framePath(view) };
   if (location.framePath.length && view.name) location.frameName = view.name;
 
   const current = new URL(location.url);
-  const targetForm = target.closest('form');
+  const targetForm = target?.closest('form') ?? null;
   let selectedForm: HTMLFormElement | null = null;
 
   if (targetForm) {

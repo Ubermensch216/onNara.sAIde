@@ -21,6 +21,8 @@ const ALL: PanelLink[] = [
   { tab: 'schedule', cursor: '2026-09-13', mode: 'list' },
   { tab: 'automation' },
   { tab: 'automation', jobId: '0b8e1c2a-1111-4222-8333-abcdefabcdef' },
+  { tab: 'inbox' },
+  { tab: 'inbox', docKey: 'k3x9ab0zq7' },
 ];
 
 describe('panelLink / parsePanelLink', () => {
@@ -35,6 +37,7 @@ describe('panelLink / parsePanelLink', () => {
     expect(panelLink({ tab: 'schedule', cursor: '2026-05-01', mode: 'month' }))
       .toBe('#saide-goto=schedule:date:2026-05-01:month');
     expect(panelLink({ tab: 'automation', jobId: 'abc-123' })).toBe('#saide-goto=tools:job:abc-123');
+    expect(panelLink({ tab: 'inbox', docKey: 'k3x9ab0zq7' })).toBe('#saide-goto=inbox:doc:k3x9ab0zq7');
   });
 
   it('우리가 만든 형태가 아니면 읽지 않는다', () => {
@@ -48,6 +51,9 @@ describe('panelLink / parsePanelLink', () => {
       '#saide-goto=schedule:date:2026-5-1:month',
       '#saide-goto=schedule:date:2026-05-01:zzz',
       '#saide-goto=tools:job:',
+      '#saide-goto=inbox:doc:',
+      '#saide-goto=inbox:doc:ABC',
+      '#saide-goto=inbox:doc:a-b',
       'x#saide-goto=schedule',
     ]) {
       expect(parsePanelLink(href), String(href)).toBeNull();

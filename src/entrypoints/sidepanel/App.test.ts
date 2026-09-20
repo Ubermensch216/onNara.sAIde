@@ -160,12 +160,13 @@ it('@를 치면 `@` 그룹만 뜨고 어느 탭으로 가는지 뱃지로 알린
   await settle();
 
   const items = [...document.querySelectorAll('.slashmenu [role="option"]')].map(item => item.textContent ?? '');
-  expect(items).toHaveLength(2);
+  expect(items).toHaveLength(3);
+  expect(items.join('|')).toContain('@브리핑');
   expect(items.join('|')).toContain('@일정');
   expect(items.join('|')).toContain('@첨부');
   // `/` 그룹은 섞이지 않는다.
   expect(items.join('|')).not.toContain('/요약');
-  expect(document.querySelectorAll('.slash-badge.opens')).toHaveLength(2);
+  expect(document.querySelectorAll('.slash-badge.opens')).toHaveLength(3);
 });
 
 /*

@@ -17,7 +17,7 @@
 import { db } from '@/lib/storage/db';
 
 /** 무엇에 대한 평가인가. 정확도의 성격이 달라 섞어 세지 않는다. */
-export type FeedbackKind = 'action-card' | 'task-candidate' | 'summary';
+export type FeedbackKind = 'action-card' | 'task-candidate' | 'summary' | 'inbox-relevance';
 export type FeedbackVerdict = 'good' | 'bad';
 
 export interface FeedbackEntry {
@@ -81,7 +81,7 @@ export interface FeedbackSummary {
   lastAt: number | null;
 }
 
-const KINDS: FeedbackKind[] = ['action-card', 'task-candidate', 'summary'];
+const KINDS: FeedbackKind[] = ['action-card', 'task-candidate', 'summary', 'inbox-relevance'];
 
 export function summarizeFeedback(rows: FeedbackEntry[]): FeedbackSummary {
   const buckets = KINDS.map(kind => ({

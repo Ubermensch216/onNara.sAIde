@@ -62,13 +62,17 @@ import { SCHEDULE_ALIASES, SCHEDULE_PRESET_ID, SCHEDULE_SLASH } from '@/lib/sche
 import type { PanelLink } from '@/lib/panel/links';
 import { focusJob, useAutomation } from '@/lib/automation/jobs';
 import { focusSchedule, focusScheduleTask, refreshTasks, useSchedule } from '@/lib/schedule/store';
+import { takeInboxViewRequest } from '@/lib/inbox/schedule';
+import { BRIEFING_ALIASES, BRIEFING_PRESET_ID, BRIEFING_SLASH, collectAndBrief, focusInboxDoc, loadInbox, pendingDocs, useInbox } from '@/lib/inbox/panel';
+import { InboxPanel } from './components/InboxPanel';
 import { urgentCount } from '@/lib/schedule/task';
 import type { DownloadLinkAction } from '@/lib/downloads/links';
 import type { AppError } from '@/lib/messaging/protocol';
 
-type View = 'ai' | 'schedule' | 'automation';
+type View = 'inbox' | 'ai' | 'schedule' | 'automation';
 const VIEW_KEY = 'saide.view';
-const VIEWS: View[] = ['ai', 'schedule', 'automation'];
+// ★ 접수함이 맨 앞이다. 매일 열 이유를 만드는 탭이라 첫 자리에 둔다(N1).
+const VIEWS: View[] = ['inbox', 'ai', 'schedule', 'automation'];
 
 /** 마지막으로 연 탭은 이 브라우저에서만 기억한다. 저장소를 못 쓰면 AI 도우미로 시작한다. */
 function initialView(): View {
@@ -108,6 +112,8 @@ export default function App() {
   const runningJobs = useAutomation(state => state.jobs.filter(job => job.status === 'queued' || job.status === 'running').length);
   // 기한이 임박한 일정은 어느 탭에 있든 보여야 한다. 그러려고 배지를 헤더가 아니라 탭에 둔다.
   const dueTasks = useSchedule(state => urgentCount(state.tasks));
+  // 접수함 배지도 탭을 열지 않아도 맞아야 한다. 아직 손대지 않은 문서의 수다.
+  const inboxPending = useInbox(state => pendingDocs(state.docs).length);
   const warmedFor = useRef('');
 
   const t = useT();
@@ -119,6 +125,9 @@ export default function App() {
 
   // 일정 배지는 탭을 열지 않아도 맞아야 한다. 패널을 열 때 한 번 읽어 둔다.
   useEffect(() => { void refreshTasks(); }, []);
+  useEffect(() => { void loadInbox(); }, []);
+  // 알림을 눌러 연 패널은 접수함 탭을 편다(N1). 표시는 한 번 쓰고 지운다.
+  useEffect(() => { void takeInboxViewRequest().then(open => { if (open) setView('inbox'); }); }, []);
 
   // 처음 여는 사람에게는 `/`와 `@`의 규칙을 아무도 알려 주지 않았다(B3).
   useEffect(() => { void shouldShowOnboarding().then(setOnboarding); }, []);
@@ -246,6 +255,10 @@ export default function App() {
         if (currentTab.current?.tabId === msg.tabId) chat.noteScreenChange(msg.frameId);
       } else if (msg.type === 'CONTEXT_MENU') {
         handleContextMenu(msg.preset, msg.selectionText);
+      } else if (msg.type === 'BRIEFING_DUE') {
+        // ★ 패널이 열려 있으면 브리핑은 패널이 한다. 서비스 워커가 직접 하는 것은
+        //   패널이 닫혀 있을 때뿐이다(모델도 화면도 여기에 있다).
+        void loadSettings().then(current => collectAndBrief(currentTab.current, current, 'alarm'));
       }
     };
     chrome.runtime.onMessage.addListener(listener);
@@ -432,6 +445,11 @@ export default function App() {
    *   반영한 뒤 비운다. 옮기는 일과 맞추는 일을 나눠 두면, 탭이 열려 있든 아니든 같다.
    */
   const followPanelLink = (link: PanelLink) => {
+    if (link.tab === 'inbox') {
+      if ('docKey' in link) focusInboxDoc(link.docKey);
+      setView('inbox');
+      return;
+    }
     if (link.tab === 'automation') {
       if ('jobId' in link) focusJob(link.jobId);
       setView('automation');
@@ -459,6 +477,17 @@ export default function App() {
         presetId: RECALL_PRESET_ID,
         needs: 'selection' as const,
         aliases: RECALL_ALIASES,
+      },
+      {
+        // 접수함을 수시로 확인한다. 주화면이 접수함 탭이므로 `@` 그룹이다.
+        prefix: '@' as const,
+        slash: BRIEFING_SLASH,
+        label: t('inbox.command'),
+        hint: t('inbox.commandHint'),
+        presetId: BRIEFING_PRESET_ID,
+        needs: 'none' as const,
+        aliases: BRIEFING_ALIASES,
+        opensTab: 'inbox' as const,
       },
       {
         // 주화면이 일정 탭이므로 `@` 그룹이다. 결과가 어디에 나타나는지를 이름이 알린다.
@@ -519,6 +548,16 @@ export default function App() {
      * ★ 그래서 ensureAccess를 타지 않는다. 일정을 적겠다는데 사이트 접근 권한을 물으면
      *   사용자는 무엇을 허용하는지 알 수 없다.
      */
+    /**
+     * `@브리핑`도 온나라 화면과 무관하다. 지정해 둔 접수함 위치를 쓰므로,
+     * 지금 어느 탭을 보고 있든 동작한다.
+     */
+    if (cmd.presetId === BRIEFING_PRESET_ID) {
+      setView('inbox');
+      await collectAndBrief(tab, settings, 'manual');
+      return;
+    }
+
     if (cmd.presetId === SCHEDULE_PRESET_ID) {
       // 이름만 치고 보낸 경우다. `/기억`과 같은 규칙 — 입력창을 되돌리고 예문을 보인다.
       if (!rest.trim()) {
@@ -629,6 +668,12 @@ export default function App() {
       </header>
 
       <nav className="view-tabs" role="tablist" aria-label={t('view.tabs')}>
+        <button type="button" role="tab" aria-selected={view === 'inbox'} onClick={() => setView('inbox')}
+          className={`view-tab inbox ${view === 'inbox' ? 'on' : ''}`}
+          {...(inboxPending > 0 ? { 'aria-label': t('view.inboxLabel', { n: inboxPending }) } : {})}>
+          {t('view.inbox')}
+          {inboxPending > 0 && <span className="view-tab-count">{inboxPending}</span>}
+        </button>
         <button type="button" role="tab" aria-selected={view === 'ai'} className={`view-tab ${view === 'ai' ? 'on' : ''}`} onClick={() => setView('ai')}>
           {t('view.ai')}
         </button>
@@ -645,7 +690,12 @@ export default function App() {
         </button>
       </nav>
 
-      {view === 'schedule' ? (
+      {view === 'inbox' ? (
+        <main className="app-main">
+          <InboxPanel tab={tab} settings={settings}
+            onOpenSchedule={taskId => { focusScheduleTask(taskId); setView('schedule'); }} />
+        </main>
+      ) : view === 'schedule' ? (
         <main className="app-main"><SchedulePanel /></main>
       ) : view === 'automation' ? (
         <>

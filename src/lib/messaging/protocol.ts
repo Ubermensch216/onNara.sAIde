@@ -181,6 +181,15 @@ export type PanelToSW = (
   | { type: 'GET_ACTIVE_TAB'; windowId?: number }
   | { type: 'PREPARE_ACTION'; tabId: number; action: PageAction }
   | { type: 'CANCEL_REQUEST'; requestId: string }
+  /** 지금 보고 있는 화면을 접수함(공유/공람 > 받은문서)으로 지정한다(N1). */
+  | { type: 'CAPTURE_INBOX_LOCATION'; tabId: number }
+  /**
+   * 지정해 둔 접수함 목록을 읽어 온다(N1).
+   *
+   * ★ tabId는 힌트다. 없으면 서비스 워커가 저장된 출처로 온나라 탭을 찾는다 —
+   *   알람이 깨운 실행에는 "지금 보고 있는 탭"이 없기 때문이다.
+   */
+  | { type: 'COLLECT_INBOX'; tabId?: number; budgetTokens: number }
 ) & { control?: RequestControl };
 
 /* ── Service Worker → Panel ────────────────────────────── */
@@ -240,6 +249,17 @@ export type SWToPanel =
    */
   | { type: 'SCREEN_CHANGED'; tabId: number; frameId: number; url: string }
   | { type: 'CONTEXT_MENU'; preset: string; selectionText: string; tab: TabSummary }
+  /** 접수함으로 지정했다(N1). listName은 화면이 밝힌 목록 이름이다. */
+  | { type: 'INBOX_LOCATION_SAVED'; listName: string }
+  /** 접수함 목록을 읽었다(N1). 본문은 읽지 않는다 — 열람 상태를 바꾸지 않기 위해서다. */
+  | { type: 'INBOX_COLLECTED'; list: StructuredDocumentList; via: 'active-tab' | 'work-tab' }
+  /**
+   * 브리핑할 때가 되었다(N1). 패널이 열려 있을 때만 온다.
+   *
+   * ★ 실행은 패널이 한다. 패널에는 모델도, 작업 기록도, 화면도 있다.
+   *   서비스 워커가 직접 하는 것은 패널이 닫혀 있을 때뿐이다.
+   */
+  | { type: 'BRIEFING_DUE' }
   | { type: 'ERROR'; error: AppError };
 
 /* ── Service Worker → Content Script ───────────────────── */
@@ -255,6 +275,8 @@ export type SWToContent = (
   | { type: 'CHECK_DIALOG' }
   | { type: 'ACT'; action: PageAction }
   | { type: 'PREPARE'; action: PageAction }
+  /** 이 프레임이 받은문서 목록이면 그 화면의 위치를 잡아 돌려준다(N1). */
+  | { type: 'LOCATE_INBOX' }
 ) & { control: RequestControl };
 
 export type ContentToSW =
@@ -264,6 +286,7 @@ export type ContentToSW =
   /** target: 실제로 누른 요소 설명. 열기에 반응이 없을 때 원인을 알리는 데 쓴다. */
   | { type: 'OPENING_DOCUMENT'; title: string; target?: string }
   | { type: 'DOCUMENT_LOCATED'; location: DocumentListLocation }
+  | { type: 'INBOX_LOCATED'; location: DocumentListLocation; listName: string }
   | { type: 'DOCUMENT_LIST_RESTORED'; restored: boolean }
   | { type: 'ATTACHMENTS_FOUND'; items: AttachmentItem[] }
   | { type: 'ATTACHMENT_CLICKED'; clicked: boolean }

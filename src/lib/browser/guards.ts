@@ -37,7 +37,14 @@ export function validPanelRequest(v: unknown): v is PanelToSW {
   if (v.type === 'CANCEL_REQUEST') return text(v.requestId, 100);
   if (v.type === 'GET_ACTIVE_TAB') return v.windowId === undefined || (Number.isInteger(v.windowId) && (v.windowId as number) >= 0);
   if (v.type === 'LIST_TABS') return true;
+  // ★ 접수함 수집만 tabId가 없어도 된다. 알람이 깨운 실행에는 "지금 보고 있는 탭"이 없다.
+  if (v.type === 'COLLECT_INBOX') {
+    return validControl(v.control) && Number.isInteger(v.budgetTokens) &&
+      (v.budgetTokens as number) >= 1 && (v.budgetTokens as number) <= 8000 &&
+      (v.tabId === undefined || (Number.isInteger(v.tabId) && (v.tabId as number) >= 0));
+  }
   if (!Number.isInteger(v.tabId) || (v.tabId as number) < 0 || !validControl(v.control)) return false;
+  if (v.type === 'CAPTURE_INBOX_LOCATION') return true;
   if (v.type === 'CAPTURE_SCREENSHOT') return true;
   if (v.type === 'RELEASE_WORK_TAB') return true;
   if (v.type === 'DOWNLOAD_ATTACHMENTS') return (v.title === undefined || text(v.title, 500)) && optionalFlag(v.keepWorkTab);

@@ -7,6 +7,7 @@ export type DocumentListField =
   | 'body'
   | 'attachment'
   | 'status'
+  | 'readState'
   | 'separation';
 
 export interface DocumentListColumn {
@@ -18,6 +19,8 @@ export interface DocumentListColumn {
 export interface StructuredDocumentList {
   kind: 'onnara-document-list';
   listName: string;
+  /** 화면이 스스로 `받은문서`라고 밝혔는가. 접수함 브리핑(N1)의 판정 근거다. */
+  received?: boolean;
   columns: DocumentListColumn[];
   rows: Array<Partial<Record<DocumentListField, string>>>;
   selectedTitles?: string[];
@@ -51,6 +54,9 @@ function fieldForHeader(label: string): DocumentListField | null {
   if (value.includes('보고자') || value.includes('담당자')) return 'reporter';
   if (value === '본문') return 'body';
   if (value.includes('붙임') || value.includes('첨부')) return 'attachment';
+  // ★ 열람 열을 상태 열보다 먼저 가린다. '열람상태'처럼 두 낱말이 붙은 머리글이 있어,
+  //   순서를 바꾸면 열람 여부가 처리 상태로 읽혀 브리핑의 미열람 검증이 통째로 무너진다.
+  if (value.includes('열람') || value.includes('읽음') || value.includes('수신확인')) return 'readState';
   if (value === '상태' || value.includes('처리상태')) return 'status';
   if (value === '분리') return 'separation';
   return null;
@@ -101,12 +107,20 @@ function findHeader(rows: Element[]): { index: number; columns: DocumentListColu
   return null;
 }
 
-function listName(root: ParentNode, container: Element): string {
+/**
+ * 목록 이름과 "이 화면이 받은문서인가".
+ *
+ * ★ 이름만으로는 가릴 수 없다. 이름을 찾지 못한 목록의 기본 표시가 `받은문서`이기 때문이다.
+ *   그래서 **화면이 실제로 그 이름을 밝혔는지**를 따로 돌려준다. 접수함 브리핑(N1)은
+ *   이 판정 위에 서 있어, 기본값을 근거로 삼으면 엉뚱한 목록을 접수함으로 등록하게 된다.
+ */
+function listName(root: ParentNode, container: Element): { name: string; received: boolean } {
   const caption = container.querySelector('caption');
   const aria = container.getAttribute('aria-label');
   const headings = [...root.querySelectorAll('h1, h2, h3, h4, [role="heading"]')];
-  const received = headings.map(elementText).find(text => normalizedHeader(text).includes('받은문서'));
-  return cleanText(received || (caption ? elementText(caption) : '') || aria || '받은문서', 80);
+  const heading = headings.map(elementText).find(text => normalizedHeader(text).includes('받은문서'));
+  const declared = heading || (caption ? elementText(caption) : '') || aria || '';
+  return { name: cleanText(declared || '받은문서', 80), received: normalizedHeader(declared).includes('받은문서') };
 }
 
 /**
@@ -143,9 +157,11 @@ export function extractStructuredDocumentList(root: ParentNode = document): Stru
     }
     if (!data.length) continue;
 
+    const named = listName(root, container);
     const result: StructuredDocumentList = {
       kind: 'onnara-document-list',
-      listName: listName(root, container),
+      listName: named.name,
+      ...(named.received ? { received: true } : {}),
       columns,
       rows: data,
       selectedTitles,
@@ -173,8 +189,53 @@ export function serializeDocumentList(list: StructuredDocumentList): string {
   return lines.join('\n');
 }
 
-function searchable(value: string): string {
+/* ── 받은문서(공유/공람) 판정 ──────────────────────────── */
+
+/**
+ * 이 목록이 `공유/공람 > 받은문서` 화면인가.
+ *
+ * ★ URL이나 메뉴 코드로 가리지 않는다. 온나라 판본마다 다르고, SPA는 목록을 바꿔도
+ *   주소가 그대로다. 화면이 스스로 밝힌 이름(제목·caption·aria-label)만 근거로 삼는다.
+ */
+export function isReceivedDocumentList(list: StructuredDocumentList | null | undefined): boolean {
+  return list?.received === true;
+}
+
+/** 열람 여부. 목록이 알려 주지 않으면 `unknown`이다 — 모르면 모른다고 한다. */
+export type DocumentReadState = 'unread' | 'read' | 'unknown';
+
+const UNREAD_WORDS = ['미열람', '안읽음', '읽지않음', '미확인', '미수신확인', '신규'];
+const READ_WORDS = ['열람', '읽음', '확인'];
+
+/**
+ * 목록 행의 열람 여부.
+ *
+ * ★ 전용 열이 없는 판본이 있어 상태 칸도 함께 본다. 다만 상태 칸은 '접수'·'배부' 같은
+ *   처리 단계를 담는 자리라, 열람과 무관한 글자를 열람으로 읽지 않도록 낱말을 못 박는다.
+ *
+ * ★ '미열람'이 '열람'을 포함하므로 **부정 낱말을 먼저** 가린다. 순서가 바뀌면
+ *   모든 미열람 문서가 열람으로 집계되어, 브리핑이 "상태를 바꾸지 않았다"고 거짓말하게 된다.
+ */
+export function documentReadState(row: Partial<Record<DocumentListField, string>>): DocumentReadState {
+  const value = normalizedHeader(`${row.readState ?? ''} ${row.status ?? ''}`);
+  if (!value) return 'unknown';
+  if (UNREAD_WORDS.some(word => value.includes(word))) return 'unread';
+  if (READ_WORDS.some(word => value.includes(word))) return 'read';
+  return 'unknown';
+}
+
+/**
+ * 대조용 정규화. 공백·괄호·구두점 표기가 화면마다 달라 글자 그대로 비교하면 같은 말이 갈린다.
+ *
+ * ★ 한곳에 둔다. 제목 대조(이 파일)와 접수함 키워드 대조(lib/inbox/scope.ts)가 서로 다른
+ *   규칙을 쓰면, `예산 편성`으로 등록한 키워드가 `예산편성` 공문에 걸리지 않는 날이 온다.
+ */
+export function normalizeForMatch(value: string): string {
   return cleanText(value, Number.MAX_SAFE_INTEGER).normalize('NFC').toLowerCase().replace(/[\s\p{P}\p{S}]/gu, '');
+}
+
+function searchable(value: string): string {
+  return normalizeForMatch(value);
 }
 
 export function sameDocumentTitle(left: string, right: string): boolean {

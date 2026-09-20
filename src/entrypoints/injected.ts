@@ -17,12 +17,13 @@ import { requiresApproval, type RequestControl } from '@/lib/messaging/protocol'
 
 import { Readability } from '@mozilla/readability';
 import { clickAttachment, listAttachments, scanAttachments } from '@/lib/onnara/attachments';
-import { captureDocumentListLocation, restoreDocumentListLocation } from '@/lib/onnara/document-navigation';
+import { captureDocumentListLocation, captureListLocation, restoreDocumentListLocation } from '@/lib/onnara/document-navigation';
 import { fitToBudget } from '@/lib/extract/budget';
 import { collectDocumentText } from '@/lib/extract/document-text';
 import { findPdfUrls, readPdfSources } from '@/lib/extract/pdf-source';
 import {
   extractStructuredDocumentList,
+  isReceivedDocumentList,
   describeOpenFailure,
   describeOpenTarget,
   findDocumentOpenTarget,
@@ -94,6 +95,23 @@ export default defineUnlistedScript(() => {
                   code: 'UNKNOWN',
                   message: `현재 목록에서 문서를 하나로 식별할 수 없습니다: ${msg.title}`,
                   hint: describeOpenFailure(msg.title),
+                },
+              } satisfies ContentToSW);
+        } else if (msg.type === 'LOCATE_INBOX') {
+          // ★ 이 프레임이 실제로 받은문서 목록을 그리고 있을 때만 응답한다. 온나라 화면은
+          //   프레임이 여럿이라, 아무 프레임이나 위치를 돌려주면 나중에 목록 없는 화면을 복원한다.
+          const list = extractStructuredDocumentList();
+          const inbox = isReceivedDocumentList(list) ? captureListLocation() : null;
+          sendResponse(inbox
+            ? { type: 'INBOX_LOCATED', location: inbox, listName: list!.listName } satisfies ContentToSW
+            : {
+                type: 'FAILED',
+                error: {
+                  code: 'UNKNOWN',
+                  message: '현재 화면에서 받은문서 목록을 찾지 못했습니다.',
+                  hint: list
+                    ? `이 화면은 "${list.listName}" 목록입니다. 공유/공람 > 받은문서 화면에서 지정하세요.`
+                    : '공유/공람 > 받은문서 목록을 연 뒤 다시 지정하세요.',
                 },
               } satisfies ContentToSW);
         } else if (msg.type === 'SCAN_ATTACHMENTS') {

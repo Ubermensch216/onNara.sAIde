@@ -51,3 +51,31 @@ it('설정 변경을 정규화해서 전달하고 구독 해제가 가능하다'
   stop(); await saveSettings({ theme: 'dark' });
   expect(listener).toHaveBeenCalledTimes(1);
 });
+
+it('브리핑 설정의 손상된 값은 안전한 쪽으로 떨어진다', () => {
+  const next = normalizeSettings({
+    briefingEnabled: 'yes',
+    briefingHour: 99,
+    briefingReadPolicy: 'brief-body',
+    briefingOpenLimit: 0,
+    briefingRetentionDays: 1,
+    briefingScope: 'everything',
+    briefingKeywords: ['  예산 편성 ', '예산 편성', 42, 'x'.repeat(41), ''],
+    briefingFields: ['title', 'nope'],
+  });
+  // ★ 알 수 없는 열람 정책은 기본값(미열람 유지)으로 떨어진다. 설정을 잘못 읽어 문서가 열리는 일은 없어야 한다.
+  expect(next.briefingReadPolicy).toBe('keep-unread');
+  expect(next.briefingEnabled).toBe(false);
+  expect(next.briefingScope).toBe('all');
+  expect(next.briefingHour).toBe(23);
+  expect(next.briefingOpenLimit).toBe(1);
+  expect(next.briefingRetentionDays).toBe(7);
+  // 키워드는 다듬되 글자는 바꾸지 않는다. 화면에 적은 그대로 다시 보여야 한다.
+  expect(next.briefingKeywords).toEqual(['예산 편성']);
+  expect(next.briefingFields).toEqual(['title']);
+});
+
+it('대조할 칸을 모두 지운 설정은 받지 않는다', () => {
+  // 대조할 칸이 없으면 모든 키워드가 빗나가, 사용자는 키워드를 잘못 적은 줄 알고 계속 고치게 된다.
+  expect(normalizeSettings({ briefingFields: [] }).briefingFields).toEqual(DEFAULT_SETTINGS.briefingFields);
+});

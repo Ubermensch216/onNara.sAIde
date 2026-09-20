@@ -24,7 +24,7 @@ import type { StructuredDocumentList } from './document-list';
 export type CommandPrefix = '/' | '@';
 
 /** `@` 명령의 주화면. AI 창은 여기 없다 — 그것이 `/`와 `@`를 가르는 기준이다. */
-export type PanelTab = 'schedule' | 'automation';
+export type PanelTab = 'schedule' | 'automation' | 'inbox';
 
 export type DocumentCommandId = 'summary' | 'actions' | 'compare' | 'read' | 'attachments' | 'refresh';
 

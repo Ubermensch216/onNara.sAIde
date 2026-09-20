@@ -7,6 +7,8 @@ import {
   sameDocumentTitle,
   openDocumentTarget,
   serializeDocumentList,
+  isReceivedDocumentList,
+  documentReadState,
 } from './document-list';
 import { commandTargets } from './commands';
 
@@ -151,3 +153,37 @@ it('작업 탭에서 제목이 더 짧게 줄어 보여도 같은 문서로 보�
   expect(findDocumentOpenTarget('감사결과에 대한 재심의 신청 및 조치계획 보고')?.getAttribute('onclick')).toBe('openDoc()');
 });
 
+
+it('받은문서 화면을 목록 이름으로 가려내고, 열람 열을 상태 열과 섞지 않는다', () => {
+  document.body.innerHTML = `
+    <h2>받은문서</h2>
+    <table>
+      <tr><th>선택</th><th>보고일자</th><th>제목</th><th>열람상태</th><th>처리상태</th></tr>
+      <tr><td><input type="checkbox"></td><td>2026.09.18</td><td><a>미열람 공문</a></td><td>미열람</td><td>접수</td></tr>
+      <tr><td><input type="checkbox"></td><td>2026.09.17</td><td><a>이미 읽은 공문</a></td><td>열람</td><td>접수</td></tr>
+    </table>`;
+  const list = extractStructuredDocumentList()!;
+  expect(isReceivedDocumentList(list)).toBe(true);
+  expect(list.columns.map(column => column.key)).toContain('readState');
+  expect(list.rows.map(documentReadState)).toEqual(['unread', 'read']);
+});
+
+it('열람 열이 없으면 상태 칸을 보되, 처리 단계를 열람으로 읽지 않는다', () => {
+  expect(documentReadState({ status: '미열람' })).toBe('unread');
+  expect(documentReadState({ status: '열람' })).toBe('read');
+  // '미열람'은 '열람'을 포함한다. 부정 낱말을 먼저 가리지 않으면 전부 열람으로 집계된다.
+  expect(documentReadState({ readState: '미열람', status: '열람' })).toBe('unread');
+  expect(documentReadState({ status: '접수' })).toBe('unknown');
+  expect(documentReadState({})).toBe('unknown');
+});
+
+it('받은문서가 아닌 목록은 접수함으로 인정하지 않는다', () => {
+  document.body.innerHTML = `
+    <h2>문서등록대장</h2>
+    <table>
+      <tr><th>보고일자</th><th>제목</th><th>부서</th></tr>
+      <tr><td>2026.09.18</td><td><a>일반 공문</a></td><td>감사담당관</td></tr>
+    </table>`;
+  expect(isReceivedDocumentList(extractStructuredDocumentList())).toBe(false);
+  expect(isReceivedDocumentList(null)).toBe(false);
+});

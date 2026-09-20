@@ -53,7 +53,9 @@ export function SlashMenu({ commands, active, onPick, onHover }: Props) {
           {c.needs === 'screen' && <span className="slash-badge">{t('composer.needsScreen')}</span>}
           {c.opensTab && (
             <span className="slash-badge opens">
-              {t(c.opensTab === 'schedule' ? 'composer.opensSchedule' : 'composer.opensAutomation')}
+              {t(c.opensTab === 'schedule' ? 'composer.opensSchedule'
+                : c.opensTab === 'inbox' ? 'composer.opensInbox'
+                : 'composer.opensAutomation')}
             </span>
           )}
         </li>

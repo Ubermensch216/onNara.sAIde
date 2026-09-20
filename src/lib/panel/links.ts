@@ -24,7 +24,7 @@ export const PANEL_LINK_PREFIX = '#saide-goto=';
 export const PANEL_LINK_URI_PATTERN =
   // ★ 정규식 리터럴에서 꺼낸다. 문자열로 적으면 `\d`가 TypeScript 단계에서 `d`로 삼켜져,
   //   컴파일도 테스트도 통과하는 채로 허용 목록만 조용히 헐거워진다.
-  /#saide-goto=(?:schedule(?::task:\d{1,12}|:date:\d{4}-\d{2}-\d{2}:[a-z]+)?|tools(?::job:[\w-]{1,64})?)$/
+  /#saide-goto=(?:schedule(?::task:\d{1,12}|:date:\d{4}-\d{2}-\d{2}:[a-z]+)?|tools(?::job:[\w-]{1,64})?|inbox(?::doc:[a-z0-9]{1,32})?)$/
     .source;
 
 /** 누르면 갈 곳. 탭만 여는 것부터 항목 하나를 짚는 것까지. */
@@ -36,9 +36,15 @@ export type PanelLink =
   | { tab: 'schedule' }
   /** 도구 탭의 이 작업으로. */
   | { tab: 'automation'; jobId: string }
-  | { tab: 'automation' };
+  | { tab: 'automation' }
+  /** 접수함 탭의 이 문서로. 알림을 눌렀을 때 그 문서를 짚어 연다(N1). */
+  | { tab: 'inbox'; docKey: string }
+  | { tab: 'inbox' };
 
 export function panelLink(target: PanelLink): string {
+  if (target.tab === 'inbox') {
+    return `${PANEL_LINK_PREFIX}inbox${'docKey' in target ? `:doc:${target.docKey}` : ''}`;
+  }
   if (target.tab === 'automation') {
     return `${PANEL_LINK_PREFIX}tools${'jobId' in target ? `:job:${target.jobId}` : ''}`;
   }
@@ -60,6 +66,10 @@ export function parsePanelLink(href: string | null | undefined): PanelLink | nul
 
   if (rest === 'schedule') return { tab: 'schedule' };
   if (rest === 'tools') return { tab: 'automation' };
+  if (rest === 'inbox') return { tab: 'inbox' };
+
+  const inbox = /^inbox:doc:([a-z0-9]{1,32})$/.exec(rest);
+  if (inbox) return { tab: 'inbox', docKey: inbox[1]! };
 
   const task = /^schedule:task:(\d{1,12})$/.exec(rest);
   if (task) return { tab: 'schedule', taskId: Number(task[1]) };

@@ -12,6 +12,7 @@ import type { ScheduleTask } from '@/lib/schedule/task';
 import type { TaskCandidate } from '@/lib/schedule/candidates';
 import type { DocResult } from '@/lib/cache/doc-results';
 import type { FeedbackEntry } from '@/lib/feedback/store';
+import type { InboxDoc, InboxRun } from '@/lib/inbox/types';
 import { sameDocument } from '@/lib/messaging/protocol';
 
 export interface Conversation {
@@ -87,6 +88,10 @@ class SaideDB extends Dexie {
   docResults!: EntityTable<DocResult, 'key'>;
   /** 정확도 피드백(B4). 대화를 지워도 남는다 — 누적 수치가 이 기능의 목적이다. */
   feedback!: EntityTable<FeedbackEntry, 'id'>;
+  /** 접수함 원장(N1). "이 문서를 이미 브리핑했는가"를 여기서만 판단한다. */
+  inboxDocs!: EntityTable<InboxDoc, 'key'>;
+  /** 브리핑 실행 기록(N1). 건너뛴 실행도 남긴다. */
+  inboxRuns!: EntityTable<InboxRun, 'id'>;
 
   constructor() {
     super('saide');
@@ -110,6 +115,20 @@ class SaideDB extends Dexie {
     this.version(4).stores({
       docResults: 'key, identity, createdAt',
       feedback: '++id, kind, at',
+    });
+    /**
+     * v5 — 접수함 원장과 브리핑 실행 기록(N1).
+     *
+     * ★ `inboxDocs`의 기본키도 자동 증가가 아니라 문자열이다. 같은 공문을 하루에도 여러 번
+     *   목록에서 만나므로, 같은 자리에 덮어써야 "이미 브리핑했는가"가 한 줄로 유지된다.
+     * ★ `group`을 색인한다. 목록이 제목을 줄여 그려 정체성 키가 어긋났을 때,
+     *   보고일자·수발신자가 같은 문서들 안에서만 제목을 견주기 위해서다.
+     * ★ 실행 기록을 문서와 같은 테이블에 섞지 않는다. 수명이 다르다 —
+     *   문서는 보관 기간으로 지우고, 실행 기록은 건수로 지운다.
+     */
+    this.version(5).stores({
+      inboxDocs: 'key, group, firstSeenAt, briefedAt, category',
+      inboxRuns: '++id, at',
     });
   }
 }
