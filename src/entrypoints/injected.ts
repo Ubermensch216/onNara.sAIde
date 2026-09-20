@@ -23,7 +23,6 @@ import { collectDocumentText } from '@/lib/extract/document-text';
 import { findPdfUrls, readPdfSources } from '@/lib/extract/pdf-source';
 import {
   extractStructuredDocumentList,
-  isReceivedDocumentList,
   describeOpenFailure,
   describeOpenTarget,
   findDocumentOpenTarget,
@@ -98,20 +97,26 @@ export default defineUnlistedScript(() => {
                 },
               } satisfies ContentToSW);
         } else if (msg.type === 'LOCATE_INBOX') {
-          // ★ 이 프레임이 실제로 받은문서 목록을 그리고 있을 때만 응답한다. 온나라 화면은
-          //   프레임이 여럿이라, 아무 프레임이나 위치를 돌려주면 나중에 목록 없는 화면을 복원한다.
+          /**
+           * ★ 이 프레임이 실제로 목록을 그리고 있을 때만 응답한다. 온나라 화면은 프레임이
+           *   여럿이라, 아무 프레임이나 위치를 돌려주면 나중에 목록 없는 화면을 복원한다.
+           *
+           * ★ 이름이 `받은문서`인지는 여기서 따지지 않는다. 온나라는 화면 제목을 목록과
+           *   **다른 프레임**에 그리는 경우가 있어, 목록 프레임 안에서는 그 이름이 보이지 않는다.
+           *   무엇보다 이 요청은 사용자가 그 화면을 보면서 직접 누른 것이다 — 무엇을 지정했는지는
+           *   읽어 낸 이름으로 화면에 되보여 주고, 아니면 다시 지정하게 한다.
+           */
           const list = extractStructuredDocumentList();
-          const inbox = isReceivedDocumentList(list) ? captureListLocation() : null;
+          // 행이 없어도 목록이다. 받은문서가 0건인 날에도 그 화면을 지정할 수 있어야 한다.
+          const inbox = list ? captureListLocation() : null;
           sendResponse(inbox
             ? { type: 'INBOX_LOCATED', location: inbox, listName: list!.listName } satisfies ContentToSW
             : {
                 type: 'FAILED',
                 error: {
                   code: 'UNKNOWN',
-                  message: '현재 화면에서 받은문서 목록을 찾지 못했습니다.',
-                  hint: list
-                    ? `이 화면은 "${list.listName}" 목록입니다. 공유/공람 > 받은문서 화면에서 지정하세요.`
-                    : '공유/공람 > 받은문서 목록을 연 뒤 다시 지정하세요.',
+                  message: '현재 화면에서 문서 목록을 찾지 못했습니다.',
+                  hint: '온나라 공유/공람 > 받은문서 목록이 화면에 보이는 상태에서 다시 지정하세요.',
                 },
               } satisfies ContentToSW);
         } else if (msg.type === 'SCAN_ATTACHMENTS') {

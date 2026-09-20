@@ -1,5 +1,5 @@
 /**
- * 접수함 탭의 상태(N1).
+ * 공유/공람 탭의 상태(N1).
  *
  * ★ 화면이 보여 주는 것은 "이번에 새로 들어온 것"이 아니라 **아직 처리하지 않은 것**이다.
  *   새 문서만 보이면, 아침에 패널을 닫아 두었다가 오후에 열었을 때 화면이 비어 있다.
@@ -21,14 +21,14 @@ import type { InboxCategory, InboxDoc, InboxRun, InboxTrigger } from './types';
 import { INBOX_CATEGORIES } from './types';
 
 /**
- * `@브리핑` — 접수함을 수시로 확인하는 명령.
+ * `@브리핑` — 공유/공람을 수시로 확인하는 명령.
  *
- * ★ 주화면이 접수함 탭이므로 `@` 무리다(commands.ts의 접두 문자 규칙). 온나라 목록 화면을
- *   보고 있지 않아도 동작한다 — 지정해 둔 접수함 위치를 쓰기 때문이다.
+ * ★ 주화면이 공유/공람 탭이므로 `@` 무리다(commands.ts의 접두 문자 규칙). 온나라 목록 화면을
+ *   보고 있지 않아도 동작한다 — 지정해 둔 브리핑 대상 위치를 쓰기 때문이다.
  */
 export const BRIEFING_PRESET_ID = 'inbox-briefing';
 export const BRIEFING_SLASH = '@브리핑';
-export const BRIEFING_ALIASES = ['@brief', '@inbox', '@접수함'];
+export const BRIEFING_ALIASES = ['@brief', '@inbox', '@공람'];
 
 /** 화면에 담아 둘 원장 상한. 그 아래는 보관 기간이 정리한다. */
 const VIEW_LIMIT = 300;
@@ -77,7 +77,7 @@ export async function loadInbox(): Promise<void> {
   useInbox.setState({ docs, lastRun: lastRun ?? null, location, loaded: true });
 }
 
-/** 접수함 탭에서 이 문서를 짚어 달라고 남긴다. 탭 전환 자체는 화면(App)이 한다. */
+/** 공유/공람 탭에서 이 문서를 짚어 달라고 남긴다. 탭 전환 자체는 화면(App)이 한다. */
 export function focusInboxDoc(key: string): void {
   useInbox.setState({ focus: { key, at: Date.now() } });
 }
@@ -90,7 +90,7 @@ export function clearInboxError(): void {
   if (useInbox.getState().error) useInbox.setState({ error: null });
 }
 
-/** 지금 보고 있는 화면을 접수함으로 지정한다. */
+/** 지금 보고 있는 화면을 브리핑 대상으로 지정한다. */
 export async function designateInbox(tab: TabSummary): Promise<boolean> {
   useInbox.setState({ running: true, error: null });
   try {
@@ -107,7 +107,7 @@ export async function designateInbox(tab: TabSummary): Promise<boolean> {
 }
 
 /**
- * 접수함을 읽어 브리핑한다.
+ * 공유/공람 목록을 읽어 브리핑한다.
  *
  * ★ 실패도 기록에 남긴다. 읽지 못한 날 화면이 그냥 비어 있으면, 사용자는
  *   "오늘은 받은 문서가 없구나"로 오해한다.

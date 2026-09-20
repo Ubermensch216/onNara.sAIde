@@ -43,7 +43,7 @@ export function captureDocumentListLocation(title: string, doc = document): Docu
 }
 
 /**
- * 문서를 가리지 않고 **지금 이 목록 화면** 자체의 위치를 잡는다(접수함 지정 · N1).
+ * 문서를 가리지 않고 **지금 이 목록 화면** 자체의 위치를 잡는다(브리핑 대상 지정 · N1).
  *
  * ★ 문서 한 건을 여는 길(`captureDocumentListLocation`)과 같은 정보를 쓴다. 다른 점은
  *   기준이 되는 요소가 없다는 것뿐이다. 조회 폼을 고르는 규칙은 한 함수에 둔다 —

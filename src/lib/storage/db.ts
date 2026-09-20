@@ -88,7 +88,7 @@ class SaideDB extends Dexie {
   docResults!: EntityTable<DocResult, 'key'>;
   /** 정확도 피드백(B4). 대화를 지워도 남는다 — 누적 수치가 이 기능의 목적이다. */
   feedback!: EntityTable<FeedbackEntry, 'id'>;
-  /** 접수함 원장(N1). "이 문서를 이미 브리핑했는가"를 여기서만 판단한다. */
+  /** 브리핑 원장(N1). "이 문서를 이미 브리핑했는가"를 여기서만 판단한다. */
   inboxDocs!: EntityTable<InboxDoc, 'key'>;
   /** 브리핑 실행 기록(N1). 건너뛴 실행도 남긴다. */
   inboxRuns!: EntityTable<InboxRun, 'id'>;
@@ -117,7 +117,7 @@ class SaideDB extends Dexie {
       feedback: '++id, kind, at',
     });
     /**
-     * v5 — 접수함 원장과 브리핑 실행 기록(N1).
+     * v5 — 브리핑 원장과 브리핑 실행 기록(N1).
      *
      * ★ `inboxDocs`의 기본키도 자동 증가가 아니라 문자열이다. 같은 공문을 하루에도 여러 번
      *   목록에서 만나므로, 같은 자리에 덮어써야 "이미 브리핑했는가"가 한 줄로 유지된다.

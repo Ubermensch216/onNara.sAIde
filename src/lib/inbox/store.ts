@@ -1,5 +1,5 @@
 /**
- * 접수함 원장 저장소(N1).
+ * 브리핑 원장 저장소(N1).
  *
  * ★ 판단하지 않는다. 읽고 쓰고 지우기만 한다. "새 문서인가·어느 갈래인가"는
  *   [briefing.ts]의 순수 함수가 정한다 — 그래야 그 판단을 브라우저 없이 시험할 수 있다.
@@ -137,7 +137,7 @@ export async function inboxStats(): Promise<InboxStats> {
   }
 }
 
-/** 접수함 기록 전체 삭제. 공문 제목이 남는 유일한 자리라 지우는 길을 반드시 둔다. */
+/** 브리핑 기록 전체 삭제. 공문 제목이 남는 유일한 자리라 지우는 길을 반드시 둔다. */
 export async function clearInbox(): Promise<void> {
   try {
     await db.inboxDocs.clear();

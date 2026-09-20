@@ -21,7 +21,7 @@ it('v1 데이터베이스를 최신 판으로 열어도 기존 대화·메시지
   // v4에서 더한 분석 캐시·정확도 기록도 마찬가지다. 옛 자료를 건드리지 않는다.
   expect(await db.docResults.count()).toBe(0);
   expect(await db.feedback.count()).toBe(0);
-  // v5에서 더한 접수함 원장·실행 기록도 빈 채로 열린다.
+  // v5에서 더한 브리핑 원장·실행 기록도 빈 채로 열린다.
   expect(await db.inboxDocs.count()).toBe(0);
   expect(await db.inboxRuns.count()).toBe(0);
   await db.delete();

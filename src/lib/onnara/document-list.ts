@@ -19,7 +19,7 @@ export interface DocumentListColumn {
 export interface StructuredDocumentList {
   kind: 'onnara-document-list';
   listName: string;
-  /** 화면이 스스로 `받은문서`라고 밝혔는가. 접수함 브리핑(N1)의 판정 근거다. */
+  /** 화면이 스스로 `받은문서`라고 밝혔는가. 공유/공람 브리핑(N1)의 판정 근거다. */
   received?: boolean;
   columns: DocumentListColumn[];
   rows: Array<Partial<Record<DocumentListField, string>>>;
@@ -111,8 +111,8 @@ function findHeader(rows: Element[]): { index: number; columns: DocumentListColu
  * 목록 이름과 "이 화면이 받은문서인가".
  *
  * ★ 이름만으로는 가릴 수 없다. 이름을 찾지 못한 목록의 기본 표시가 `받은문서`이기 때문이다.
- *   그래서 **화면이 실제로 그 이름을 밝혔는지**를 따로 돌려준다. 접수함 브리핑(N1)은
- *   이 판정 위에 서 있어, 기본값을 근거로 삼으면 엉뚱한 목록을 접수함으로 등록하게 된다.
+ *   그래서 **화면이 실제로 그 이름을 밝혔는지**를 따로 돌려준다. 공유/공람 브리핑(N1)은
+ *   이 판정 위에 서 있어, 기본값을 근거로 삼으면 엉뚱한 목록을 브리핑 대상으로 등록하게 된다.
  */
 function listName(root: ParentNode, container: Element): { name: string; received: boolean } {
   const caption = container.querySelector('caption');
@@ -124,8 +124,22 @@ function listName(root: ParentNode, container: Element): { name: string; receive
 }
 
 /**
+ * 빈 목록으로 인정할 머리글의 최소 열 수.
+ *
+ * ★ 행이 하나도 없는 표를 문서 목록으로 받아들이려면 머리글이 그만큼 확실해야 한다.
+ *   제목 열 하나만 있는 표는 화면 어디에나 있다. 온나라 문서함 머리글은
+ *   `보고일자·제목·부서·수(발)신자·보고자·본문·붙임·상태`처럼 여러 열을 갖는다.
+ */
+const EMPTY_LIST_MIN_COLUMNS = 3;
+
+/**
  * 온나라 버전에 종속된 class/id 대신 HTML table과 ARIA grid 의미 구조를 읽는다.
  * 제목 열과 한 개 이상의 업무 열이 있는 표만 문서 목록으로 인정한다.
+ *
+ * ★ **행이 없는 목록도 목록이다.** 받은문서가 0건인 날(`해당 문서가 없습니다`)에도
+ *   머리글은 그대로 있다. 예전에는 데이터 행이 없으면 표째 버려서, "목록이 없는 화면"과
+ *   "비어 있는 목록"을 호출부가 구분할 수 없었다 — 문서가 0건인 날 브리핑 대상 지정이
+ *   "화면에서 목록을 찾지 못했습니다"로 막혔다. 대신 머리글 조건을 높여 오인을 막는다.
  */
 export function extractStructuredDocumentList(root: ParentNode = document): StructuredDocumentList | null {
   let best: StructuredDocumentList | null = null;
@@ -133,7 +147,7 @@ export function extractStructuredDocumentList(root: ParentNode = document): Stru
   for (const container of root.querySelectorAll(CONTAINER_SELECTOR)) {
     if (!isAvailable(container)) continue;
     const rows = listRows(container);
-    if (rows.length < 2) continue;
+    if (!rows.length) continue;
 
     const header = findHeader(rows);
     if (!header) continue;
@@ -155,7 +169,7 @@ export function extractStructuredDocumentList(root: ParentNode = document): Stru
       if (record.title && row.querySelector('input[type="checkbox"]:checked, [role="checkbox"][aria-checked="true"]')) selectedTitles.push(record.title);
       if (data.length >= 500) break;
     }
-    if (!data.length) continue;
+    if (!data.length && columns.length < EMPTY_LIST_MIN_COLUMNS) continue;
 
     const named = listName(root, container);
     const result: StructuredDocumentList = {
@@ -227,7 +241,7 @@ export function documentReadState(row: Partial<Record<DocumentListField, string>
 /**
  * 대조용 정규화. 공백·괄호·구두점 표기가 화면마다 달라 글자 그대로 비교하면 같은 말이 갈린다.
  *
- * ★ 한곳에 둔다. 제목 대조(이 파일)와 접수함 키워드 대조(lib/inbox/scope.ts)가 서로 다른
+ * ★ 한곳에 둔다. 제목 대조(이 파일)와 브리핑 키워드 대조(lib/inbox/scope.ts)가 서로 다른
  *   규칙을 쓰면, `예산 편성`으로 등록한 키워드가 `예산편성` 공문에 걸리지 않는 날이 온다.
  */
 export function normalizeForMatch(value: string): string {

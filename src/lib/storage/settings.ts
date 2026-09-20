@@ -79,7 +79,7 @@ export interface Settings {
   /** 공문마다 하위 폴더를 만들지. 기본 꺼짐 — 폴더가 늘어나는 것을 싫어하는 사용자가 있다. */
   attachmentFolder: boolean;
 
-  /* ── 접수함 브리핑(N1) ─────────────────────────────── */
+  /* ── 공유/공람 브리핑(N1) ─────────────────────────────── */
 
   /**
    * 아침 브리핑을 켤지. **기본 꺼짐.**
@@ -116,7 +116,7 @@ export interface Settings {
   briefingExcludeKeywords: string[];
   /** 키워드를 대조할 칸. */
   briefingFields: Array<'title' | 'sender' | 'department'>;
-  /** 접수함 원장 보관 기간(일). 공문 제목이 남는 자리라 기간을 둔다. */
+  /** 브리핑 원장 보관 기간(일). 공문 제목이 남는 자리라 기간을 둔다. */
   briefingRetentionDays: number;
 }
 

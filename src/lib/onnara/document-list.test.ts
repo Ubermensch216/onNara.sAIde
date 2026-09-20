@@ -177,7 +177,7 @@ it('열람 열이 없으면 상태 칸을 보되, 처리 단계를 열람으로 
   expect(documentReadState({})).toBe('unknown');
 });
 
-it('받은문서가 아닌 목록은 접수함으로 인정하지 않는다', () => {
+it('받은문서가 아닌 목록은 브리핑 대상으로 인정하지 않는다', () => {
   document.body.innerHTML = `
     <h2>문서등록대장</h2>
     <table>
@@ -186,4 +186,44 @@ it('받은문서가 아닌 목록은 접수함으로 인정하지 않는다', ()
     </table>`;
   expect(isReceivedDocumentList(extractStructuredDocumentList())).toBe(false);
   expect(isReceivedDocumentList(null)).toBe(false);
+});
+
+/*
+ * ★ 받은문서가 0건인 날(`해당 문서가 없습니다`)에도 머리글은 그대로 있다.
+ *   행이 없다고 표째 버리면 "목록이 없는 화면"과 "비어 있는 목록"을 구분할 수 없고,
+ *   문서가 없는 날 브리핑 대상 지정이 막힌다. 실제로 막혔고, 이 시험이 그 자리를 지킨다.
+ */
+it('행이 없는 받은문서 목록도 목록으로 읽는다', () => {
+  document.body.innerHTML = `
+    <h2>받은문서</h2>
+    <table>
+      <thead><tr><th></th><th>보고일자</th><th>제목</th><th>부서</th><th>수(발)신자</th><th>보고자</th><th>본문</th><th>붙임</th><th>상태</th></tr></thead>
+      <tbody><tr><td colspan="9">해당 문서가 없습니다.</td></tr></tbody>
+    </table>`;
+  const list = extractStructuredDocumentList();
+  expect(list).toMatchObject({ listName: '받은문서', received: true, rows: [] });
+  expect(isReceivedDocumentList(list)).toBe(true);
+});
+
+it('머리글이 엉성한 빈 표는 목록으로 인정하지 않는다', () => {
+  // 제목 열 하나만 있는 빈 표는 화면 어디에나 있다. 행이 없을수록 머리글이 확실해야 한다.
+  document.body.innerHTML = `
+    <table>
+      <tr><th>제목</th><th>상태</th></tr>
+    </table>`;
+  expect(extractStructuredDocumentList()).toBeNull();
+});
+
+it('행이 있는 목록이 빈 목록보다 우선한다', () => {
+  document.body.innerHTML = `
+    <table>
+      <tr><th>보고일자</th><th>제목</th><th>부서</th><th>상태</th></tr>
+    </table>
+    <table>
+      <tr><th>보고일자</th><th>제목</th><th>부서</th><th>상태</th></tr>
+      <tr><td>2026.09.18</td><td><a>실제 문서</a></td><td>감사담당관</td><td>접수</td></tr>
+    </table>`;
+  expect(extractStructuredDocumentList()?.rows).toEqual([
+    { reportDate: '2026.09.18', title: '실제 문서', department: '감사담당관', status: '접수' },
+  ]);
 });

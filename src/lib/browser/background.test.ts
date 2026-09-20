@@ -621,3 +621,121 @@ it('탭 요약에는 창과 팝업 출처가 실린다. 새 창 팝업은 webNav
     .toBeUndefined();
   forgetPanelSpawn(7);
 });
+
+/*
+ * ★ 브리핑 대상 지정은 **목록이 있는 프레임**에 닿아야 한다.
+ *
+ *   추출이 아닌 메시지는 최상위 프레임에만 전달된다. 온나라 목록은 하위 iframe에 있는
+ *   경우가 대부분이라, 최상위에 대고 물으면 표가 없어 "목록을 찾지 못했습니다"가 난다.
+ *   실제로 그렇게 났고, 이 시험이 그 자리를 지킨다.
+ */
+it('브리핑 대상 지정은 목록이 있는 iframe에 위치를 묻는다', async () => {
+  const common = { truncated: false, keptRatio: 1, estimatedTokens: 20, extractedAt: 1 };
+  const saved: Record<string, unknown> = {};
+  const sendMessage = vi.fn(async (_tabId: number, message: { type: string }, options: { frameId: number }) => {
+    if (message.type === 'LOCATE_INBOX') {
+      // 최상위 프레임에는 목록이 없다. 그 자리에 물으면 실패해야 정상이다.
+      return options.frameId === 4
+        ? { type: 'INBOX_LOCATED', location: { url: 'https://onnara.test/frame/inbox', framePath: [1] }, listName: '받은문서' }
+        : { type: 'FAILED', error: { code: 'UNKNOWN', message: '현재 화면에서 문서 목록을 찾지 못했습니다.' } };
+    }
+    return options.frameId === 4
+      ? {
+          type: 'EXTRACTED',
+          payload: {
+            ...common, url: 'https://onnara.test/frame/inbox', title: '받은문서', text: '행 1', charCount: 4,
+            method: 'onnara-document-list',
+            structuredData: {
+              kind: 'onnara-document-list', listName: '받은문서', received: true,
+              columns: [{ key: 'title', label: '제목', sourceIndex: 0 }], rows: [{ title: '문서 A' }],
+            },
+          },
+        }
+      : { type: 'EXTRACTED', payload: { ...common, url: 'https://onnara.test/main', title: '온나라', text: '메뉴', charCount: 2, method: 'innerText' } };
+  });
+  vi.stubGlobal('chrome', {
+    tabs: { get: vi.fn(async () => ({ id: 7, url: 'https://onnara.test/main', title: '온나라' })), sendMessage },
+    scripting: { executeScript: vi.fn(async () => []) },
+    webNavigation: { getAllFrames: vi.fn(async () => [
+      { frameId: 0, parentFrameId: -1, url: 'https://onnara.test/main' },
+      { frameId: 4, parentFrameId: 0, url: 'https://onnara.test/frame/inbox' },
+    ]) },
+    storage: { local: { get: vi.fn(async () => ({})), set: vi.fn(async (next: Record<string, unknown>) => { Object.assign(saved, next); }) } },
+  });
+
+  const response = await handlePanelMessage({
+    type: 'CAPTURE_INBOX_LOCATION', tabId: 7,
+    control: { id: crypto.randomUUID(), deadline: Date.now() + 15_000 },
+  });
+
+  expect(response).toMatchObject({ type: 'INBOX_LOCATION_SAVED', listName: '받은문서' });
+  expect(sendMessage).toHaveBeenCalledWith(7, expect.objectContaining({ type: 'LOCATE_INBOX' }), { frameId: 4 });
+  expect(saved['saide.inboxLocation']).toMatchObject({ listName: '받은문서', origin: 'https://onnara.test' });
+});
+
+it('받은문서가 0건인 날에도 브리핑 대상으로 지정할 수 있다', async () => {
+  // 실제로 막혔던 자리다. `해당 문서가 없습니다`만 뜬 화면에서도 머리글은 그대로 있다.
+  const common = { truncated: false, keptRatio: 1, estimatedTokens: 8, extractedAt: 1 };
+  const saved: Record<string, unknown> = {};
+  const sendMessage = vi.fn(async (_tabId: number, message: { type: string }, options: { frameId: number }) => {
+    if (message.type === 'LOCATE_INBOX') {
+      return options.frameId === 2
+        ? { type: 'INBOX_LOCATED', location: { url: 'https://onnara.test/frame/inbox', framePath: [1] }, listName: '받은문서' }
+        : { type: 'FAILED', error: { code: 'UNKNOWN', message: '현재 화면에서 문서 목록을 찾지 못했습니다.' } };
+    }
+    return options.frameId === 2
+      ? {
+          type: 'EXTRACTED',
+          payload: {
+            ...common, url: 'https://onnara.test/frame/inbox', title: '받은문서',
+            text: '<onnara_document_list> 목록: 받은문서 · 현재 화면 표시 문서: 0건 </onnara_document_list>',
+            charCount: 60, method: 'onnara-document-list',
+            structuredData: {
+              kind: 'onnara-document-list', listName: '받은문서', received: true,
+              columns: [
+                { key: 'reportDate', label: '보고일자', sourceIndex: 1 },
+                { key: 'title', label: '제목', sourceIndex: 2 },
+                { key: 'department', label: '부서', sourceIndex: 3 },
+              ],
+              rows: [],
+            },
+          },
+        }
+      // 메뉴가 있는 최상위 프레임은 글자 수가 훨씬 많다. 그래도 목록 프레임이 이겨야 한다.
+      : { type: 'EXTRACTED', payload: { ...common, url: 'https://onnara.test/main', title: '온나라', text: '메뉴'.repeat(2000), charCount: 8000, method: 'innerText' } };
+  });
+  vi.stubGlobal('chrome', {
+    tabs: { get: vi.fn(async () => ({ id: 7, url: 'https://onnara.test/main', title: '온나라' })), sendMessage },
+    scripting: { executeScript: vi.fn(async () => []) },
+    webNavigation: { getAllFrames: vi.fn(async () => [
+      { frameId: 0, parentFrameId: -1, url: 'https://onnara.test/main' },
+      { frameId: 2, parentFrameId: 0, url: 'https://onnara.test/frame/inbox' },
+    ]) },
+    storage: { local: { get: vi.fn(async () => ({})), set: vi.fn(async (next: Record<string, unknown>) => { Object.assign(saved, next); }) } },
+  });
+
+  const response = await handlePanelMessage({
+    type: 'CAPTURE_INBOX_LOCATION', tabId: 7,
+    control: { id: crypto.randomUUID(), deadline: Date.now() + 15_000 },
+  });
+  expect(response).toMatchObject({ type: 'INBOX_LOCATION_SAVED', listName: '받은문서' });
+  expect(sendMessage).toHaveBeenCalledWith(7, expect.objectContaining({ type: 'LOCATE_INBOX' }), { frameId: 2 });
+});
+
+it('화면에 문서 목록이 없으면 무엇을 해야 하는지 알려 준다', async () => {
+  const common = { truncated: false, keptRatio: 1, estimatedTokens: 20, extractedAt: 1 };
+  vi.stubGlobal('chrome', {
+    tabs: {
+      get: vi.fn(async () => ({ id: 7, url: 'https://onnara.test/detail', title: '문서 상세' })),
+      sendMessage: vi.fn(async () => ({ type: 'EXTRACTED', payload: { ...common, url: 'https://onnara.test/detail', title: '문서 상세', text: '본문', charCount: 2, method: 'innerText' } })),
+    },
+    scripting: { executeScript: vi.fn(async () => []) },
+    webNavigation: { getAllFrames: vi.fn(async () => [{ frameId: 0, parentFrameId: -1, url: 'https://onnara.test/detail' }]) },
+  });
+
+  const response = await handlePanelMessage({
+    type: 'CAPTURE_INBOX_LOCATION', tabId: 7,
+    control: { id: crypto.randomUUID(), deadline: Date.now() + 15_000 },
+  });
+  expect(response).toMatchObject({ type: 'ERROR', error: { message: expect.stringContaining('문서 목록을 찾지 못했습니다') } });
+});

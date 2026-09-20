@@ -71,7 +71,7 @@ import type { AppError } from '@/lib/messaging/protocol';
 
 type View = 'inbox' | 'ai' | 'schedule' | 'automation';
 const VIEW_KEY = 'saide.view';
-// ★ 접수함이 맨 앞이다. 매일 열 이유를 만드는 탭이라 첫 자리에 둔다(N1).
+// ★ 공유/공람이 맨 앞이다. 매일 열 이유를 만드는 탭이라 첫 자리에 둔다(N1).
 const VIEWS: View[] = ['inbox', 'ai', 'schedule', 'automation'];
 
 /** 마지막으로 연 탭은 이 브라우저에서만 기억한다. 저장소를 못 쓰면 AI 도우미로 시작한다. */
@@ -112,7 +112,7 @@ export default function App() {
   const runningJobs = useAutomation(state => state.jobs.filter(job => job.status === 'queued' || job.status === 'running').length);
   // 기한이 임박한 일정은 어느 탭에 있든 보여야 한다. 그러려고 배지를 헤더가 아니라 탭에 둔다.
   const dueTasks = useSchedule(state => urgentCount(state.tasks));
-  // 접수함 배지도 탭을 열지 않아도 맞아야 한다. 아직 손대지 않은 문서의 수다.
+  // 공유/공람 배지도 탭을 열지 않아도 맞아야 한다. 아직 손대지 않은 문서의 수다.
   const inboxPending = useInbox(state => pendingDocs(state.docs).length);
   const warmedFor = useRef('');
 
@@ -126,7 +126,7 @@ export default function App() {
   // 일정 배지는 탭을 열지 않아도 맞아야 한다. 패널을 열 때 한 번 읽어 둔다.
   useEffect(() => { void refreshTasks(); }, []);
   useEffect(() => { void loadInbox(); }, []);
-  // 알림을 눌러 연 패널은 접수함 탭을 편다(N1). 표시는 한 번 쓰고 지운다.
+  // 알림을 눌러 연 패널은 공유/공람 탭을 편다(N1). 표시는 한 번 쓰고 지운다.
   useEffect(() => { void takeInboxViewRequest().then(open => { if (open) setView('inbox'); }); }, []);
 
   // 처음 여는 사람에게는 `/`와 `@`의 규칙을 아무도 알려 주지 않았다(B3).
@@ -479,7 +479,7 @@ export default function App() {
         aliases: RECALL_ALIASES,
       },
       {
-        // 접수함을 수시로 확인한다. 주화면이 접수함 탭이므로 `@` 그룹이다.
+        // 공유/공람을 수시로 확인한다. 주화면이 공유/공람 탭이므로 `@` 그룹이다.
         prefix: '@' as const,
         slash: BRIEFING_SLASH,
         label: t('inbox.command'),
@@ -549,7 +549,7 @@ export default function App() {
      *   사용자는 무엇을 허용하는지 알 수 없다.
      */
     /**
-     * `@브리핑`도 온나라 화면과 무관하다. 지정해 둔 접수함 위치를 쓰므로,
+     * `@브리핑`도 온나라 화면과 무관하다. 지정해 둔 브리핑 대상 위치를 쓰므로,
      * 지금 어느 탭을 보고 있든 동작한다.
      */
     if (cmd.presetId === BRIEFING_PRESET_ID) {

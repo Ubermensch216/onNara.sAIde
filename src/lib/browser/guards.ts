@@ -37,7 +37,7 @@ export function validPanelRequest(v: unknown): v is PanelToSW {
   if (v.type === 'CANCEL_REQUEST') return text(v.requestId, 100);
   if (v.type === 'GET_ACTIVE_TAB') return v.windowId === undefined || (Number.isInteger(v.windowId) && (v.windowId as number) >= 0);
   if (v.type === 'LIST_TABS') return true;
-  // ★ 접수함 수집만 tabId가 없어도 된다. 알람이 깨운 실행에는 "지금 보고 있는 탭"이 없다.
+  // ★ 공유/공람 목록 수집만 tabId가 없어도 된다. 알람이 깨운 실행에는 "지금 보고 있는 탭"이 없다.
   if (v.type === 'COLLECT_INBOX') {
     return validControl(v.control) && Number.isInteger(v.budgetTokens) &&
       (v.budgetTokens as number) >= 1 && (v.budgetTokens as number) <= 8000 &&

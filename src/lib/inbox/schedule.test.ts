@@ -22,7 +22,7 @@ it('기본값에서는 아무 일도 하지 않는다 — 켜는 순간이 사�
   expect(shouldBriefNow(conditions({ settings: DEFAULT_SETTINGS }))).toEqual({ run: false, skip: 'off' });
 });
 
-it('접수함을 지정하기 전에는 실행하지 않는다', () => {
+it('대상 화면을 지정하기 전에는 실행하지 않는다', () => {
   expect(shouldBriefNow(conditions({ hasLocation: false }))).toEqual({ run: false, skip: 'no-location' });
 });
 

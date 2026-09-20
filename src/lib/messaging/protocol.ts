@@ -181,10 +181,10 @@ export type PanelToSW = (
   | { type: 'GET_ACTIVE_TAB'; windowId?: number }
   | { type: 'PREPARE_ACTION'; tabId: number; action: PageAction }
   | { type: 'CANCEL_REQUEST'; requestId: string }
-  /** 지금 보고 있는 화면을 접수함(공유/공람 > 받은문서)으로 지정한다(N1). */
+  /** 지금 보고 있는 화면을 브리핑 대상(공유/공람 > 받은문서)으로 지정한다(N1). */
   | { type: 'CAPTURE_INBOX_LOCATION'; tabId: number }
   /**
-   * 지정해 둔 접수함 목록을 읽어 온다(N1).
+   * 지정해 둔 공유/공람 목록을 읽어 온다(N1).
    *
    * ★ tabId는 힌트다. 없으면 서비스 워커가 저장된 출처로 온나라 탭을 찾는다 —
    *   알람이 깨운 실행에는 "지금 보고 있는 탭"이 없기 때문이다.
@@ -249,9 +249,9 @@ export type SWToPanel =
    */
   | { type: 'SCREEN_CHANGED'; tabId: number; frameId: number; url: string }
   | { type: 'CONTEXT_MENU'; preset: string; selectionText: string; tab: TabSummary }
-  /** 접수함으로 지정했다(N1). listName은 화면이 밝힌 목록 이름이다. */
+  /** 브리핑 대상으로 지정했다(N1). listName은 화면이 밝힌 목록 이름이다. */
   | { type: 'INBOX_LOCATION_SAVED'; listName: string }
-  /** 접수함 목록을 읽었다(N1). 본문은 읽지 않는다 — 열람 상태를 바꾸지 않기 위해서다. */
+  /** 공유/공람 목록을 읽었다(N1). 본문은 읽지 않는다 — 열람 상태를 바꾸지 않기 위해서다. */
   | { type: 'INBOX_COLLECTED'; list: StructuredDocumentList; via: 'active-tab' | 'work-tab' }
   /**
    * 브리핑할 때가 되었다(N1). 패널이 열려 있을 때만 온다.

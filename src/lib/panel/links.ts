@@ -37,7 +37,7 @@ export type PanelLink =
   /** 도구 탭의 이 작업으로. */
   | { tab: 'automation'; jobId: string }
   | { tab: 'automation' }
-  /** 접수함 탭의 이 문서로. 알림을 눌렀을 때 그 문서를 짚어 연다(N1). */
+  /** 공유/공람 탭의 이 문서로. 알림을 눌렀을 때 그 문서를 짚어 연다(N1). */
   | { tab: 'inbox'; docKey: string }
   | { tab: 'inbox' };
 

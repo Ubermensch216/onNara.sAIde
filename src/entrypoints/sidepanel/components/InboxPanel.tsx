@@ -1,5 +1,5 @@
 /**
- * 접수함 탭 — 오늘의 접수함 브리핑(N1 · 계획서 S09).
+ * 공유/공람 탭 — 공유/공람 브리핑(N1 · 계획서 S09).
  *
  * ★ 이 탭은 **본문을 열지 않는다.** 온나라 `공유/공람 > 받은문서` 목록 표만 읽는다.
  *   그래서 확인해도 문서가 `미열람` 그대로 남는다. 그 사실을 머리말에 수치로 보인다 —
@@ -78,15 +78,7 @@ export function InboxPanel({ tab, settings, onOpenSchedule }: Props) {
           </button>
         </div>
 
-        {location ? (
-          <div className="inbox-meta">
-            <span className="auto-ellipsis">{t('inbox.target', { name: location.listName })}</span>
-            <button type="button" className="inbox-link" disabled={!canDesignate || running}
-              onClick={() => { if (tab) void designateInbox(tab); }}>
-              {t('inbox.change')}
-            </button>
-          </div>
-        ) : (
+        {!location && (
           <div className="inbox-setup">
             <strong>{t('inbox.notSet')}</strong>
             <p>{t('inbox.notSetBody')}</p>
@@ -102,13 +94,9 @@ export function InboxPanel({ tab, settings, onOpenSchedule }: Props) {
           <div className="inbox-stats">
             <span>{t('inbox.lastRun', { time: clock(briefing.at), n: briefing.scanned })}</span>
             <span className="inbox-new">{t('inbox.newCount', { n: briefing.groups.reduce((sum, group) => sum + group.docs.length, 0) })}</span>
-            <span className={briefing.readState.changed ? 'inbox-warn' : 'inbox-ok'}>
-              {briefing.readState.changed
-                ? t('inbox.readChanged', { n: briefing.readState.changed })
-                : briefing.readState.unread || briefing.readState.read
-                  ? t('inbox.keepUnread', { n: briefing.readState.unread })
-                  : t('inbox.readUnknown')}
-            </span>
+            {Boolean(briefing.readState.changed) && (
+              <span className="inbox-warn">{t('inbox.readChanged', { n: briefing.readState.changed })}</span>
+            )}
             {Boolean(briefing.markedRead) && <span className="inbox-warn">{t('inbox.markedRead', { n: briefing.markedRead! })}</span>}
           </div>
         ) : (

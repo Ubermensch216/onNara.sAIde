@@ -4,7 +4,7 @@ import { forgetPanelSpawn, isReportedPanelTab, notePanelSpawn, panelOpener, reme
 import type { AppError, AttachmentDownloadResult, AttachmentNaming, ExtractedPage, RequestControl, SWToContent } from '@/lib/messaging/protocol';
 import { isHtmlAttachmentName } from '@/lib/onnara/attachments';
 import { clearDownloadName, registerDownloadNaming, reserveDownloadName } from '@/lib/downloads/rename';
-import { isReceivedDocumentList, sameDocumentTitle, type StructuredDocumentList } from '@/lib/onnara/document-list';
+import { isReceivedDocumentList, normalizeForMatch, sameDocumentTitle, type StructuredDocumentList } from '@/lib/onnara/document-list';
 import { loadInboxLocation, saveInboxLocation } from '@/lib/inbox/location';
 import { isWorkTabBusy, runExclusive } from '@/lib/browser/sw-lock';
 import { fitToBudget } from '@/lib/extract/budget';
@@ -61,7 +61,7 @@ export default defineBackground(() => {
 
   // 기한 알림(S07). 패널이 닫혀 있어도 알람이 워커를 깨워 확인한다.
   registerTaskAlerts();
-  // 아침 접수함 브리핑(N1). 기본 꺼짐이며, 켠 사용자에게만 알람이 동작한다.
+  // 아침 공유/공람 브리핑(N1). 기본 꺼짐이며, 켠 사용자에게만 알람이 동작한다.
   registerInboxBriefing(BRIEFING_DEPS);
   // 첨부 파일명 정규화(B5). 브라우저가 이름을 정하기 직전에 한 번 끼어든다.
   registerDownloadNaming();
@@ -220,13 +220,35 @@ export async function handlePanelMessage(msg: PanelToSW): Promise<SWToPanel> {
     }
 
     case 'CAPTURE_INBOX_LOCATION': {
-      const located = await withContentScript(msg.tabId, { type: 'LOCATE_INBOX', control });
+      /**
+       * ★ 목록이 있는 **프레임을 먼저 찾는다.**
+       *
+       *   예전에는 `LOCATE_INBOX`를 곧바로 보냈는데, 추출(EXTRACT)이 아닌 메시지는
+       *   `dispatchContent`가 최상위 프레임에만 보낸다. 온나라 목록은 하위 iframe에 있는
+       *   경우가 대부분이라, 표가 없는 최상위에서 "받은문서 목록을 찾지 못했습니다"가 났다.
+       *   문서 한 건을 여는 경로(`readDocumentInBackground`)가 이미 같은 이유로
+       *   추출 결과의 `sourceFrameId`에 대고 `LOCATE_DOCUMENT`를 보낸다.
+       */
+      const found = await dispatchContent(msg.tabId, { type: 'EXTRACT', budgetTokens: LOCATE_BUDGET_TOKENS, purpose: 'page', control });
+      if (found.type === 'FAILED') return { type: 'ERROR', error: found.error };
+      // ★ 행이 없어도 받는다. 받은문서가 0건인 날에도 머리글은 그대로 있고,
+      //   사용자는 그 화면을 보면서 지정하는 중이다.
+      const list = found.type === 'EXTRACTED' ? found.payload.structuredData : undefined;
+      if (!list) {
+        return { type: 'ERROR', error: {
+          code: 'UNKNOWN',
+          message: '현재 화면에서 문서 목록을 찾지 못했습니다.',
+          hint: '온나라 공유/공람 > 받은문서 목록이 화면에 보이는 상태에서 다시 지정하세요. 문서 상세 화면에서는 지정할 수 없습니다.',
+        } };
+      }
+      const located = await sendToFrame(msg.tabId, found.type === 'EXTRACTED' ? found.payload.sourceFrameId ?? 0 : 0,
+        { type: 'LOCATE_INBOX', control: { ...control, expectedUrl: undefined } });
       if (located.type === 'FAILED') return { type: 'ERROR', error: located.error };
       if (located.type !== 'INBOX_LOCATED') return { type: 'ERROR', error: { code: 'UNKNOWN', message: '받은문서 화면을 확인하지 못했습니다.' } };
       const saved = await saveInboxLocation(located.location, located.listName);
       return saved
         ? { type: 'INBOX_LOCATION_SAVED', listName: saved.listName }
-        : { type: 'ERROR', error: { code: 'UNKNOWN', message: '접수함 위치를 저장하지 못했습니다.' } };
+        : { type: 'ERROR', error: { code: 'UNKNOWN', message: '브리핑 대상 위치를 저장하지 못했습니다.' } };
     }
 
     case 'COLLECT_INBOX':
@@ -398,17 +420,22 @@ function extractionScore(
 ): number {
   const response = candidate.response;
   if (response.type !== 'EXTRACTED') return -1;
-  const rows = response.payload.structuredData?.rows.length ?? 0;
+  const list = response.payload.structuredData;
+  const rows = list?.rows.length ?? 0;
   if (options.purpose === 'document-detail') {
-    if (rows) return -1;
+    // ★ 행 수가 아니라 목록인지로 가린다. 0건짜리 목록도 목록이지 상세 화면이 아니다.
+    if (list) return -1;
     const titleKey = compactText(options.targetTitle ?? '');
     const contentKey = compactText(`${response.payload.title} ${response.payload.text}`);
     return response.payload.charCount +
       (candidate.frameId === options.preferredFrameId ? 10_000_000 : 0) +
       (titleKey && contentKey.includes(titleKey) ? 1_000_000 : 0);
   }
-  const containsTarget = options.targetTitle && response.payload.structuredData?.rows.some(row => row.title && sameDocumentTitle(row.title, options.targetTitle!));
-  return (containsTarget ? 100_000_000 : 0) + (rows ? 1_000_000 + rows * 10_000 : 0) + response.payload.charCount;
+  const containsTarget = options.targetTitle && list?.rows.some(row => row.title && sameDocumentTitle(row.title, options.targetTitle!));
+  // ★ 0건짜리 목록에도 자리를 준다. 그러지 않으면 문서가 없는 날 메뉴·머리말 프레임이 이겨,
+  //   "목록 프레임이 어디인가"를 묻는 쪽(브리핑 대상 지정)이 엉뚱한 프레임을 받는다.
+  return (containsTarget ? 100_000_000 : 0) + (list ? 500_000 : 0) +
+    (rows ? 1_000_000 + rows * 10_000 : 0) + response.payload.charCount;
 }
 
 async function dispatchExtractionAcrossFrames(
@@ -856,7 +883,15 @@ export async function releaseKeptWorkTab(sourceTabId: number): Promise<void> {
   forgetWorkTab(workTabId);
 }
 
-/* ── 접수함 수집 (N1) ─────────────────────────────────── */
+/* ── 공유/공람 목록 수집 (N1) ───────────────────────── */
+
+/**
+ * 목록 프레임을 찾을 때만 쓰는 예산.
+ *
+ * ★ 본문을 쓰려는 것이 아니라 "어느 프레임에 표가 있는가"만 가리므로 작게 둔다.
+ *   구조화된 목록은 예산과 무관하게 행·열로 추출된다.
+ */
+const LOCATE_BUDGET_TOKENS = 1000;
 
 /** 목록 대신 로그인 화면이 왔는가. 세션이 끊긴 것과 화면을 못 읽은 것은 사용자가 할 일이 다르다. */
 export function looksLikeLogin(text: string): boolean {
@@ -881,8 +916,8 @@ export async function collectInbox(
   if (!saved) {
     return { type: 'ERROR', error: {
       code: 'UNKNOWN',
-      message: '접수함으로 지정한 화면이 없습니다.',
-      hint: '온나라 공유/공람 > 받은문서 목록을 연 뒤 접수함 탭에서 "이 화면을 접수함으로 지정"을 누르세요.',
+      message: '브리핑할 화면이 지정되지 않았습니다.',
+      hint: '온나라 공유/공람 > 받은문서 목록을 연 뒤 공유/공람 탭에서 "이 화면을 브리핑 대상으로 지정"을 누르세요.',
     } };
   }
 
@@ -898,14 +933,22 @@ export async function collectInbox(
   const current = await dispatchContent(source.id, { type: 'EXTRACT', budgetTokens, purpose: 'page', control });
   if (current.type === 'FAILED') return { type: 'ERROR', error: current.error };
   if (current.type === 'EXTRACTED') {
-    // ① 지금 보고 있는 화면이 이미 받은문서면 복제하지 않는다. 가장 싸고 가장 덜 침입적이다.
-    if (isReceivedDocumentList(current.payload.structuredData)) {
-      return { type: 'INBOX_COLLECTED', list: current.payload.structuredData!, via: 'active-tab' };
+    /**
+     * ① 지금 보고 있는 화면이 지정해 둔 그 목록이면 복제하지 않는다. 가장 싸고 가장 덜 침입적이다.
+     *
+     * ★ 여기서는 **이름이 같은지** 따진다. 복원 경로와 달리 이 화면은 사용자가 아무 데나
+     *   열어 둔 것일 수 있어, 표가 있다는 것만으로 받아들이면 문서등록대장을 공유/공람으로
+     *   착각해 브리핑한다.
+     */
+    const seen = current.payload.structuredData;
+    const sameList = seen && normalizeForMatch(seen.listName) === normalizeForMatch(saved.listName);
+    if (seen && (sameList || isReceivedDocumentList(seen))) {
+      return { type: 'INBOX_COLLECTED', list: seen, via: 'active-tab' };
     }
     if (!current.payload.structuredData && looksLikeLogin(current.payload.text)) {
       return { type: 'ERROR', error: {
         code: 'UNKNOWN',
-        message: '온나라 세션이 만료되어 접수함을 읽지 못했습니다.',
+        message: '온나라 세션이 만료되어 공유/공람 목록을 읽지 못했습니다.',
         hint: '온나라에 다시 로그인한 뒤 확인하세요. 로그인은 사용자가 직접 해야 합니다.',
       } };
     }
@@ -924,7 +967,7 @@ export async function collectInbox(
   }
   try {
     await keepBackground(workTabId, source);
-    const list = await waitForDocumentList(workTabId, INBOX_TARGET, budgetTokens, taskControl, saved.location);
+    const list = await waitForDocumentList(workTabId, inboxTarget(saved.listName), budgetTokens, taskControl, saved.location);
     return { type: 'INBOX_COLLECTED', list: list.structuredData!, via: 'work-tab' };
   } catch (error) {
     return { type: 'ERROR', error: error instanceof ReadFailure ? error.appError : accessError(error) };
@@ -1246,7 +1289,7 @@ async function frameUrls(tabId: number): Promise<string> {
 /**
  * 작업 탭에서 기다릴 목록.
  *
- * ★ 예전에는 "그 제목이 든 목록"만 기다렸다. 접수함 브리핑(N1)은 제목이 아니라
+ * ★ 예전에는 "그 제목이 든 목록"만 기다렸다. 공유/공람 브리핑(N1)은 제목이 아니라
  *   **화면 자체**를 기다린다. 받아들이는 조건만 갈라 두고 복원·재시도 절차는 하나로 둔다 —
  *   목록 복원은 이 제품에서 가장 깨지기 쉬운 절차라, 두 벌로 갈라 두면 한쪽만 고쳐진다.
  */
@@ -1266,10 +1309,21 @@ function documentTarget(title: string): ListTarget {
   };
 }
 
-const INBOX_TARGET: ListTarget = {
-  label: '받은문서',
-  accepts: list => isReceivedDocumentList(list) && list!.rows.length > 0,
-};
+/**
+ * 지정해 둔 공유/공람 목록.
+ *
+ * ★ `받은문서`라는 이름표를 요구하지 않는다. 온나라는 화면 제목을 목록과 **다른 프레임**에
+ *   그리는 경우가 있어, 목록 프레임 안에서는 그 이름을 읽을 수 없다. 여기서 복원하는 것은
+ *   **사용자가 직접 보고 지정한 그 화면**이므로, 그 자리에 표가 떴는지만 가린다.
+ *   무엇을 지정했는지는 지정할 때 읽은 이름으로 화면에 계속 보여 준다.
+ */
+function inboxTarget(listName: string): ListTarget {
+  return {
+    label: listName || '받은문서',
+    // 행이 없어도 목록이다. 받은문서가 0건인 날을 "읽지 못했다"로 기록하지 않는다.
+    accepts: list => Boolean(list),
+  };
+}
 
 async function waitForDocumentList(
   tabId: number,
@@ -1283,13 +1337,26 @@ async function waitForDocumentList(
   let restores = 0;
   let lastRestore = 0;
   let accepted = false;
+  let emptySince = 0;
   let seen = '화면을 한 번도 읽지 못함';
   while (Date.now() < listDeadline) {
     assertCurrent(control, '', cancelled.has(control.id));
     const result = await dispatchContent(tabId, { type: 'EXTRACT', budgetTokens, purpose: 'page', ...(target.title ? { targetTitle: target.title } : {}), control });
     if (result.type === 'EXTRACTED' && target.accepts(result.payload.structuredData)) {
+      const found = result.payload.structuredData;
+      /**
+       * ★ 빈 목록은 조금 더 지켜본다.
+       *
+       *   머리글이 먼저 그려지고 행이 뒤따라 채워지는 화면이 있다. 그 순간을 그대로 받으면
+       *   문서가 있는 날에도 "0건"으로 브리핑한다. 같은 화면이 잠시 그대로면 그때 받는다.
+       */
+      if (found && !found.rows.length) {
+        emptySince ||= Date.now();
+        if (Date.now() - emptySince < EMPTY_SETTLE_MS) { await delay(250); continue; }
+      }
       return result.payload;
     }
+    emptySince = 0;
     if (result.type === 'FAILED' && result.error.code === 'HOST_PERMISSION_REQUIRED') throw new ReadFailure(result.error);
     seen = result.type === 'EXTRACTED'
       ? result.payload.structuredData
@@ -1330,6 +1397,8 @@ async function waitForDocumentList(
 }
 
 const LIST_WAIT_MS = 40_000;
+/** 빈 목록을 "정말 비었다"로 받아들이기 전에 같은 화면을 지켜보는 시간. */
+const EMPTY_SETTLE_MS = 1500;
 const RESTORE_SETTLE_MS = 2000;
 const RESTORE_RETRY_MS = 5000;
 const RESTORE_LOADING_LIMIT_MS = 10_000;

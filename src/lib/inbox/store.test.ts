@@ -87,7 +87,7 @@ it('건너뛴 실행도 기록한다', async () => {
   expect(last).toMatchObject({ at: 2, trigger: 'manual', briefed: 1 });
 });
 
-it('접수함 기록을 전부 지울 수 있다 — 공문 제목이 남는 자리이기 때문이다', async () => {
+it('브리핑 기록을 전부 지울 수 있다 — 공문 제목이 남는 자리이기 때문이다', async () => {
   await saveInboxDocs([doc()]);
   await recordInboxRun({ at: 1, trigger: 'manual', scanned: 1, added: 1, briefed: 1, filtered: 0, readStateChanged: 0 });
   expect((await inboxStats()).docs).toBe(1);

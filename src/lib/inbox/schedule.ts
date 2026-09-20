@@ -1,5 +1,5 @@
 /**
- * 아침 접수함 브리핑의 실행 조건과 알람(N1).
+ * 아침 공유/공람 브리핑의 실행 조건과 알람(N1).
  *
  * ★ 브라우저가 떠 있어야만 동작한다. MV3 확장의 수명은 브라우저의 수명이다.
  *   다만 **사이드패널은 닫혀 있어도 된다** — 기한 알림(S07)과 같은 구조로,
@@ -25,7 +25,7 @@ import { listInboxRuns } from './store';
 export const BRIEFING_ALARM = 'saide.inboxBriefing';
 /** 알림 id. 같은 id로 덮어써 알림이 쌓이지 않게 한다. */
 export const BRIEFING_NOTIFICATION_ID = 'saide.inboxBriefing';
-/** 알림을 눌러 패널을 열었을 때 접수함 탭을 펴게 하는 표시. */
+/** 알림을 눌러 패널을 열었을 때 공유/공람 탭을 펴게 하는 표시. */
 export const OPEN_INBOX_KEY = 'saide.openInbox';
 /** 워커가 죽어 있어도 한 시간에 한 번은 깨어나 확인한다. */
 const CHECK_MINUTES = 60;
@@ -81,7 +81,7 @@ export function briefingNotice(briefing: Briefing): { title: string; message: st
 }
 
 export interface BriefingDeps {
-  /** 접수함 목록을 읽어 온다. 서비스 워커의 수집 경로를 그대로 받는다. */
+  /** 공유/공람 목록을 읽어 온다. 서비스 워커의 수집 경로를 그대로 받는다. */
   collect: (budgetTokens: number, control: RequestControl) => Promise<SWToPanel>;
   /** 패널이 열려 있는가. */
   panelOpen: () => Promise<boolean>;
@@ -120,7 +120,7 @@ export async function maybeBrief(deps: BriefingDeps, now: Date = new Date()): Pr
 
   if (reply.type !== 'INBOX_COLLECTED') {
     // ★ 읽지 못한 날도 기록에 남긴다. 화면이 그냥 비어 있으면 사용자는 "받은 문서가 없구나"로 오해한다.
-    await recordSkippedRun('alarm', reply.type === 'ERROR' ? reply.error.message : '접수함을 읽지 못했습니다', now);
+    await recordSkippedRun('alarm', reply.type === 'ERROR' ? reply.error.message : '공유/공람 목록을 읽지 못했습니다', now);
     return false;
   }
 
@@ -140,7 +140,7 @@ async function notify(briefing: Briefing): Promise<void> {
   }).catch?.(() => undefined);
 }
 
-/* ── 알림을 눌러 연 패널은 접수함 탭을 편다 ──────────────── */
+/* ── 알림을 눌러 연 패널은 공유/공람 탭을 편다 ──────────────── */
 
 export async function requestInboxView(): Promise<void> {
   try { await chrome.storage.local.set({ [OPEN_INBOX_KEY]: Date.now() }); } catch { /* 표시를 못 남기면 탭만 안 열린다 */ }
