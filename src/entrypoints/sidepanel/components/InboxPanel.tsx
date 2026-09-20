@@ -89,7 +89,7 @@ export function InboxPanel({ tab, settings, onOpenSchedule }: Props) {
           </div>
         )}
 
-        {/* ★ 열람 상태는 언제나 수치로 말한다. "바꾸지 않았다"는 주장이 아니라 대조 결과다. */}
+        {/* ★ 열람 상태는 바뀐 때만 말한다. 그대로인 것은 머리말을 차지할 이유가 없다. */}
         {briefing ? (
           <div className="inbox-stats">
             <span>{t('inbox.lastRun', { time: clock(briefing.at), n: briefing.scanned })}</span>
