@@ -8,6 +8,7 @@
 import { fitToBudget } from './budget';
 import { PDF_MAX_BYTES, bytesToBase64, formatPdfSection, isPdfBytes, type PdfSource, type PdfTextResult } from './pdf-text';
 import type { ExtractedPage } from '@/lib/messaging/protocol';
+import type { TextPdfInput } from './text-pdf';
 
 export const OFFSCREEN_PATH = 'offscreen.html';
 export const OFFSCREEN_TARGET = 'saide-offscreen';
@@ -17,6 +18,13 @@ export interface ParsePdfRequest { target: typeof OFFSCREEN_TARGET; type: 'PARSE
 export function isParsePdfRequest(msg: unknown): msg is ParsePdfRequest {
   const value = msg as Partial<ParsePdfRequest> | null;
   return value?.target === OFFSCREEN_TARGET && value.type === 'PARSE_PDF' && typeof value.base64 === 'string';
+}
+
+export interface GenerateTextPdfRequest { target: typeof OFFSCREEN_TARGET; type: 'GENERATE_TEXT_PDF'; input: TextPdfInput }
+
+export function isGenerateTextPdfRequest(msg: unknown): msg is GenerateTextPdfRequest {
+  const value = msg as Partial<GenerateTextPdfRequest> | null;
+  return value?.target === OFFSCREEN_TARGET && value.type === 'GENERATE_TEXT_PDF' && typeof value.input === 'object' && value.input !== null;
 }
 
 const IDLE_CLOSE_MS = 60_000;
@@ -45,6 +53,20 @@ async function parse(base64: string): Promise<PdfTextResult> {
     return reply ?? { text: '', pages: 0, error: 'PDF 해석기가 응답하지 않았습니다' };
   } catch (error) {
     return { text: '', pages: 0, error: error instanceof Error ? error.message : String(error) };
+  } finally {
+    closeTimer = setTimeout(() => { void chrome.offscreen.closeDocument().catch(() => undefined); }, IDLE_CLOSE_MS);
+  }
+}
+
+/** 텍스트/HTML 본문을 오프스크린 문서를 통해 A4 규격 PDF 바이너리(Base64)로 생성한다. */
+export async function generatePdfFromText(input: TextPdfInput): Promise<string> {
+  clearTimeout(closeTimer);
+  try {
+    await ensureOffscreen();
+    const reply = await chrome.runtime.sendMessage({ target: OFFSCREEN_TARGET, type: 'GENERATE_TEXT_PDF', input } satisfies GenerateTextPdfRequest) as { base64?: string; error?: string } | undefined;
+    if (reply?.error) throw new Error(reply.error);
+    if (!reply?.base64) throw new Error('PDF 생성에 실패했습니다.');
+    return reply.base64;
   } finally {
     closeTimer = setTimeout(() => { void chrome.offscreen.closeDocument().catch(() => undefined); }, IDLE_CLOSE_MS);
   }

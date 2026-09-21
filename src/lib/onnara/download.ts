@@ -1,4 +1,4 @@
-import { sendToSW, type AppError, type AttachmentDownloadResult, type AttachmentNaming, type ExtractedPage } from '@/lib/messaging/protocol';
+import { sendToSW, type AppError, type AttachmentDownloadResult, type AttachmentNaming, type DownloadTargetMode, type ExtractedPage } from '@/lib/messaging/protocol';
 import { loadSettings } from '@/lib/storage/settings';
 import { downloadLink, escapeMarkdownText } from '@/lib/downloads/links';
 import { panelLink } from '@/lib/panel/links';
@@ -41,29 +41,30 @@ export async function downloadDocumentAttachments(options: {
  */
 export async function queueAttachmentDownloads(options: {
   tabId: number; page: ExtractedPage; titles: Array<string | undefined>;
-  origin: 'automation' | 'chat'; signal?: AbortSignal;
+  origin: 'automation' | 'chat'; mode?: DownloadTargetMode; signal?: AbortSignal;
   onFinished?: (job: AutomationJob, index: number) => Promise<void> | void;
 }): Promise<AutomationJob[]> {
-  const { tabId, page, titles, origin, signal, onFinished } = options;
+  const { tabId, page, titles, origin, mode = 'attachments', signal, onFinished } = options;
   const keepWorkTab = titles.filter(Boolean).length > 1;
   const naming = await namingPlans(page, titles);
+  const jobKind = mode === 'body' ? 'download-body' : mode === 'all' ? 'download-all' : 'download-attachments';
   // 앞 문서의 파일이 아직 내려받는 중이면 동시 다운로드를 피하려고 뒤 문서는 실행하지 않는다.
   let stalled = false;
   const pending = titles.map((title, index) => enqueueAutomation({
-    kind: 'download-attachments', label: title ?? page.title, origin,
+    kind: jobKind, label: title ?? page.title, origin,
     run: async jobSignal => {
       if (stalled) return { error: { code: 'UNKNOWN', message: '앞 문서의 다운로드가 아직 끝나지 않아 실행하지 않았습니다. 다운로드가 끝난 뒤 다시 요청하세요.' } };
       const response = await sendToSW({
-        type: 'DOWNLOAD_ATTACHMENTS', tabId, ...(title ? { title, keepWorkTab } : {}),
+        type: 'DOWNLOAD_ATTACHMENTS', tabId, mode, ...(title ? { title, keepWorkTab } : {}),
         ...(naming[index] ? { naming: naming[index]! } : {}),
         control: { id: '', deadline: 0, expectedUrl: page.url },
       }, jobSignal, DOCUMENT_DOWNLOAD_TIMEOUT_MS);
       if (response.type === 'ERROR') return { error: response.error };
-      if (response.type !== 'ATTACHMENTS_DOWNLOADED') return { error: { code: 'UNKNOWN', message: '첨부 다운로드 결과를 받지 못했습니다.' } };
+      if (response.type !== 'ATTACHMENTS_DOWNLOADED') return { error: { code: 'UNKNOWN', message: '다운로드 결과를 받지 못했습니다.' } };
       if (response.results.some(result => result.status === 'in_progress')) stalled = true;
       return {
         files: response.results,
-        ...(response.results.length === 0 ? { summary: '첨부 파일이 없습니다.' } : {}),
+        ...(response.results.length === 0 ? { summary: mode === 'body' ? '본문 PDF를 내려받지 못했습니다.' : '다운로드할 파일이 없습니다.' } : {}),
       };
     },
   }));

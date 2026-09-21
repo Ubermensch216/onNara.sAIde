@@ -801,6 +801,41 @@
 
 /* 2. 실행할 작업 */
 
+.auto-mode-selector {
+  display: flex;
+  background: var(--surface-2);
+  padding: 3px;
+  border-radius: var(--radius);
+  gap: 4px;
+  margin-bottom: 8px;
+  border: 1px solid var(--border);
+}
+
+.auto-mode-btn {
+  flex: 1;
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 6px 4px;
+  text-align: center;
+  border-radius: calc(var(--radius) - 3px);
+  border: none;
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.auto-mode-btn:hover:not(.active) {
+  color: var(--fg);
+}
+
+.auto-mode-btn.active {
+  background: var(--surface);
+  color: var(--fg);
+  font-weight: 700;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
 .auto-card {
   display: flex;
   align-items: center;

@@ -163,10 +163,13 @@ export interface RequestControl {
   approvalToken?: string;
 }
 
+export type DownloadTargetMode = 'attachments' | 'body' | 'all';
+
 export type PanelToSW = (
-  /** title이 있으면 목록에서 그 문서를 백그라운드로 열고, 없으면 현재 상세 화면의 첨부를 받는다. */
+  /** title이 있으면 목록에서 그 문서를 백그라운드로 열고, 없으면 현재 상세 화면의 첨부/본문을 받는다. */
   /** naming: 저장할 파일 이름을 정규화한다(B5). 없으면 브라우저가 정한 이름을 그대로 쓴다. */
-  | { type: 'DOWNLOAD_ATTACHMENTS'; tabId: number; title?: string; keepWorkTab?: boolean; naming?: AttachmentNaming }
+  /** mode: 'attachments'(첨부만) | 'body'(본문만 PDF) | 'all'(본문+첨부). 기본값은 'attachments'. */
+  | { type: 'DOWNLOAD_ATTACHMENTS'; tabId: number; title?: string; keepWorkTab?: boolean; naming?: AttachmentNaming; mode?: DownloadTargetMode }
   | { type: 'EXTRACT_PAGE'; tabId: number; budgetTokens: number }
   /**
    * withAttachments: 본문을 읽은 같은 상세 화면에서 첨부도 받는다(문서를 두 번 열지 않는다).
@@ -275,6 +278,7 @@ export type SWToContent = (
   | { type: 'SCAN_ATTACHMENTS' }
   | { type: 'CLICK_ATTACHMENT'; index: number; name: string }
   | { type: 'CHECK_DIALOG' }
+  | { type: 'GET_BODY_PDF' }
   | { type: 'ACT'; action: PageAction }
   | { type: 'PREPARE'; action: PageAction }
   /** 이 프레임이 받은문서 목록이면 그 화면의 위치를 잡아 돌려준다(N1). */
@@ -286,6 +290,7 @@ export type ContentToSW =
   | { type: 'PREPARED'; token: string; label?: string }
   /** pdf: 이 프레임이 PDF 뷰어로 보여 준 본문 원본. 서비스 워커가 글자로 바꿔 payload에 합치고 패널에는 넘기지 않는다. */
   | { type: 'EXTRACTED'; payload: ExtractedPage; pdf?: PdfSource[] }
+  | { type: 'BODY_PDF'; pdf: PdfSource | null }
   /** target: 실제로 누른 요소 설명. 열기에 반응이 없을 때 원인을 알리는 데 쓴다. */
   | { type: 'OPENING_DOCUMENT'; title: string; target?: string }
   | { type: 'DOCUMENT_LOCATED'; location: DocumentListLocation }

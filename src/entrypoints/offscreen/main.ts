@@ -10,13 +10,23 @@
 import { GlobalWorkerOptions, getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import workerSrc from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
 import { base64ToBytes, extractPdfText, type GetPdfDocument } from '@/lib/extract/pdf-text';
-import { isParsePdfRequest } from '@/lib/extract/pdf-offscreen';
+import { isGenerateTextPdfRequest, isParsePdfRequest } from '@/lib/extract/pdf-offscreen';
+import { renderTextToPdfBase64 } from '@/lib/extract/text-pdf';
 
 GlobalWorkerOptions.workerSrc = workerSrc;
 
 chrome.runtime.onMessage.addListener((msg: unknown, sender, sendResponse) => {
-  if (sender.id !== chrome.runtime.id || !isParsePdfRequest(msg)) return false;
-  void extractPdfText(getDocument as unknown as GetPdfDocument, base64ToBytes(msg.base64), { cMapUrl: chrome.runtime.getURL('/cmaps/') })
-    .then(sendResponse);
-  return true;
+  if (sender.id !== chrome.runtime.id) return false;
+  if (isParsePdfRequest(msg)) {
+    void extractPdfText(getDocument as unknown as GetPdfDocument, base64ToBytes(msg.base64), { cMapUrl: chrome.runtime.getURL('/cmaps/') })
+      .then(sendResponse);
+    return true;
+  }
+  if (isGenerateTextPdfRequest(msg)) {
+    void renderTextToPdfBase64(msg.input)
+      .then(base64 => sendResponse({ base64 }))
+      .catch((error: unknown) => sendResponse({ error: error instanceof Error ? error.message : String(error) }));
+    return true;
+  }
+  return false;
 });

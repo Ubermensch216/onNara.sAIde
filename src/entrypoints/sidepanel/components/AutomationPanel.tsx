@@ -10,7 +10,7 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { t as translate, useT } from '@/lib/i18n';
-import { isRestrictedUrl, sendToSW, type AppError, type ExtractedPage, type TabSummary } from '@/lib/messaging/protocol';
+import { isRestrictedUrl, sendToSW, type AppError, type DownloadTargetMode, type ExtractedPage, type TabSummary } from '@/lib/messaging/protocol';
 import { requestAccessForError } from '@/lib/permissions';
 import {
   cancelAutomation,
@@ -61,6 +61,21 @@ export function AutomationPanel({ tab, onDownloadLink, onTabChange }: Props) {
   const [screen, setScreen] = useState<Screen>({ state: 'idle' });
   /** 링크로 찾아온 작업. 잠깐 강조했다가 스스로 꺼진다. */
   const [spotlight, setSpotlight] = useState<string | null>(null);
+  const [targetMode, setTargetMode] = useState<DownloadTargetMode>('attachments');
+
+  useEffect(() => {
+    void chrome.storage?.local?.get?.(['saide_download_mode']).then((res: Record<string, unknown> | undefined) => {
+      const saved = res?.saide_download_mode as DownloadTargetMode | undefined;
+      if (saved && ['attachments', 'body', 'all'].includes(saved)) {
+        setTargetMode(saved);
+      }
+    }).catch(() => undefined);
+  }, []);
+
+  const handleModeChange = (mode: DownloadTargetMode) => {
+    setTargetMode(mode);
+    void chrome.storage?.local?.set?.({ saide_download_mode: mode }).catch(() => undefined);
+  };
 
   useEffect(() => { void loadAutomationHistory(); }, []);
 
@@ -128,8 +143,20 @@ export function AutomationPanel({ tab, onDownloadLink, onTabChange }: Props) {
     if (!fresh || !target) return;
     const titles = fresh.structuredData ? fresh.structuredData.selectedTitles ?? [] : [undefined];
     if (!titles.length) return;
-    void queueAttachmentDownloads({ tabId: target.tabId, page: fresh, titles, origin: 'automation' });
+    void queueAttachmentDownloads({ tabId: target.tabId, page: fresh, titles, mode: targetMode, origin: 'automation' });
   };
+
+  const actionTitle = targetMode === 'body'
+    ? t('auto.downloadBody')
+    : targetMode === 'all'
+      ? t('auto.downloadAll')
+      : t('auto.downloadAttachments');
+
+  const actionDesc = targetMode === 'body'
+    ? t('auto.downloadBodyDesc')
+    : targetMode === 'all'
+      ? t('auto.downloadAllDesc')
+      : t('auto.downloadAttachmentsDesc');
 
   const grantAccess = () => {
     // 권한 요청은 클릭 핸들러의 첫 동작이어야 한다.
@@ -187,12 +214,26 @@ export function AutomationPanel({ tab, onDownloadLink, onTabChange }: Props) {
       {/* 2. 실행할 작업 */}
       <section className="auto-section">
         <h2 className="auto-section-title">{t('auto.actions')}</h2>
+        <div className="auto-mode-selector" role="radiogroup" aria-label={t('auto.actions')}>
+          {(['attachments', 'body', 'all'] as const).map(mode => (
+            <button
+              key={mode}
+              type="button"
+              role="radio"
+              aria-checked={targetMode === mode}
+              className={`auto-mode-btn ${targetMode === mode ? 'active' : ''}`}
+              onClick={() => handleModeChange(mode)}
+            >
+              {t(`auto.targetMode.${mode}`)}
+            </button>
+          ))}
+        </div>
         <button type="button" className="auto-card" onClick={() => void downloadAttachments()} disabled={!canDownload}>
           <span className="auto-card-icon" aria-hidden="true"><DownloadIcon /></span>
           <span className="auto-card-text">
-            <span className="auto-card-title">{t('auto.downloadAttachments')}</span>
+            <span className="auto-card-title">{actionTitle}</span>
             <span className={`auto-card-desc ${list && !selected.length ? 'hint' : ''}`}>
-              {list && !selected.length ? t('auto.selectDocuments') : t('auto.downloadAttachmentsDesc')}
+              {list && !selected.length ? t('auto.selectDocuments') : actionDesc}
             </span>
           </span>
           {canDownload && <span className="auto-card-badge">{t('auto.docCount', { n: list ? selected.length : 1 })}</span>}

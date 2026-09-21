@@ -127,5 +127,44 @@ it('문서 열기에 실패하거나 첨부파일이 없어도 멈추지 않고 
   const rows = [...document.querySelectorAll('.auto-job')];
   expect(rows.map(row => row.querySelector('.auto-status')!.textContent)).toEqual(['완료', '완료', '실패']);
   expect(rows.map(row => row.querySelector('.auto-job-title')!.textContent)).toEqual(['문서 C', '문서 B', '문서 A']);
-  expect(rows[1]!.querySelector('.auto-job-summary')!.textContent).toBe('첨부 파일이 없습니다.');
+  expect(rows[1]!.querySelector('.auto-job-summary')!.textContent).toBe('다운로드할 파일이 없습니다.');
 });
+
+it('실행할 작업에서 "첨부만", "본문만", "본문+첨부" 옵션을 선택하면 해당 mode로 요청한다', async () => {
+  const sendMessage = vi.fn(async (message: { type: string; title?: string }) => {
+    if (message.type === 'EXTRACT_PAGE') return list(['문서 A']);
+    if (message.type === 'DOWNLOAD_ATTACHMENTS') return { type: 'ATTACHMENTS_DOWNLOADED', results: [{ name: '문서 A_본문.pdf', status: 'complete', downloadId: 101, path: 'C:\\Downloads\\문서 A_본문.pdf' }] };
+    return { type: 'ACTIVE_TAB', tab: null };
+  });
+  vi.stubGlobal('chrome', { runtime: { sendMessage }, storage: { local: { get: vi.fn(async () => ({})), set: vi.fn(async () => undefined) } } });
+  await act(() => root.render(createElement(AutomationPanel, { tab, onDownloadLink: vi.fn() })));
+  await settle();
+
+  const modeButtons = [...document.querySelectorAll<HTMLButtonElement>('.auto-mode-btn')];
+  expect(modeButtons.map(b => b.textContent)).toEqual(['첨부만', '본문만', '본문+첨부']);
+
+  // 1. 기본은 '첨부만'
+  const card = document.querySelector<HTMLButtonElement>('.auto-card')!;
+  expect(card.textContent).toContain('첨부 받기');
+
+  // 2. '본문만' 선택
+  await act(async () => modeButtons[1]!.click());
+  await settle();
+  expect(card.textContent).toContain('본문 받기 (PDF)');
+
+  await act(async () => card.click());
+  await settle();
+  let downloads = sendMessage.mock.calls.map(([message]) => message).filter(m => m.type === 'DOWNLOAD_ATTACHMENTS');
+  expect((downloads[0] as { mode?: string }).mode).toBe('body');
+
+  // 3. '본문+첨부' 선택
+  await act(async () => modeButtons[2]!.click());
+  await settle();
+  expect(card.textContent).toContain('본문 + 첨부 받기');
+
+  await act(async () => card.click());
+  await settle();
+  downloads = sendMessage.mock.calls.map(([message]) => message).filter(m => m.type === 'DOWNLOAD_ATTACHMENTS');
+  expect((downloads[1] as { mode?: string }).mode).toBe('all');
+});
+

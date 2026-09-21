@@ -47,7 +47,7 @@ export function validPanelRequest(v: unknown): v is PanelToSW {
   if (v.type === 'CAPTURE_INBOX_LOCATION') return true;
   if (v.type === 'CAPTURE_SCREENSHOT') return true;
   if (v.type === 'RELEASE_WORK_TAB') return true;
-  if (v.type === 'DOWNLOAD_ATTACHMENTS') return (v.title === undefined || text(v.title, 500)) && optionalFlag(v.keepWorkTab);
+  if (v.type === 'DOWNLOAD_ATTACHMENTS') return (v.title === undefined || text(v.title, 500)) && optionalFlag(v.keepWorkTab) && (v.mode === undefined || ['attachments', 'body', 'all'].includes(v.mode as string));
   if (v.type === 'EXTRACT_PAGE') return Number.isInteger(v.budgetTokens) && (v.budgetTokens as number) >= 1 && (v.budgetTokens as number) <= 8000;
   if (v.type === 'READ_DOCUMENT') return text(v.title, 500) && Number.isInteger(v.budgetTokens) &&
     (v.budgetTokens as number) >= 1 && (v.budgetTokens as number) <= 8000 &&

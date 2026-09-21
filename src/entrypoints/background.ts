@@ -9,7 +9,7 @@ import { loadInboxLocation, saveInboxLocation } from '@/lib/inbox/location';
 import { firstInboxPage } from '@/lib/onnara/inbox-pages';
 import { isWorkTabBusy, runExclusive } from '@/lib/browser/sw-lock';
 import { fitToBudget } from '@/lib/extract/budget';
-import { pdfText, withPdfSections } from '@/lib/extract/pdf-offscreen';
+import { generatePdfFromText, pdfText, withPdfSections } from '@/lib/extract/pdf-offscreen';
 import type { DocumentListLocation } from '@/lib/onnara/document-navigation';
 /**
  * Service Worker — 계획서 §3 설계 결정 ①
@@ -230,13 +230,29 @@ export async function handlePanelMessage(msg: PanelToSW): Promise<SWToPanel> {
   const isCancelled = () => cancelled.has(control?.id);
   switch (msg.type) {
     case 'DOWNLOAD_ATTACHMENTS': {
+      const mode = msg.mode ?? 'attachments';
+      const perform = async (targetTabId: number, targetControl: RequestControl, payload?: ExtractedPage): Promise<SWToPanel> => {
+        if (mode === 'body') {
+          return downloadBodyInTab(targetTabId, targetControl, msg.naming, payload);
+        }
+        if (mode === 'all') {
+          const bodyOutcome = await downloadBodyInTab(targetTabId, targetControl, msg.naming, payload);
+          const attachOutcome = await downloadAttachmentsInTab(targetTabId, targetControl, msg.naming);
+          const results: AttachmentDownloadResult[] = [];
+          if (bodyOutcome.type === 'ATTACHMENTS_DOWNLOADED') results.push(...bodyOutcome.results);
+          if (attachOutcome.type === 'ATTACHMENTS_DOWNLOADED') results.push(...attachOutcome.results);
+          return { type: 'ATTACHMENTS_DOWNLOADED', results };
+        }
+        return downloadAttachmentsInTab(targetTabId, targetControl, msg.naming);
+      };
+
       if (msg.title) {
         return runExclusive(() => readDocumentInBackground(msg.tabId, msg.title!, 1000, control,
-          target => downloadAttachmentsInTab(target.tabId, target.control, msg.naming), { keepWorkTab: msg.keepWorkTab }));
+          target => perform(target.tabId, target.control, target.payload), { keepWorkTab: msg.keepWorkTab }));
       }
       const tab = await chrome.tabs.get(msg.tabId);
       assertCurrent(control, tab.url ?? '', isCancelled());
-      return runExclusive(() => downloadAttachmentsInTab(msg.tabId, control, msg.naming));
+      return runExclusive(() => perform(msg.tabId, control));
     }
 
     case 'CAPTURE_INBOX_LOCATION': {
@@ -1243,6 +1259,102 @@ export async function downloadAttachmentsInTab(tabId: number, control: RequestCo
     }
   }
   return { type: 'ATTACHMENTS_DOWNLOADED', results };
+}
+
+/**
+ * 상세 화면에서 본문(PDF 원본 또는 텍스트 기반 생성 PDF)을 한 파일로 내려받는다.
+ */
+export async function downloadBodyInTab(
+  tabId: number,
+  control: RequestControl,
+  naming?: AttachmentNaming,
+  existingPayload?: ExtractedPage,
+): Promise<SWToPanel> {
+  const frameControl: RequestControl = { ...control, expectedUrl: undefined };
+  let frames: Array<{ frameId: number }> = [{ frameId: 0 }];
+  try {
+    const discovered = await chrome.webNavigation.getAllFrames({ tabId });
+    if (discovered?.length) frames = discovered;
+  } catch {
+    // 최상위 프레임만 확인
+  }
+
+  // 1. 프레임들에서 본문 PDF 소스 탐색
+  let pdfSource: { url?: string; base64?: string } | null = null;
+  for (const frame of frames) {
+    const reply = await sendToFrame(tabId, frame.frameId, { type: 'GET_BODY_PDF', control: frameControl });
+    if (reply.type === 'BODY_PDF' && reply.pdf && (reply.pdf.base64 || reply.pdf.url)) {
+      pdfSource = reply.pdf;
+      break;
+    }
+  }
+
+  const docTitle = (naming?.docTitle || existingPayload?.title || '공문서').trim();
+  const defaultName = `${docTitle}_본문.pdf`;
+
+  let downloadUrl: string | undefined;
+  if (pdfSource?.base64) {
+    downloadUrl = `data:application/pdf;base64,${pdfSource.base64}`;
+  } else if (pdfSource?.url) {
+    downloadUrl = pdfSource.url;
+  } else {
+    // 2. PDF 소스가 없으면 HTML/텍스트 본문으로 PDF 생성
+    let text = existingPayload?.text;
+    if (!text) {
+      const extracted = await dispatchContent(tabId, {
+        type: 'EXTRACT',
+        budgetTokens: 4000,
+        purpose: 'document-detail',
+        control: frameControl,
+      });
+      if (extracted.type === 'EXTRACTED') text = extracted.payload.text;
+    }
+    try {
+      const base64 = await generatePdfFromText({
+        title: docTitle,
+        text: text || '본문 내용이 없습니다.',
+        ...(naming?.reportDate ? { reportDate: naming.reportDate } : {}),
+      });
+      downloadUrl = `data:application/pdf;base64,${base64}`;
+    } catch (err) {
+      return {
+        type: 'ATTACHMENTS_DOWNLOADED',
+        results: [{ name: defaultName, status: 'failed', message: `본문 PDF 생성 실패: ${String(err)}` }],
+      };
+    }
+  }
+
+  reserveDownloadName(defaultName, naming ?? null);
+  let downloadId: number | undefined;
+  try {
+    downloadId = await chrome.downloads.download({ url: downloadUrl, conflictAction: 'uniquify', saveAs: false });
+    if (downloadId === undefined) {
+      return {
+        type: 'ATTACHMENTS_DOWNLOADED',
+        results: [{
+          name: defaultName,
+          status: 'not_started',
+          message: '본문 PDF 다운로드가 시작되지 않았습니다. 브라우저 설정을 확인하세요.',
+        }],
+      };
+    }
+    const outcome = await waitForDownload(downloadId, frameControl, defaultName);
+    return {
+      type: 'ATTACHMENTS_DOWNLOADED',
+      results: [{ name: defaultName, ...outcome }],
+    };
+  } catch (error) {
+    if (cancelled.has(control.id)) {
+      if (downloadId !== undefined) await chrome.downloads.cancel(downloadId).catch(() => undefined);
+      throw error;
+    }
+    return {
+      type: 'ATTACHMENTS_DOWNLOADED',
+      results: [{ name: defaultName, status: 'failed', message: String(error) }],
+    };
+  } finally {
+    clearDownloadName();
+  }
 }
 
 async function clickAndCatchDownload(

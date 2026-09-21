@@ -126,6 +126,10 @@ export default defineUnlistedScript(() => {
           sendResponse({ type: 'INBOX_PAGE', ...page } satisfies ContentToSW);
         } else if (msg.type === 'SCAN_ATTACHMENTS') {
           sendResponse({ type: 'ATTACHMENTS_FOUND', items: listAttachments() } satisfies ContentToSW);
+        } else if (msg.type === 'GET_BODY_PDF') {
+          const pdfUrls = findPdfUrls();
+          const pdf = pdfUrls.length ? await readPdfSources(pdfUrls) : [];
+          sendResponse({ type: 'BODY_PDF', pdf: pdf[0] ?? null } satisfies ContentToSW);
         } else if (msg.type === 'CLICK_ATTACHMENT') {
           const found = listAttachments().some(item => item.index === msg.index && item.name === msg.name);
           sendResponse({ type: 'ATTACHMENT_CLICKED', clicked: found } satisfies ContentToSW);

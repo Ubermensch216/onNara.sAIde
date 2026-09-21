@@ -18,8 +18,8 @@ import type { AppError, AttachmentDownloadResult } from '@/lib/messaging/protoco
  *   셋이다 — ① 첨부 다운로드와 같은 대기열에서 순서가 정해지고 ② 도구 탭에서 진행·취소가
  *   보이며 ③ 패널을 다시 열어도 "언제 무엇을 분석했는지"가 남는다.
  */
-export type AutomationKind = 'download-attachments' | 'summarize' | 'actions';
-const KINDS: readonly string[] = ['download-attachments', 'summarize', 'actions'] satisfies AutomationKind[];
+export type AutomationKind = 'download-attachments' | 'download-body' | 'download-all' | 'summarize' | 'actions';
+const KINDS: readonly string[] = ['download-attachments', 'download-body', 'download-all', 'summarize', 'actions'] satisfies AutomationKind[];
 export type AutomationStatus = 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
 
 export interface AutomationJob {
