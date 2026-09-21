@@ -68,13 +68,14 @@ export function InboxPanel({ tab, settings, onOpenSchedule }: Props) {
     <div className="inbox">
       {error && <ErrorBanner error={error} model={settings.model} onClose={clearInboxError} onAction={() => undefined} />}
 
-      <section className="inbox-head">
+      <section className="inbox-head" aria-busy={running}>
         <div className="inbox-head-row">
           <strong>{t('inbox.title')}</strong>
           <span className="spacer" />
-          <button type="button" className="inbox-btn primary" disabled={running || !location}
+          <button type="button" className={`inbox-btn primary inbox-check${running ? ' is-checking' : ''}`} disabled={running || !location}
             onClick={() => void collectAndBrief(tab, settings, 'manual')}>
-            {running ? t('inbox.checking') : t('inbox.checkNow')}
+            {running && <span className="inbox-check-dot" aria-hidden="true" />}
+            <span>{running ? t('inbox.checking') : t('inbox.checkNow')}</span>
           </button>
         </div>
 

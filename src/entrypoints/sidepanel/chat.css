@@ -1548,6 +1548,25 @@
 .inbox-btn.primary { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
 .inbox-btn:disabled { color: var(--fg-muted); border-color: var(--border); background: var(--bg); cursor: default; }
 
+.inbox-check { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-width: 92px; }
+.inbox-check.is-checking:disabled { color: var(--accent); background: var(--accent-soft); }
+.inbox-check-dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.55;
+  animation: inbox-check-breathe 2.8s ease-in-out infinite;
+}
+@keyframes inbox-check-breathe {
+  0%, 100% { opacity: 0.35; transform: scale(0.85); }
+  50% { opacity: 0.7; transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .inbox-check-dot { animation: none; }
+}
+
 .inbox-link {
   flex: none;
   border: 0;
