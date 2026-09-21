@@ -89,8 +89,30 @@ export interface Settings {
    *   (docs/n1-inbox-briefing-plan.md §7).
    */
   briefingEnabled: boolean;
-  /** 브리핑할 시각(0~23시). 기한 알림과 같은 시각이 기본이다. */
+  /** 브리핑할 시각(0~23시). 기한 알림과 같은 시각이 기본이다. 주기 확인에서는 업무시간 창의 **시작**이다. */
   briefingHour: number;
+
+  /**
+   * 확인 주기(분). `0`이면 지금까지처럼 **하루 한 번**이다.
+   *
+   * ★ 기본값을 0으로 둔다. 주기 확인은 백그라운드 탭을 그만큼 자주 만드는 일이라,
+   *   이미 켜 둔 사용자의 동작이 갱신만으로 바뀌어서는 안 된다.
+   *
+   * ★ 같은 문서를 두 번 알리는 일은 없다. [inbox/briefing.ts]의 `planBriefing`이
+   *   `briefedAt`이 찍힌 문서를 다시 올리지 않고, 실을 것이 없으면 알림 자체가 뜨지 않는다.
+   */
+  briefingIntervalMinutes: number;
+
+  /**
+   * 업무시간 창의 끝(0~23시). 이 시각 **이후로는 확인하지 않는다**.
+   *
+   * ★ 주기 확인(`briefingIntervalMinutes > 0`)에서만 본다. 하루 한 번 모드에서까지 적용하면,
+   *   저녁에 브라우저를 처음 켜는 사용자가 그날의 브리핑을 통째로 잃는다.
+   */
+  briefingEndHour: number;
+
+  /** 토·일에는 확인하지 않는다. 업무시간 창과 마찬가지로 주기 확인에서만 본다. */
+  briefingSkipWeekend: boolean;
 
   /**
    * 브리핑이 문서를 열 것인가 — 곧 **열람 상태를 바꿀 것인가**.
@@ -151,6 +173,9 @@ export const DEFAULT_SETTINGS: Settings = {
 
   briefingEnabled: false,
   briefingHour: 9,
+  briefingIntervalMinutes: 0,
+  briefingEndHour: 18,
+  briefingSkipWeekend: true,
   briefingReadPolicy: 'keep-unread',
   briefingOpenLimit: 5,
   briefingScope: 'all',
@@ -159,6 +184,14 @@ export const DEFAULT_SETTINGS: Settings = {
   briefingFields: ['title', 'sender', 'department'],
   briefingRetentionDays: 60,
 };
+
+/**
+ * 고를 수 있는 확인 주기(분). `0`은 하루 한 번이다.
+ *
+ * ★ 15분보다 짧은 값을 두지 않는다. 확인 한 번이 백그라운드 탭 하나이고,
+ *   `chrome.alarms`도 그보다 촘촘한 주기를 믿을 만하게 지켜 주지 않는다.
+ */
+export const BRIEFING_INTERVALS: readonly number[] = [0, 30, 60, 120, 240];
 
 /** 키워드 한 개의 글자 수 상한과 개수 상한. 화면과 대조 비용을 함께 지킨다. */
 const KEYWORD_MAX_LENGTH = 40;
@@ -193,7 +226,7 @@ export function normalizeSettings(input: unknown): Settings {
     const value = raw[key as keyof Settings];
     if (values.includes(String(value))) Object.assign(next, { [key]: value });
   }
-  for (const key of ['agentEnabled', 'memoryEnabled', 'warmupOnOpen', 'taskAlerts', 'jobAlerts', 'attachmentFolder', 'briefingEnabled'] as const) if (typeof raw[key] === 'boolean') next[key] = raw[key];
+  for (const key of ['agentEnabled', 'memoryEnabled', 'warmupOnOpen', 'taskAlerts', 'jobAlerts', 'attachmentFolder', 'briefingEnabled', 'briefingSkipWeekend'] as const) if (typeof raw[key] === 'boolean') next[key] = raw[key];
   for (const key of ['model', 'embedModel'] as const) if (typeof raw[key] === 'string' && /^[\w.:/-]{1,200}$/.test(raw[key])) next[key] = raw[key];
   if (typeof raw.endpoint === 'string') {
     try {
@@ -205,13 +238,16 @@ export function normalizeSettings(input: unknown): Settings {
   const ranges = {
     temperature: [0, 1.5], numCtx: [2048, 32768], pageTokenBudget: [500, 8000], agentMaxTurns: [2, 12],
     memoryRetentionDays: [0, 3650], taskAlertHour: [0, 23],
-    briefingHour: [0, 23], briefingOpenLimit: [1, 20], briefingRetentionDays: [7, 365],
+    briefingHour: [0, 23], briefingEndHour: [0, 23], briefingOpenLimit: [1, 20], briefingRetentionDays: [7, 365],
   };
   for (const [key, [min, max]] of Object.entries(ranges)) {
     const value = raw[key as keyof Settings];
     if (typeof value === 'number' && Number.isFinite(value)) Object.assign(next, { [key]: Math.min(max!, Math.max(min!, key === 'temperature' ? value : Math.round(value))) });
   }
   if (['5m', '10m', '30m', '-1'].includes(raw.keepAlive ?? '')) next.keepAlive = raw.keepAlive!;
+  // ★ 주기는 범위가 아니라 **목록**으로 받는다. 7분 같은 값이 저장되면 백그라운드 탭이
+  //   그만큼 자주 열리는데, 그것은 화면에서 고를 수 있었던 적이 없는 값이다.
+  if (BRIEFING_INTERVALS.includes(raw.briefingIntervalMinutes as number)) next.briefingIntervalMinutes = raw.briefingIntervalMinutes!;
   for (const key of ['briefingKeywords', 'briefingExcludeKeywords'] as const) {
     const keywords = normalizeKeywords(raw[key]);
     if (keywords) next[key] = keywords;

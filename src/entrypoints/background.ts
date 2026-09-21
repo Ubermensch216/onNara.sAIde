@@ -61,7 +61,7 @@ export default defineBackground(() => {
 
   // 기한 알림(S07). 패널이 닫혀 있어도 알람이 워커를 깨워 확인한다.
   registerTaskAlerts();
-  // 아침 공유/공람 브리핑(N1). 기본 꺼짐이며, 켠 사용자에게만 알람이 동작한다.
+  // 공유/공람 브리핑(N1). 기본 꺼짐이며, 켠 사용자에게만 알람이 동작한다. 주기는 설정을 따른다.
   registerInboxBriefing(BRIEFING_DEPS);
   // 첨부 파일명 정규화(B5). 브라우저가 이름을 정하기 직전에 한 번 끼어든다.
   registerDownloadNaming();

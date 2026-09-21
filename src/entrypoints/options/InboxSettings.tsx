@@ -12,11 +12,29 @@ import { useEffect, useState } from 'react';
 import { useT } from '@/lib/i18n';
 import { clearInboxLocation, loadInboxLocation, onInboxLocationChanged, type InboxLocation } from '@/lib/inbox/location';
 import { clearInbox, inboxStats, type InboxStats } from '@/lib/inbox/store';
-import type { Settings } from '@/lib/storage/settings';
+import { BRIEFING_INTERVALS, type Settings } from '@/lib/storage/settings';
 
 interface Props {
   s: Settings;
   patch: (next: Partial<Settings>) => void;
+}
+
+/** 주기 한 개의 이름. 60분 이상은 시간으로 읽는 편이 짧고 분명하다. */
+function intervalLabel(t: ReturnType<typeof useT>, minutes: number): string {
+  if (!minutes) return t('opt.inbox.intervalDaily');
+  return minutes < 60 ? t('opt.inbox.intervalMin', { n: minutes }) : t('opt.inbox.intervalHour', { h: minutes / 60 });
+}
+
+/**
+ * 시작 시각을 옮긴다.
+ *
+ * ★ 종료 시각을 함께 민다. 시작이 종료를 넘어서면 업무시간 창이 비고, 화면에는
+ *   고를 수 없는 값이 남는다 — 사용자는 아무것도 잘못하지 않았는데 기능이 멈춘다.
+ */
+function startHourPatch(s: Settings, hour: number): Partial<Settings> {
+  return hour < s.briefingEndHour
+    ? { briefingHour: hour }
+    : { briefingHour: hour, briefingEndHour: Math.min(23, hour + 1) };
 }
 
 /** 쉼표·줄바꿈으로 나눈 키워드. 사용자가 적은 글자는 그대로 둔다. */
@@ -50,9 +68,22 @@ export function InboxSettings({ s, patch }: Props) {
 
       <div className="field">
         <div className="row">
+          <label htmlFor="briefingInterval">{t('opt.inbox.interval')}</label>
+          <select id="briefingInterval" value={s.briefingIntervalMinutes} disabled={!s.briefingEnabled}
+            onChange={event => patch({ briefingIntervalMinutes: Number(event.target.value) })}>
+            {BRIEFING_INTERVALS.map(minutes => (
+              <option key={minutes} value={minutes}>{intervalLabel(t, minutes)}</option>
+            ))}
+          </select>
+        </div>
+        <p className="desc">{t('opt.inbox.intervalDesc')}</p>
+      </div>
+
+      <div className="field">
+        <div className="row">
           <label htmlFor="briefingHour">{t('opt.inbox.hour')}</label>
           <select id="briefingHour" value={s.briefingHour} disabled={!s.briefingEnabled}
-            onChange={event => patch({ briefingHour: Number(event.target.value) })}>
+            onChange={event => patch(startHourPatch(s, Number(event.target.value)))}>
             {Array.from({ length: 24 }, (_, hour) => (
               <option key={hour} value={hour}>{t('opt.alert.hourValue', { hour })}</option>
             ))}
@@ -60,6 +91,36 @@ export function InboxSettings({ s, patch }: Props) {
         </div>
         <p className="desc">{t('opt.inbox.hourDesc')}</p>
       </div>
+
+      {/* ★ 업무시간의 끝과 주말 제외는 주기 확인에만 쓰인다. 하루 한 번 모드에서는 아예 보이지 않는 편이
+          "왜 저녁에 브리핑이 안 오지"를 만들지 않는다. */}
+      {s.briefingIntervalMinutes > 0 && (
+        <>
+          <div className="field">
+            <div className="row">
+              <label htmlFor="briefingEndHour">{t('opt.inbox.endHour')}</label>
+              <select id="briefingEndHour" value={s.briefingEndHour} disabled={!s.briefingEnabled}
+                onChange={event => patch({ briefingEndHour: Number(event.target.value) })}>
+                {/* 시작 시각보다 앞선 종료 시각은 고를 수 없다 — 창이 비면 영영 확인하지 않는다. */}
+                {Array.from({ length: 24 }, (_, hour) => hour).filter(hour => hour > s.briefingHour).map(hour => (
+                  <option key={hour} value={hour}>{t('opt.alert.hourValue', { hour })}</option>
+                ))}
+              </select>
+            </div>
+            <p className="desc">{t('opt.inbox.endHourDesc')}</p>
+          </div>
+
+          <div className="field">
+            <div className="row">
+              <label htmlFor="briefingSkipWeekend">{t('opt.inbox.skipWeekend')}</label>
+              <input id="briefingSkipWeekend" type="checkbox" checked={s.briefingSkipWeekend}
+                disabled={!s.briefingEnabled}
+                onChange={event => patch({ briefingSkipWeekend: event.target.checked })} />
+            </div>
+            <p className="desc">{t('opt.inbox.skipWeekendDesc')}</p>
+          </div>
+        </>
+      )}
 
       <div className="field">
         <div className="row">

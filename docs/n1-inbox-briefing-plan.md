@@ -2,7 +2,7 @@
 
 작성일: 2026-09-20 · 갱신: 2026-09-21 · 근거: 저장소 코드 직접 확인
 **상태: M0~M4 구현 완료(2026-09-20).** 결정사항과 구현 중 바뀐 점은 §12에 적었다.
-이 문서는 설계 근거를 남기는 기록이다 — 완성된 동작의 사용 설명은 [README의 공유/공람 탭](../README.md#공유공람-탭-아침-브리핑)에 있다.
+이 문서는 설계 근거를 남기는 기록이다 — 완성된 동작의 사용 설명은 [README의 공유/공람 탭](../README.md#공유공람-탭-자동-브리핑)에 있다.
 상위 문서: [서비스 진단 및 개선 제안 §4 N1](service-review-2026-09-20.md) · [최종 구축 계획서 S09 / P4-6](../plan/onnara-saide-final-workplan.md)
 
 ---
@@ -154,11 +154,19 @@ this.version(5).stores({
 
 | 트리거 | 조건 | 설정 |
 |---|---|---|
-| 아침 1회 | `briefingHour`(기본 9시) 이후 첫 확인, 하루 한 번 | `briefingEnabled` |
-| ~~주기 확인~~ | **만들지 않았다**(결정 2 — 아침 1회). 수시 확인은 아래 수동 실행으로 한다 | — |
+| 하루 1회 | `briefingHour`(기본 9시) 이후 첫 확인, 하루 한 번. **기본값** | `briefingEnabled` |
+| 주기 확인 | 업무시간 창 안에서 `briefingIntervalMinutes`(30·60·120·240분)마다 | `briefingIntervalMinutes > 0` |
 | 수동 즉시 | `@브리핑` 명령 또는 공유/공람 탭의 `지금 확인` | 언제나 가능 |
 
-`chrome.alarms`는 이미 등록돼 있다. **알람을 새로 만들지 않고 기존 `saide.taskAlerts`(60분 주기)에 편승**하거나, 주기 설정이 60분보다 짧으면 `saide.inboxBriefing` 알람을 따로 만든다. 알람은 브라우저를 켠 뒤 최대 주기만큼 늦게 오므로 `chrome.runtime.onStartup`에서도 한 번 확인한다 — `alerts.ts`가 이미 쓰는 방식이다.
+`saide.inboxBriefing` 알람의 주기는 `alarmPeriodMinutes()`가 설정에서 뽑고, 설정이 바뀌면 `onSettingsChanged`가 알람을 다시 만든다 — 확인 주기보다 성기게 깨우면 그 주기를 지킬 수 없다. 알람은 브라우저를 켠 뒤 최대 주기만큼 늦게 오므로 `chrome.runtime.onStartup`에서도 한 번 확인한다 — `alerts.ts`가 이미 쓰는 방식이다.
+
+주기 확인에만 걸리는 제동이 셋 있다.
+
+- **업무시간 창**(`briefingHour`~`briefingEndHour`, 기본 9~18시)과 **주말 제외**(`briefingSkipWeekend`, 기본 켜짐). 하루 1회 모드에는 적용하지 않는다 — 저녁에 브라우저를 처음 켠 사용자가 그날의 브리핑을 통째로 잃어서는 안 된다.
+- **연속 실패 백오프**(`backoffFactor`). 3회 연속 실패하면 간격 2배, 6회면 4배. 실패의 거의 전부는 세션 만료이고, 그것은 다음 30분 안에 저절로 낫지 않는다.
+- 간격의 기준은 마지막 **성공**이 아니라 마지막 **시도**다. 성공만 보면 세션이 끊긴 동안 매 알람마다 같은 실패를 되풀이한다.
+
+주기를 짧게 잡아도 알림이 쏟아지지 않는다. `planBriefing`이 `briefedAt`이 찍힌 문서를 다시 싣지 않고, 실을 것이 없으면 `briefingNotice()`가 `null`을 돌려 알림 자체가 뜨지 않는다.
 
 ### 서비스 워커 수명과 실행 주체
 
@@ -286,8 +294,10 @@ briefingFields: ('title' | 'sender' | 'department')[]  // 기본 셋 다
 
 ```ts
 briefingEnabled: boolean            // false
-briefingHour: number                // 9   (0~23)
-briefingIntervalMinutes: number     // 0   (0 | 30 | 60 | 120)
+briefingHour: number                // 9   (0~23) 주기 모드에서는 업무시간 창의 시작
+briefingIntervalMinutes: number     // 0   (0 | 30 | 60 | 120 | 240), 0이면 하루 1회
+briefingEndHour: number             // 18  (0~23) 주기 모드 전용
+briefingSkipWeekend: boolean        // true        주기 모드 전용
 briefingReadPolicy: 'keep-unread' | 'mark-read' | 'brief-body'  // 'keep-unread'
 briefingBodyLimit: number           // 5   (1~20)
 briefingScope: 'all' | 'keywords'   // 'all'
@@ -368,7 +378,7 @@ briefingRetentionDays: number       // 60  (7~365)
 | # | 결정 | 반영 |
 |:--:|---|---|
 | 1 | 공유/공람 탭을 신설하되 **맨 앞(좌측)** 에 둔다 | `VIEWS = ['inbox', 'ai', 'schedule', 'automation']`. 처리할 문서 수를 배지로 표시 |
-| 2 | 주기는 **아침 1회** | `briefingIntervalMinutes` 설정 자체를 만들지 않았다. 주기 확인이 필요하면 `지금 확인`·`@브리핑` |
+| 2 | ~~주기는 **아침 1회**~~ → **뒤집힘.** 주기 확인을 만들되 **기본값은 하루 1회**로 둔다 | `briefingIntervalMinutes`(기본 0 = 하루 1회). 켜 둔 사용자의 동작이 갱신만으로 바뀌지 않는다. 주기를 고르면 업무시간 창·주말 제외·연속 실패 백오프가 함께 걸린다(§트리거 세 가지) |
 | 3 | 표본은 가정으로 시작하고 판정 함수를 격리 | `isReceivedDocumentList`·`documentReadState`가 판정을 도맡고, 열람 여부를 모르면 `unknown`으로 두어 검증 문구만 빠진다 |
 
 ---
