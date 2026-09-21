@@ -260,6 +260,8 @@ export type SWToPanel =
    *   서비스 워커가 직접 하는 것은 패널이 닫혀 있을 때뿐이다.
    */
   | { type: 'BRIEFING_DUE' }
+  /** 단축키로 입력창을 부른다. AI 탭으로 옮기고 커서를 입력창에 둔다. */
+  | { type: 'FOCUS_COMPOSER' }
   | { type: 'ERROR'; error: AppError };
 
 /* ── Service Worker → Content Script ───────────────────── */

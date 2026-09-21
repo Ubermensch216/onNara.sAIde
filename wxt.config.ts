@@ -85,6 +85,18 @@ export default defineConfig({
         suggested_key: { default: 'Alt+Shift+A' },
         description: '__MSG_commandOpen__',
       },
+      /**
+       * 입력창으로 바로 가기.
+       *
+       * ★ 패널을 여는 단축키와 나눠 둔다. 이 단축키는 **묻고 싶은 것이 떠올랐을 때**
+       *   누르는 것이라, 패널이 닫혀 있으면 열고 AI 탭으로 옮긴 뒤 커서까지 넣어 준다.
+       *   브라우저가 이미 쓰는 조합이면 지정되지 않은 채로 설치되므로,
+       *   사용자가 edge://extensions/shortcuts 에서 직접 정할 수 있게 둔다.
+       */
+      'focus-input': {
+        suggested_key: { default: 'Ctrl+Shift+Q' },
+        description: '__MSG_commandFocusInput__',
+      },
     },
   },
 });

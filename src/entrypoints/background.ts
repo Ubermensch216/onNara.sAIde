@@ -124,6 +124,25 @@ export default defineBackground(() => {
     pushToPanel({ type: 'TAB_CLOSED', tabId });
   });
 
+  /**
+   * 단축키(`focus-input`) → 입력창.
+   *
+   * ★ 패널을 먼저 연다. 닫혀 있는데 메시지만 보내면 받을 사람이 없다.
+   *   `sidePanel.open()`은 사용자 제스처를 요구하는데, 단축키 실행이 그 제스처다.
+   *   이미 열려 있으면 여는 쪽은 조용히 실패하고 메시지만 남는다.
+   */
+  chrome.commands?.onCommand.addListener(async (command, tab) => {
+    if (command !== 'focus-input') return;
+    const windowId = tab?.windowId ?? (await chrome.windows.getCurrent().then(w => w?.id).catch(() => undefined));
+    await (tab?.id
+      ? chrome.sidePanel.open({ tabId: tab.id })
+      : windowId === undefined
+        ? Promise.resolve()
+        : chrome.sidePanel.open({ windowId })
+    ).catch(() => undefined);
+    pushToPanel({ type: 'FOCUS_COMPOSER' });
+  });
+
   chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     if (!tab?.id) return;
     await chrome.sidePanel.open({ tabId: tab.id }).catch(() => undefined);

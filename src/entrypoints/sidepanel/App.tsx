@@ -95,6 +95,13 @@ export default function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [tab, setTab] = useState<TabSummary | null>(null);
   const [draft, setDraft] = useState('');
+  /**
+   * 입력창으로 커서를 부르는 신호(단축키 `Ctrl+Shift+Q`).
+   *
+   * ★ 값이 아니라 **때**를 넘긴다. 같은 단축키를 연달아 눌러도 값이 달라져
+   *   Composer의 효과가 다시 돈다.
+   */
+  const [focusComposerAt, setFocusComposerAt] = useState(0);
   const [customs, setCustoms] = useState<CustomPreset[]>([]);
   /**
    * 에이전트 모드 (Phase 5). 켠 동안에만 툴 스키마가 붙는다.
@@ -255,6 +262,10 @@ export default function App() {
         if (currentTab.current?.tabId === msg.tabId) chat.noteScreenChange(msg.frameId);
       } else if (msg.type === 'CONTEXT_MENU') {
         handleContextMenu(msg.preset, msg.selectionText);
+      } else if (msg.type === 'FOCUS_COMPOSER') {
+        // ★ 입력창은 AI 탭에만 있다. 다른 탭을 보고 있었다면 먼저 옮긴다.
+        setView('ai');
+        setFocusComposerAt(Date.now());
       } else if (msg.type === 'BRIEFING_DUE') {
         // ★ 패널이 열려 있으면 브리핑은 패널이 한다. 서비스 워커가 직접 하는 것은
         //   패널이 닫혀 있을 때뿐이다(모델도 화면도 여기에 있다).
@@ -672,21 +683,23 @@ export default function App() {
           {t('view.ai')}
         </button>
         <button type="button" role="tab" aria-selected={view === 'inbox'} onClick={() => setView('inbox')}
-          className={`view-tab inbox ${view === 'inbox' ? 'on' : ''}`}
+          className={`view-tab view-tab-inbox ${view === 'inbox' ? 'on' : ''}`}
           {...(inboxPending > 0 ? { 'aria-label': t('view.inboxLabel', { n: inboxPending }) } : {})}>
           {t('view.inbox')}
           {inboxPending > 0 && <span className="view-tab-count">{inboxPending}</span>}
         </button>
         <button type="button" role="tab" aria-selected={view === 'schedule'} onClick={() => setView('schedule')}
-          className={`view-tab sched ${view === 'schedule' ? 'on' : ''}`}
+          className={`view-tab view-tab-sched ${view === 'schedule' ? 'on' : ''}`}
           {...(dueTasks > 0 ? { 'aria-label': t('view.dueLabel', { n: dueTasks }) } : {})}>
           {t('view.schedule')}
           {/* 배지는 숫자만 둔다. 탭이 넷이라 문장을 넣으면 좁은 폭에서 글자가 잘린다. */}
           {dueTasks > 0 && <span className="view-tab-count due">{t('view.due', { n: dueTasks })}</span>}
         </button>
-        <button type="button" role="tab" aria-selected={view === 'automation'} className={`view-tab auto ${view === 'automation' ? 'on' : ''}`} onClick={() => setView('automation')}>
+        <button type="button" role="tab" aria-selected={view === 'automation'} className={`view-tab view-tab-auto ${view === 'automation' ? 'on' : ''}`} onClick={() => setView('automation')}
+          {...(runningJobs > 0 ? { 'aria-label': `${t('view.automation')} · ${t('view.running', { n: runningJobs })}` } : {})}>
           {t('view.automation')}
-          {runningJobs > 0 && <span className="view-tab-count">{t('view.running', { n: runningJobs })}</span>}
+          {/* 배지는 숫자만. 문장을 넣으면 탭이 넓어져 이름이 밀리거나 줄이 바뀐다. */}
+          {runningJobs > 0 && <span className="view-tab-count">{runningJobs}</span>}
         </button>
       </nav>
 
@@ -872,6 +885,7 @@ export default function App() {
           }}
           onSlash={runSlash}
           onStop={chat.stop}
+          focusAt={focusComposerAt}
         />
       </div>
 

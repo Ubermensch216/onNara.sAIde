@@ -644,11 +644,17 @@
 
 .view-tab {
   flex: 1;
+  min-width: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  padding: 8px 0 7px;
+  /* 배지가 붙어도 줄이 늘지 않아야 한다. 탭 높이가 변하면 아래 본문이 통째로 밀린다. */
+  flex-wrap: nowrap;
+  white-space: nowrap;
+  gap: 4px;
+  padding: 16px 2px 15px;
+  min-height: 48px;
+  line-height: 16px;
   font-size: 12.5px;
   font-weight: 600;
   color: var(--fg-muted);
@@ -657,17 +663,26 @@
 
 .view-tab:hover { color: var(--fg); }
 .view-tab.on { color: var(--accent); border-bottom-color: var(--accent); }
-.view-tab.auto.on { color: var(--ok); border-bottom-color: var(--ok); }
-.view-tab.sched.on { color: var(--warn); border-bottom-color: var(--warn); }
-.view-tab.inbox.on { color: var(--accent); border-bottom-color: var(--accent); }
+.view-tab-auto.on { color: var(--ok); border-bottom-color: var(--ok); }
+.view-tab-sched.on { color: var(--warn); border-bottom-color: var(--warn); }
+.view-tab-inbox.on { color: var(--accent); border-bottom-color: var(--accent); }
 
 .view-tab-count {
+  /* 탭 이름 오른편에 붙는 숫자 마크. 높이를 줄 높이 안에 가둬 탭 높이에 영향을 주지 않는다. */
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
   font-size: 10.5px;
   font-weight: 600;
+  line-height: 1;
   color: var(--ok);
   background: var(--ok-soft);
   border-radius: 999px;
-  padding: 1px 6px;
 }
 
 .view-tab-count.due { color: var(--warn); background: var(--warn-soft); }

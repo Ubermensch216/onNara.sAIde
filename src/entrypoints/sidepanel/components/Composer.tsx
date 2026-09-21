@@ -20,6 +20,8 @@ interface Props {
   commands: SlashCommand[];
   /** 에이전트 모드인가. 입력창 안내 문구만 바뀐다. */
   agentMode?: boolean;
+  /** 이 값이 바뀌면 입력창으로 커서를 옮긴다(단축키). 0이면 아무것도 하지 않는다. */
+  focusAt?: number;
   onChange: (v: string) => void;
   onSend: (text: string) => void;
   onSlash: (cmd: SlashCommand, rest: string) => void;
@@ -32,6 +34,7 @@ export function Composer({
   value,
   commands,
   agentMode,
+  focusAt,
   onChange,
   onSend,
   onSlash,
@@ -46,6 +49,25 @@ export function Composer({
 
   // 후보가 바뀌면 선택을 처음으로 되돌린다.
   useEffect(() => setActive(0), [value]);
+
+  /**
+   * 단축키로 부르면 커서를 입력창에 둔다.
+   *
+   * ★ `window.focus()`를 먼저 부른다. 사용자가 웹 페이지를 보고 있는 동안에는
+   *   키보드 초점이 그 페이지에 있어, 패널 안의 요소만 focus 해서는 글자가
+   *   입력창으로 들어오지 않는다.
+   *
+   * ★ 이미 쓰고 있던 글은 건드리지 않는다. 커서만 글 끝으로 보낸다 —
+   *   부르는 단축키가 쓰던 내용을 지우면 아무도 다시 누르지 않는다.
+   */
+  useEffect(() => {
+    if (!focusAt) return;
+    const el = ref.current;
+    if (!el || el.disabled) return;
+    window.focus();
+    el.focus();
+    el.setSelectionRange(el.value.length, el.value.length);
+  }, [focusAt]);
 
   // 입력 길이에 따라 높이를 늘린다(최대 6줄).
   useEffect(() => {
