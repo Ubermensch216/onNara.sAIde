@@ -681,7 +681,7 @@ export default function App() {
           className={`view-tab sched ${view === 'schedule' ? 'on' : ''}`}
           {...(dueTasks > 0 ? { 'aria-label': t('view.dueLabel', { n: dueTasks }) } : {})}>
           {t('view.schedule')}
-          {/* 배지는 숫자만 둔다. 탭이 셋이라 문장을 넣으면 좁은 폭에서 글자가 잘린다. */}
+          {/* 배지는 숫자만 둔다. 탭이 넷이라 문장을 넣으면 좁은 폭에서 글자가 잘린다. */}
           {dueTasks > 0 && <span className="view-tab-count due">{t('view.due', { n: dueTasks })}</span>}
         </button>
         <button type="button" role="tab" aria-selected={view === 'automation'} className={`view-tab auto ${view === 'automation' ? 'on' : ''}`} onClick={() => setView('automation')}>

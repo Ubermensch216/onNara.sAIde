@@ -97,17 +97,37 @@ const sampleMemoryRows = [
   },
 ];
 
+/** 브리핑 설정 화면의 "보관 현황" 수치를 만들기 위한 표본. */
+const briefingSettingsDocs = Array.from({ length: 38 }, (_, i) => ({
+  key: `doc-${i}`,
+  briefedAt: i < 26 ? now - i * 3600000 : undefined,
+  firstSeenAt: now - i * 86400000,
+}));
+
 const data: Record<string, unknown> = {
   'saide.settings': {
     ...DEFAULT_SETTINGS,
     theme: 'light',
     locale: 'ko',
     warmupOnOpen: false,
+    briefingEnabled: true,
     model: 'gemma4:e2b',
     endpoint: 'http://localhost:11434',
     numCtx: 4096,
   },
   'saide.presets': samplePresets,
+  'saide.onboardingSeen': 1,
+  'saide.inboxLocation': {
+    location: {
+      url: 'https://onnara.saas.gcloud.go.kr/bms/dctshr/act_rcv.do',
+      framePath: [0],
+      listName: '공유/공람 > 받은문서',
+      form: { searchPeriod: '1M', searchGubun: 'all' },
+    },
+    listName: '공유/공람 > 받은문서',
+    origin: 'https://onnara.saas.gcloud.go.kr',
+    savedAt: now - 86400000 * 3,
+  },
   'saide.automation.history': [
     {
       id: 'job-1',
@@ -214,11 +234,12 @@ badge.textContent = '사용 설명용 예시 · 온나라 sAIde 실제 UI / 샘�
 badge.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:#0d2f81;color:#fff;text-align:center;font:12px sans-serif;padding:7px;z-index:9999;box-shadow:0 -1px 3px rgba(0,0,0,0.3)';
 document.body.append(badge);
 
-if (!mode.startsWith('options') && mode !== 'memory' && mode !== 'presets') {
+const OPTION_VIEWS = ['memory', 'presets', 'briefing'];
+if (!mode.startsWith('options') && !OPTION_VIEWS.includes(mode)) {
   document.getElementById('root')!.style.height = 'calc(100% - 30px)';
 }
 
-if (mode.startsWith('options') || mode === 'memory' || mode === 'presets') {
+if (mode.startsWith('options') || OPTION_VIEWS.includes(mode)) {
   await import('@/entrypoints/options/style.css');
   if (mode === 'memory') {
     const { db } = await import('@/lib/storage/db');
@@ -227,6 +248,23 @@ if (mode.startsWith('options') || mode === 'memory' || mode === 'presets') {
     });
     const { MemoryPanel } = await import('@/entrypoints/options/MemoryPanel');
     createRoot(document.getElementById('root')!).render(<div className="wrap"><MemoryPanel /></div>);
+  } else if (mode === 'briefing') {
+    const { db } = await import('@/lib/storage/db');
+    Object.defineProperty(db.inboxDocs, 'toArray', { value: async () => briefingSettingsDocs });
+    const { InboxSettings } = await import('@/entrypoints/options/InboxSettings');
+    const { DEFAULT_SETTINGS: base } = await import('@/lib/storage/settings');
+    type SettingsShape = typeof base;
+    function BriefingSettingsDemo() {
+      const [s, setS] = React.useState<SettingsShape>({
+        ...base,
+        briefingEnabled: true,
+        briefingScope: 'keywords',
+        briefingKeywords: ['정보화', '예산', '인공지능', '수요조사'],
+        briefingExcludeKeywords: ['동호회', '경조사'],
+      });
+      return <InboxSettings s={s} patch={next => setS(prev => ({ ...prev, ...next }))} />;
+    }
+    createRoot(document.getElementById('root')!).render(<div className="wrap"><BriefingSettingsDemo /></div>);
   } else if (mode === 'presets') {
     const { PresetEditor } = await import('@/entrypoints/options/PresetEditor');
     createRoot(document.getElementById('root')!).render(<div className="wrap"><PresetEditor /></div>);
@@ -326,11 +364,70 @@ if (mode.startsWith('options') || mode === 'memory' || mode === 'presets') {
     },
   ];
 
+  /** 공유/공람 브리핑(N1) 표본. 전부 목록 표에서 읽은 값이다 — 본문은 열지 않는다. */
+  const day = (n: number) => new Date(now - n * 86400000).toISOString().slice(0, 10);
+  const sampleInboxDocs = [
+    {
+      key: 'inbox-1', group: 'g1',
+      title: '2026년도 인공지능 행정업무 시범사업 수요조사 제출(9. 22.까지)',
+      reportDate: day(1), sender: '행정안전부 디지털정부혁신과', department: '기획예산담당관',
+      hasAttachment: true, readState: 'unread' as const,
+      category: 'deadline' as const, reason: '제목에서 기한 “9. 22.”을 찾았습니다',
+      due: { date: '2026-09-22', text: '9. 22.까지', yearInferred: true },
+      dueDate: '2026-09-22', classifier: 'rule' as const,
+      firstSeenAt: now - 3600000, lastSeenAt: now - 3600000, briefedAt: now - 3600000,
+    },
+    {
+      key: 'inbox-2', group: 'g2',
+      title: '지자체 정보화예산 3분기 집행현황 회신 요청',
+      reportDate: day(1), sender: '행정안전부 지역정보화지원과', department: '정보통신과',
+      hasAttachment: true, readState: 'unread' as const,
+      category: 'deadline' as const, reason: '제목에서 기한 “9. 25.”을 찾았습니다',
+      due: { date: '2026-09-25', text: '9. 25.한', yearInferred: true },
+      dueDate: '2026-09-25', classifier: 'rule' as const,
+      firstSeenAt: now - 7200000, lastSeenAt: now - 7200000, briefedAt: now - 7200000,
+    },
+    {
+      key: 'inbox-3', group: 'g3',
+      title: '온나라 연계 AI 어시스턴트 보안관리지침(안) 부서 의견조회',
+      reportDate: day(2), sender: '행정안전부 정보화기반과', department: '정보통신과',
+      hasAttachment: true, readState: 'unread' as const,
+      category: 'mine' as const, reason: '관심 키워드 “정보화”와 조치를 요구하는 말(“의견조회”)이 있습니다',
+      dueDate: '', classifier: 'rule' as const,
+      firstSeenAt: now - 86400000, lastSeenAt: now - 86400000, briefedAt: now - 86400000,
+    },
+    {
+      key: 'inbox-4', group: 'g4',
+      title: '공공데이터 개방 품질진단 지원사업 설명회 개최 알림',
+      reportDate: day(2), sender: '디지털플랫폼정부위원회', department: '기획예산담당관',
+      hasAttachment: false, readState: 'unread' as const,
+      category: 'notice' as const, reason: '기한도 조치 요구도 없어 공람으로 보았습니다',
+      dueDate: '', classifier: 'model' as const,
+      firstSeenAt: now - 86400000 * 2, lastSeenAt: now - 86400000 * 2, briefedAt: now - 86400000 * 2,
+    },
+    {
+      key: 'inbox-5', group: 'g5',
+      title: '직장 동호회 가을 체육행사 참가 신청 안내',
+      reportDate: day(3), sender: '운영지원과', department: '운영지원과',
+      hasAttachment: false, readState: 'read' as const,
+      category: 'filtered' as const, reason: '제외 키워드 “동호회”에 걸려 범위 밖으로 두었습니다',
+      dueDate: '', classifier: 'rule' as const,
+      firstSeenAt: now - 86400000 * 3, lastSeenAt: now - 86400000 * 3,
+    },
+  ];
+
+  const sampleInboxRun = {
+    id: 1, at: now - 3600000, trigger: 'alarm' as const,
+    scanned: 12, added: 4, briefed: 4, filtered: 1, readStateChanged: 0,
+  };
+
   if (mode === 'automation') {
     localStorage.setItem('saide.view', 'automation');
   } else if (mode === 'schedule') {
     localStorage.setItem('saide.view', 'schedule');
     localStorage.setItem('saide.scheduleMode', 'month');
+  } else if (mode === 'inbox') {
+    localStorage.setItem('saide.view', 'inbox');
   } else {
     localStorage.setItem('saide.view', 'ai');
   }
@@ -338,6 +435,30 @@ if (mode.startsWith('options') || mode === 'memory' || mode === 'presets') {
   const { db } = await import('@/lib/storage/db');
   Object.defineProperty(db.table('tasks'), 'toArray', {
     value: async () => sampleScheduleTasks,
+  });
+
+  /** Dexie 질의 사슬(orderBy().reverse().limit().toArray())을 그대로 흉내 낸다. */
+  const rowsOf = <T,>(rows: T[]) => {
+    const chain = { reverse: () => chain, limit: () => chain, toArray: async () => rows };
+    return () => chain;
+  };
+  Object.defineProperty(db.inboxDocs, 'orderBy', { value: rowsOf(sampleInboxDocs) });
+  Object.defineProperty(db.inboxRuns, 'orderBy', { value: rowsOf([sampleInboxRun]) });
+
+  const { useInbox } = await import('@/lib/inbox/panel');
+  useInbox.setState({
+    briefing: {
+      at: sampleInboxRun.at,
+      listName: '공유/공람 > 받은문서',
+      trigger: 'alarm',
+      scanned: 12,
+      added: 4,
+      filtered: 1,
+      groups: (['deadline', 'mine', 'notice'] as const)
+        .map(category => ({ category, docs: sampleInboxDocs.filter(doc => doc.category === category) }))
+        .filter(group => group.docs.length > 0),
+      readState: { unread: 11, read: 1, unknown: 0, changed: 0 },
+    },
   });
   const { useSchedule } = await import('@/lib/schedule/store');
   useSchedule.setState({ tasks: sampleScheduleTasks, loaded: true });

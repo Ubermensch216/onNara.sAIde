@@ -1,9 +1,10 @@
 # onNara.sAIde 참조 프로젝트 분석 및 서비스 제안
 
-분석일: 2026-09-17 · 갱신일: 2026-09-18. 대상은 작업 폴더 내 두 참조 프로젝트(`sAIde` 및 `onnara-ai-document-distributor`) 복사본이다. 현재 구현에 대한 관찰, 통합 시 예상 문제, 신규 서비스 제안을 구분한다.
+분석일: 2026-09-17 · 갱신일: 2026-09-21. 대상은 작업 폴더 내 두 참조 프로젝트(`sAIde` 및 `onnara-ai-document-distributor`) 복사본이다. 현재 구현에 대한 관찰, 통합 시 예상 문제, 신규 서비스 제안을 구분한다.
 
-> 📌 **2026-09-18 현행화 업데이트:**  
-> 본 분석 결과를 토대로 독립 프로젝트 `onnara-saide`가 구축되었으며, 현재 0단계·1단계·2단계 및 3단계 핵심 MVP가 성공적으로 구현되었습니다. (Vitest 45개 파일 449개 테스트 전체 통과, Edge MV3 빌드 및 verify 통과). 상세한 구축 완료 내역은 [`docs/IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md) 및 사용자 매뉴얼인 [`README.md`](../README.md)를 참고하십시오.
+> 📌 **이 문서의 성격 (2026-09-21 기준):**  
+> 이 문서는 구축 착수 전에 **두 참조 프로젝트를 뜯어본 기록**이며, 이후 갱신하지 않는다. 채택된 내용은 이미 제품에 들어갔고, 남겨 둔 이유는 **온나라 화면 계약(§3)과 배부기의 검증 장치 목록** 때문이다 — S03(담당자 배부 추천)을 착수할 때 다시 볼 자료다.  
+> **현재 구현 사실은 여기가 아니라 [`docs/IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md)가 기준이다.** 아래 §2 표의 수치는 2026-09-18 시점의 값이며, 최신 값(73파일·831개 테스트)과 다르다.
 
 ## 1. 종합 판단
 
@@ -21,7 +22,7 @@
 | `ollama list` | `gemma4:e2b`, `bge-m3:latest` 설치 | 동일 (로컬 데몬 연동 확인) |
 | Gemma `/api/show` | completion, vision, audio, tools, thinking | 동일 (기본 대화 모델 활용) |
 | BGE `/api/show` | embedding 표시 | 동일 (기본 임베딩 모델 활용) |
-| 단위/통합 테스트 | sAIde 28파일 346개 / 배부기 34개 통과 | **onnara-saide 45파일 449개 전체 통과** |
+| 단위/통합 테스트 | sAIde 28파일 346개 / 배부기 34개 통과 | 당시 onnara-saide 45파일 449개 통과 (2026-09-21 현재 73파일 831개) |
 | TypeScript 정적 검사 | 통과 | **`npm run compile` 통과** |
 | 브라우저 빌드 | Chrome MV3 (약 1.86 MB) | **Microsoft Edge MV3 프로덕션 번들 생성** |
 | 빌드 검증 및 접근성 | manifest 및 참조 파일 통과 | **`verify-build` 및 WCAG AA 13쌍 통과** |

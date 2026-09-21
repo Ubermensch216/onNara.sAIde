@@ -1,6 +1,7 @@
 # onNara.sAIde 최종 구축 계획서
 
-작성: 2026-09-17 · 갱신: 2026-09-18 · 상태: 구축 진행 중 (0~2단계 완료, 3단계 핵심 MVP 구현 완료 · 449개 테스트 통과) · 대상 브라우저: Microsoft Edge (Chromium MV3)
+작성: 2026-09-17 · 갱신: 2026-09-21 · 상태: 구축 진행 중 (0~2단계 완료, 3단계 핵심 MVP 완료, 진단 보완 B1~B5·B9 및 N1 공유/공람 브리핑 완료 · 73파일 831개 테스트 통과) · 대상 브라우저: Microsoft Edge (Chromium MV3)
+현재 구현 사실은 [구현 현황](../docs/IMPLEMENTATION_STATUS.md)이 기준이다. 이 계획서의 단계표는 목표를 담는다.
 근거 자료: [참조 프로젝트 분석 및 서비스 제안](../docs/reference-analysis-and-ideas.md) · 현황: [구현 현황](../docs/IMPLEMENTATION_STATUS.md)
 
 온나라 2.0 화면 오른쪽 Edge Side Panel에서 **현재 온나라 문서의 맥락을 이해하고 읽기·검색·작성·업무처리를 돕는 AI 업무 도우미**를 만든다. 추론은 **내 PC의 로컬 LLM(Ollama)** 과 **범정부 AI 공통기반 LLM(API 키)** 중 사용자가 화면에서 고른다.
@@ -81,7 +82,7 @@
 
 ---
 
-## 2. 기준 환경 (2026-09-18 확인값)
+## 2. 기준 환경 (2026-09-21 확인값)
 
 | 항목 | 값 | 확인 출처 |
 |---|---|---|
@@ -89,8 +90,8 @@
 | 생성 모델 | `gemma4:e2b` · 5.1B · 7.2GB · completion·vision·audio·tools·thinking | `/api/tags`, `/api/show` |
 | 임베딩 모델 | `bge-m3:latest` · 1.2GB · embedding | `/api/tags`, `/api/show` |
 | `OLLAMA_ORIGINS` | 현재 프로세스 `chrome-extension://*`; 배포 시 실제 확장 ID로 한정 | 프로세스 환경 변수 |
-| onnara-saide 테스트 | Vitest 45파일·449개 전체 통과, `tsc --noEmit` 통과 | 2026-09-18 자동 테스트 |
-| onnara-saide 빌드 | Edge MV3 프로덕션 빌드, verify 검증, WCAG AA 13쌍 통과 | 2026-09-18 빌드 검증 |
+| onnara-saide 테스트 | Vitest 73파일·831개 전체 통과, `tsc --noEmit` 통과 | 2026-09-21 자동 테스트 |
+| onnara-saide 빌드 | Edge MV3 프로덕션 빌드, verify 검증, WCAG AA 13쌍 통과 | 2026-09-21 빌드 검증 |
 | 배부기 (참조) | Node 테스트 34개 통과 (README 표기 28개) | 참조 프로젝트 검토 자료 |
 | 과거 CPU 실측 | prefill ~131 tok/s, decode ~21 tok/s, 콜드 로드 21.5초 | sAIde 문서(이 PC 재측정 필요) |
 
@@ -735,10 +736,9 @@ read(읽음) → drafted(초안) → prepared(온나라 반영 준비) → submi
 ## 16. 근거 문서
 
 - [참조 프로젝트 분석 및 서비스 제안](../docs/reference-analysis-and-ideas.md)
-- [sAIde 아키텍처](../sAIde/docs/ARCHITECTURE.md)
-- [sAIde 검증 기록](../sAIde/docs/VALIDATION.md)
-- [온나라 문서배부 설계 및 검증](../onnara-ai-document-distributor/onnara-ai-document-distributor-main/docs/설계및검증.md)
-- [온나라 문서배부 RAG 자료 작성 가이드](../onnara-ai-document-distributor/onnara-ai-document-distributor-main/docs/RAG_자료작성_가이드.md)
+- 참조 프로젝트 문서 (이 저장소 밖 · 작업 폴더의 사본을 본다)
+  - `sAIde/docs/ARCHITECTURE.md` · `sAIde/docs/VALIDATION.md`
+  - `onnara-ai-document-distributor/.../docs/설계및검증.md` · `.../docs/RAG_자료작성_가이드.md`
 - Microsoft Edge Side Panel: https://learn.microsoft.com/en-us/microsoft-edge/extensions/developer-guide/sidebar
 - Chrome 확장 네트워크 요청: https://developer.chrome.com/docs/extensions/develop/concepts/network-requests
 - Chrome storage 접근 수준: https://developer.chrome.com/docs/extensions/reference/api/storage
