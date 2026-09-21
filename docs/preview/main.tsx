@@ -128,6 +128,7 @@ const data: Record<string, unknown> = {
     origin: 'https://onnara.saas.gcloud.go.kr',
     savedAt: now - 86400000 * 3,
   },
+  'saide.lastBackupAt': now - 86400000 * 5,
   'saide.automation.history': [
     {
       id: 'job-1',
