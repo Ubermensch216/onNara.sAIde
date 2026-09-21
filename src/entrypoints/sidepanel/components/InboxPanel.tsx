@@ -18,10 +18,11 @@ import type { ErrorPresentation } from '@/lib/errors/describe';
 import { requestAccessForError, requestAllUrls } from '@/lib/permissions';
 import {
   clearInboxError, clearInboxFocus, collectAndBrief, designateInbox, dismissDoc,
-  groupDocs, loadInbox, pendingDocs, registerDocTask, useInbox,
+  groupDocs, loadInbox, openTaskDraft, pendingDocs, useInbox, type TaskDraftSession,
 } from '@/lib/inbox/panel';
 import type { InboxCategory, InboxDoc } from '@/lib/inbox/types';
 import { ErrorBanner } from './ErrorBanner';
+import { InboxTaskDraft } from './InboxTaskDraft';
 import { FeedbackButtons } from './FeedbackButtons';
 import { loadFeedbackMap, type FeedbackVerdict } from '@/lib/feedback/store';
 
@@ -45,7 +46,7 @@ function clock(at: number): string {
 
 export function InboxPanel({ tab, settings, onOpenSchedule }: Props) {
   const t = useT();
-  const { docs, briefing, lastRun, location, loaded, running, error, focus } = useInbox();
+  const { docs, briefing, lastRun, location, loaded, running, error, focus, draft } = useInbox();
   const [spotlight, setSpotlight] = useState<string | null>(null);
   const [showFiltered, setShowFiltered] = useState(false);
   /** 이미 눌러 둔 관심도 평가. 한 번에 읽어 카드에 나눠 준다(B4). */
@@ -161,7 +162,8 @@ export function InboxPanel({ tab, settings, onOpenSchedule }: Props) {
           <ul className="inbox-list">
             {group.docs.map(doc => (
               <InboxCard key={doc.key} doc={doc} lit={spotlight === doc.key} model={settings.model}
-                verdict={verdicts.get(doc.key)} onOpenSchedule={onOpenSchedule} />
+                verdict={verdicts.get(doc.key)} onOpenSchedule={onOpenSchedule}
+                tab={tab} settings={settings} draft={draft?.key === doc.key ? draft : null} />
             ))}
           </ul>
         </section>
@@ -176,7 +178,8 @@ export function InboxPanel({ tab, settings, onOpenSchedule }: Props) {
             <ul className="inbox-list">
               {filtered.slice(0, 50).map(doc => (
                 <InboxCard key={doc.key} doc={doc} lit={false} model={settings.model}
-                  verdict={verdicts.get(doc.key)} onOpenSchedule={onOpenSchedule} />
+                  verdict={verdicts.get(doc.key)} onOpenSchedule={onOpenSchedule}
+                  tab={tab} settings={settings} draft={draft?.key === doc.key ? draft : null} />
               ))}
             </ul>
           )}
@@ -192,9 +195,14 @@ interface CardProps {
   model: string;
   verdict?: FeedbackVerdict | undefined;
   onOpenSchedule: (taskId: number) => void;
+  /** 본문을 읽을 때 쓸 탭. 받은문서 목록을 보고 있어야 한다. */
+  tab: TabSummary | null;
+  settings: Settings;
+  /** 이 문서를 일정으로 옮기는 중이면 그 진행 상태. */
+  draft: TaskDraftSession | null;
 }
 
-function InboxCard({ doc, lit, model, verdict, onOpenSchedule }: CardProps) {
+function InboxCard({ doc, lit, model, verdict, onOpenSchedule, tab, settings, draft }: CardProps) {
   const t = useT();
   const meta = [doc.department, doc.sender, doc.reportDate].filter(Boolean);
   return (
@@ -214,13 +222,18 @@ function InboxCard({ doc, lit, model, verdict, onOpenSchedule }: CardProps) {
         {doc.taskId ? (
           <button type="button" className="inbox-link" onClick={() => onOpenSchedule(doc.taskId!)}>{t('inbox.registered')}</button>
         ) : (
-          <button type="button" className="inbox-btn" onClick={() => void registerDocTask(doc)}>{t('inbox.register')}</button>
+          /* ★ 누르는 순간 등록되지 않는다. 본문을 열면 열람 기록이 남으므로 먼저 그 사실을 알린다. */
+          <button type="button" className="inbox-btn" title={t('inbox.registerHint')}
+            aria-expanded={Boolean(draft)} onClick={() => openTaskDraft(doc)}>
+            {t('inbox.register')}
+          </button>
         )}
         {/* ★ 분류가 맞았는지 한 번 누르는 것으로 받는다(B4). 이 수치가 관심도 학습의 표본이 된다. */}
         <FeedbackButtons kind="inbox-relevance" targetKey={doc.key} model={model} initial={verdict} compact />
         <span className="spacer" />
         <button type="button" className="inbox-link" onClick={() => void dismissDoc(doc.key)}>{t('inbox.dismiss')}</button>
       </div>
+      {draft && <InboxTaskDraft doc={doc} session={draft} tab={tab} settings={settings} />}
     </li>
   );
 }

@@ -28,6 +28,7 @@ import { PresetEditor } from './PresetEditor';
 import { PerfDashboard } from './PerfDashboard';
 import { QualityPanel } from './QualityPanel';
 import { MemoryPanel } from './MemoryPanel';
+import { BackupPanel } from './BackupPanel';
 import { InboxSettings } from './InboxSettings';
 import {
   grantedOrigins,
@@ -506,6 +507,8 @@ export default function OptionsApp() {
           <p className="desc">{t('opt.display.localeDesc')}</p>
         </div>
       </section>
+
+      <BackupPanel />
 
       <section>
         <button

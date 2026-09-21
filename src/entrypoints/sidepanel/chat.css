@@ -1659,3 +1659,84 @@
 
 .inbox-reason { margin: 0; font-size: 11.5px; color: var(--fg-muted); line-height: 1.45; }
 .inbox-actions { display: flex; align-items: center; gap: 8px; }
+
+/* ── 일정 등록 초안 (공유/공람 카드 안) ──
+ * 카드 안에서 편다. 좁은 패널에서 모달을 띄우면 "어느 문서였지?"가 사라진다.
+ * 테두리를 경고색으로 두는 것은 이 흐름이 문서를 열어 열람 상태를 바꾸기 때문이다.
+ */
+
+.inbox-draft {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 9px;
+  border: 1px solid var(--warn);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.inbox-draft-title { font-size: 12.5px; font-weight: 700; }
+.inbox-draft-warn { margin: 0; font-size: 11.5px; line-height: 1.5; color: var(--fg); }
+.inbox-draft-note { margin: 0; font-size: 11.5px; line-height: 1.5; color: var(--fg-muted); }
+.inbox-draft-opened { margin: 0; font-size: 11.5px; font-weight: 600; line-height: 1.5; color: var(--warn); }
+.inbox-draft-error { margin: 0; font-size: 11.5px; font-weight: 600; line-height: 1.5; color: var(--danger); }
+.inbox-draft-progress { display: flex; align-items: center; gap: 7px; margin: 0; font-size: 11.5px; line-height: 1.5; color: var(--fg); }
+.inbox-draft-elapsed { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 11px; color: var(--fg-muted); }
+
+/* 가는 막대 하나. 진행률을 아는 척하지 않고, 일하고 있다는 것만 말한다. */
+.inbox-draft-track {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.inbox-draft-fill {
+  display: block;
+  width: 40%;
+  height: 100%;
+  border-radius: 2px;
+  /* 생성 중 표시 — 앰버의 허용된 세 용처 중 하나 */
+  background: var(--rail);
+  animation: slide 1.6s ease-in-out infinite;
+}
+
+/* 움직임을 끈 사용자에게는 멈춘 막대를 남긴다. 그때는 흘러간 초가 진행을 말한다. */
+@media (prefers-reduced-motion: reduce) {
+  .inbox-draft-fill { width: 100%; animation: none; }
+}
+.inbox-draft-meta { margin: 0; font-size: 11px; color: var(--fg-muted); overflow-wrap: anywhere; }
+
+.inbox-draft-summary {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--fg-muted);
+  border-left: 2px solid var(--border-strong);
+  padding-left: 6px;
+  overflow-wrap: anywhere;
+}
+.inbox-draft-summary > span { font-weight: 700; color: var(--fg); }
+
+.inbox-draft-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.inbox-draft-badges { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 11px; color: var(--fg-muted); }
+
+/* 다른 후보. 고른 것만 강조하고 나머지는 지우지 않는다. */
+.inbox-draft-alts { display: flex; flex-wrap: wrap; gap: 4px; }
+
+.inbox-draft-alt {
+  max-width: 100%;
+  padding: 3px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.inbox-draft-alt:hover { color: var(--fg); border-color: var(--accent); }
+.inbox-draft-alt.is-on { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); font-weight: 600; }

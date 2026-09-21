@@ -17,6 +17,7 @@ import { classifyWithModel } from './classify';
 import { loadInboxLocation, type InboxLocation } from './location';
 import { recordSkippedRun, runBriefing } from './run';
 import { lastInboxRun, listInboxDocs, patchInboxDoc, saveInboxDocs } from './store';
+import { draftFromDoc, draftTasksFromBody, toNewTask, type TaskDraft } from './task-draft';
 import type { InboxCategory, InboxDoc, InboxRun, InboxTrigger } from './types';
 import { INBOX_CATEGORIES } from './types';
 
@@ -36,6 +37,48 @@ export interface InboxFocus {
   at: number;
 }
 
+/**
+ * "일정 등록"을 누른 뒤의 한 문서. 확인 → 본문 읽기 → 폼 확인의 세 걸음이다.
+ *
+ * ★ 화면(컴포넌트)이 아니라 여기에 둔다. 탭을 옮겼다 돌아와도 읽던 본문과 고치던
+ *   초안이 살아 있어야 한다 — 본문 읽기와 AI 분석은 CPU에서 수 분이 걸리고, 그동안
+ *   사용자는 다른 탭을 본다. 화면 상태로 두면 그 시간과 열람 기록이 함께 사라진다.
+ */
+export interface TaskDraftSession {
+  /** 어느 문서인가. */
+  key: string;
+  /** 같은 문서를 다시 시작했을 때 지난 실행의 결과가 끼어들지 않게 하는 일련번호. */
+  id: number;
+  stage: 'confirm' | 'working' | 'ready' | 'failed';
+  /** 지금 하는 일. 본문을 여는 시간과 AI가 읽는 시간은 성격이 다르다. */
+  step: 'read' | 'analyze' | null;
+  /**
+   * 읽기 시작한 시각.
+   *
+   * ★ 화면이 흘러간 초를 센다. CPU 추론에서는 수 분이 걸리고, 그동안 아무것도 움직이지
+   *   않으면 사용자는 고장으로 본다(계획서 §6 — 5초 넘는 일은 진행 상태를 보인다).
+   *   세션에 두는 이유는 탭을 옮겼다 돌아와도 경과 시간이 이어져야 하기 때문이다.
+   */
+  startedAt: number | null;
+  drafts: TaskDraft[];
+  /** 폼에 올라와 있는 초안. */
+  chosen: number;
+  summary: string;
+  /**
+   * 본문을 열어 열람 처리된 시각.
+   *
+   * ★ 화면은 이 값이 있을 때 "이 문서는 이제 열람 상태입니다"를 사실로 말한다.
+   *   되돌릴 수 없는 일이므로 짐작이 아니라 실제로 연 뒤에만 채운다.
+   */
+  readAt: number | null;
+  /** 모델이 본문에서 일정을 뽑지 못해 목록 값으로 채웠는가. */
+  fallback: boolean;
+  /** 그 이유(모델을 부르지 못한 까닭). 화면에 그대로 적는다. */
+  fallbackReason: string;
+  error: AppError | null;
+  abort: AbortController | null;
+}
+
 interface InboxState {
   docs: InboxDoc[];
   /** 마지막 브리핑 결과. 머리말의 수치와 열람 상태 문구가 여기서 나온다. */
@@ -46,10 +89,13 @@ interface InboxState {
   running: boolean;
   error: AppError | null;
   focus: InboxFocus | null;
+  /** 지금 일정으로 옮기는 중인 문서. 한 번에 하나다. */
+  draft: TaskDraftSession | null;
 }
 
 export const useInbox = create<InboxState>(() => ({
   docs: [], briefing: null, lastRun: null, location: null, loaded: false, running: false, error: null, focus: null,
+  draft: null,
 }));
 
 /** 아직 손대지 않은 문서. 탭 배지의 숫자이자 화면의 본문이다. */
@@ -229,11 +275,149 @@ export async function restoreDoc(key: string): Promise<void> {
   await patchLocal(key, { dismissedAt: undefined, openedAt: undefined });
 }
 
+/* ── 일정 등록: 본문을 읽고 초안을 만든다 ───────────────── */
+
+let draftSerial = 0;
+
+/** 지난 실행의 늦은 응답이 지금 화면을 덮어쓰지 않게 한다. */
+function patchDraft(id: number, patch: Partial<TaskDraftSession>): void {
+  useInbox.setState(state =>
+    state.draft && state.draft.id === id ? { draft: { ...state.draft, ...patch } } : {});
+}
+
 /**
- * 공문 한 건을 일정 항목으로 등록한다.
+ * "일정 등록"을 눌렀다. 아직 아무것도 열지 않는다 — 먼저 무슨 일이 일어나는지 알린다.
+ *
+ * ★ 이 걸음을 건너뛰지 않는다. 다음 걸음에서 문서가 열리고, 열리는 순간 온나라에
+ *   열람 기록이 남는다. 그 사실을 보기 전에 되돌릴 수 없는 일이 일어나서는 안 된다.
+ */
+export function openTaskDraft(doc: InboxDoc): void {
+  const current = useInbox.getState().draft;
+  if (current?.key === doc.key) return;
+  current?.abort?.abort();
+  useInbox.setState({
+    draft: {
+      key: doc.key, id: ++draftSerial, stage: 'confirm', step: null, startedAt: null,
+      drafts: [], chosen: 0, summary: '', readAt: null,
+      fallback: false, fallbackReason: '', error: null, abort: null,
+    },
+  });
+}
+
+/** 접는다. 읽는 중이었으면 그 일도 멈춘다. */
+export function closeTaskDraft(): void {
+  const draft = useInbox.getState().draft;
+  if (!draft) return;
+  draft.abort?.abort();
+  useInbox.setState({ draft: null });
+}
+
+/** 다른 후보를 폼에 올린다. */
+export function chooseTaskDraft(index: number): void {
+  const draft = useInbox.getState().draft;
+  if (!draft || index < 0 || index >= draft.drafts.length) return;
+  useInbox.setState({ draft: { ...draft, chosen: index } });
+}
+
+/** 폼에서 고친 값. 초안은 저장되기 전까지 여기에만 있다. */
+export function editTaskDraft(patch: Partial<TaskDraft>): void {
+  const draft = useInbox.getState().draft;
+  const current = draft?.drafts[draft.chosen];
+  if (!draft || !current) return;
+  const drafts = draft.drafts.map((item, index) => index === draft.chosen ? { ...item, ...patch } : item);
+  useInbox.setState({ draft: { ...draft, drafts } });
+}
+
+/**
+ * 본문을 열어 읽고, AI가 뽑은 일정 초안을 폼에 올린다.
+ *
+ * ★ **문서가 열린다.** 온나라에 열람 기록이 남고 확장은 되돌릴 수 없다. 그래서 원장에도
+ *   사실대로 적는다(`readState: 'read'`, `taskReadAt`) — 화면이 "아직 미열람"이라고
+ *   말하는 동안 실제로는 열려 있는 상태를 만들지 않는다.
+ *
+ * ★ 모델이 실패해도 여기서 멈추지 않는다. 이미 문서를 연 뒤다. 목록에서 읽은 값으로
+ *   초안을 채워 등록까지는 갈 수 있게 하고, 왜 그렇게 됐는지 화면에 적는다.
+ */
+export async function startTaskDraft(doc: InboxDoc, tab: TabSummary, settings: Settings): Promise<void> {
+  const session = useInbox.getState().draft;
+  if (!session || session.key !== doc.key || session.stage === 'working') return;
+  const id = session.id;
+  const abort = new AbortController();
+  patchDraft(id, { stage: 'working', step: 'read', startedAt: Date.now(), error: null, fallback: false, fallbackReason: '', abort });
+
+  try {
+    const reply = await sendToSW({
+      type: 'READ_DOCUMENT', tabId: tab.tabId, title: doc.title, budgetTokens: settings.pageTokenBudget,
+    }, abort.signal, 180_000);
+
+    if (reply.type === 'ERROR') {
+      patchDraft(id, { stage: 'failed', step: null, error: reply.error, abort: null });
+      return;
+    }
+    if (reply.type !== 'DOCUMENT_READ') {
+      patchDraft(id, {
+        stage: 'failed', step: null, abort: null,
+        error: { code: 'UNKNOWN', message: '문서 본문 읽기 결과를 받지 못했습니다.' },
+      });
+      return;
+    }
+
+    // 여기까지 왔다는 것은 상세 화면이 실제로 열렸다는 뜻이다. 열람 상태를 사실대로 옮긴다.
+    const readAt = Date.now();
+    await patchLocal(doc.key, { readState: 'read', taskReadAt: readAt });
+    patchDraft(id, { step: 'analyze', readAt });
+
+    const page = reply.payload;
+    try {
+      const outcome = await draftTasksFromBody(doc, {
+        // 제목은 목록에서 읽은 것을 쓴다. 상세 화면의 제목은 줄여 그려지는 일이 있다.
+        url: page.url, title: doc.title, text: page.text, truncated: page.truncated, keptRatio: page.keptRatio,
+      }, settings, abort.signal);
+      if (outcome.drafts.length) {
+        patchDraft(id, { stage: 'ready', step: null, drafts: outcome.drafts, chosen: 0, summary: outcome.summary, abort: null });
+        return;
+      }
+      // 본문에 할 일도 기한도 없었다. 단순 공람일 수 있으므로 목록 값을 올려 두고 사용자가 정한다.
+      patchDraft(id, {
+        stage: 'ready', step: null, drafts: [draftFromDoc(doc)], chosen: 0, summary: outcome.summary,
+        fallback: true, fallbackReason: '', abort: null,
+      });
+    } catch (error) {
+      if (abort.signal.aborted) return;
+      patchDraft(id, {
+        stage: 'ready', step: null, drafts: [draftFromDoc(doc)], chosen: 0, summary: '',
+        fallback: true, fallbackReason: error instanceof Error ? error.message : String(error), abort: null,
+      });
+    }
+  } catch (error) {
+    if (abort.signal.aborted) return;
+    patchDraft(id, {
+      stage: 'failed', step: null, abort: null,
+      error: { code: 'UNKNOWN', message: error instanceof Error ? error.message : String(error) },
+    });
+  }
+}
+
+/** 폼에 올라와 있는 초안을 일정으로 저장한다. 저장은 오직 이 함수뿐이다. */
+export async function registerTaskDraft(doc: InboxDoc): Promise<number | null> {
+  const session = useInbox.getState().draft;
+  const draft = session?.drafts[session.chosen];
+  if (!session || session.key !== doc.key || session.stage !== 'ready' || !draft) return null;
+  if (doc.taskId) { closeTaskDraft(); return doc.taskId; }
+  const id = await addTask(toNewTask(doc, draft));
+  await patchLocal(doc.key, { taskId: id });
+  useInbox.setState(state => state.draft?.id === session.id ? { draft: null } : {});
+  return id;
+}
+
+/**
+ * 공문 한 건을 일정 항목으로 등록한다. **본문을 열지 않는다.**
  *
  * ★ 코드만으로 만든다. 제목·기한·출처는 전부 목록에서 읽은 값이라 지어낸 것이 없다.
  *   근거 문장(`evidence`)에는 제목에서 실제로 읽어낸 기한 표기를 그대로 넣는다.
+ *
+ * ★ 본문을 읽는 길([startTaskDraft])과 나란히 남겨 둔다. 미열람을 지키는 것이 이
+ *   기능의 약속이므로, 열람을 감수하지 않고도 일정을 만들 길이 반드시 있어야 한다.
  */
 export async function registerDocTask(doc: InboxDoc): Promise<number | null> {
   if (doc.taskId) return doc.taskId;

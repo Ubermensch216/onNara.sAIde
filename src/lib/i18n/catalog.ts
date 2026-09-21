@@ -319,6 +319,29 @@ const ko = {
   'opt.display.localeDesc':
     '사이드패널 화면과 모델의 답변 언어가 함께 바뀝니다. 확장 이름과 우클릭 메뉴는 브라우저 언어를 따릅니다.',
 
+  'opt.backup.h': '데이터 백업 · 복원',
+  'opt.backup.intro':
+    '일정, 대화, 브리핑 원장, 설정은 모두 이 PC 안에만 있습니다. 그런데 확장을 **제거했다가 다시 설치**하거나 **다른 폴더에서 다시 불러오면** 브라우저가 그 저장소를 통째로 버립니다. 새 판본으로 업데이트하기 전과 PC를 바꾸기 전에는 반드시 파일로 내려받아 두세요.',
+  'opt.backup.export': '백업 파일 내려받기',
+  'opt.backup.exportDesc': '일정 · 대화 · 브리핑 원장 · 분석 캐시 · 정확도 기록 · 설정을 JSON 파일 하나로 담습니다.',
+  'opt.backup.includeMemory': '기억(방문 페이지 임베딩)도 함께 담기',
+  'opt.backup.includeMemoryDesc':
+    '기억은 다시 만들 수 있는 값이고 파일을 수십 MB까지 키웁니다. 끄면 나머지만 담깁니다.',
+  'opt.backup.exported': '{name} · {n}건을 담았습니다.',
+  'opt.backup.restore': '백업 파일에서 복원',
+  'opt.backup.restoreDesc':
+    '**지금 저장된 내용을 백업 파일의 것으로 바꿉니다. 합치지 않습니다.** 복원이 끝나면 확장이 다시 시작됩니다.',
+  'opt.backup.confirm':
+    '{date}에 받은 백업입니다. {n}건을 되살리고, 지금 저장된 같은 종류의 내용은 지워집니다.\n\n계속할까요?',
+  'opt.backup.restored': '{n}건을 되살렸습니다. 확장을 다시 시작합니다…',
+  'opt.backup.working': '처리 중…',
+  'opt.backup.never': '아직 백업한 기록이 없습니다.',
+  'opt.backup.lastAt': '마지막 백업: {date}',
+
+  'backup.err.notBackup': 'sAIde 백업 파일이 아니거나 파일이 손상되었습니다.',
+  'backup.err.newer': '더 새로운 판본의 백업입니다. 확장을 최신 판본으로 올린 뒤 복원하세요.',
+  'backup.err.newerSchema': '더 새로운 판본에서 만든 백업입니다. 확장을 최신 판본으로 올린 뒤 복원하세요.',
+
   'opt.reset': '기본값으로 되돌리기',
   'opt.resetDesc':
     '기본값과 대기시간 예측은 개발 당시 CPU 측정(프리필 {rate} tok/s) 기준입니다. 현재 장비의 보장값은 아닙니다.',
@@ -403,7 +426,25 @@ const ko = {
   'inbox.empty': '처리할 문서가 없습니다',
   'inbox.emptyHint': '새로 받은 문서가 들어오면 여기에 모입니다.',
   'inbox.register': '일정 등록',
+  'inbox.registerHint': '본문을 열어 AI가 일정을 뽑아 줍니다. 여는 순간 이 문서는 열람 상태가 됩니다.',
   'inbox.registered': '일정에 등록됨',
+  'inbox.draft.title': '이 문서를 읽고 일정을 만들까요?',
+  'inbox.draft.readWarn':
+    'AI가 본문을 열어 읽고, 등록할 일정을 폼에 채웁니다. 저장은 확인하신 뒤에 합니다. 다만 본문을 여는 순간 온나라에 열람 기록이 남아 이 문서는 미열람에서 열람으로 바뀌며, 확장은 이를 되돌릴 수 없습니다.',
+  'inbox.draft.read': '본문을 읽고 일정 제안',
+  'inbox.draft.listOnly': '목록 값으로만 등록 (미열람 유지)',
+  'inbox.draft.noTab': '본문을 읽으려면 온나라 받은문서 목록을 연 탭에서 눌러야 합니다. 목록을 연 뒤 다시 시도하거나, 목록 값으로만 등록하세요.',
+  'inbox.draft.reading': '본문을 여는 중입니다…',
+  'inbox.draft.analyzing': 'AI가 본문을 읽고 일정을 뽑는 중입니다. CPU에서는 수 분 걸릴 수 있습니다.',
+  'inbox.draft.stop': '중단',
+  'inbox.draft.retry': '다시 읽기',
+  'inbox.draft.opened': '본문을 열었습니다. 이 문서는 이제 열람 상태입니다.',
+  'inbox.draft.ready': 'AI가 본문에서 뽑은 일정입니다. 확인하고 고친 뒤 등록하세요.',
+  'inbox.draft.fromList': '목록에서 읽은 값입니다.',
+  'inbox.draft.fallback': 'AI가 본문에서 일정을 뽑지 못해 목록 값으로 채웠습니다.',
+  'inbox.draft.summary': '문서 요지',
+  'inbox.draft.others': '다른 후보 {n}건',
+  'inbox.draft.submit': '일정 등록',
   'inbox.dismiss': '넘기기',
   'inbox.attachment': '첨부',
   'inbox.readOnlyList': '본문을 열지 않고 목록만 읽습니다.',
@@ -971,6 +1012,29 @@ const en = {
   'opt.display.localeDesc':
     "Changes both the panel's interface and the language the model replies in. The extension name and right-click menu follow your browser language.",
 
+  'opt.backup.h': 'Backup and restore',
+  'opt.backup.intro':
+    'Your tasks, conversations, briefing ledger and settings live only on this PC. If you **remove and reinstall** the extension, or load it from **a different folder**, the browser discards that storage entirely. Always download a backup before updating to a new build and before switching machines.',
+  'opt.backup.export': 'Download backup file',
+  'opt.backup.exportDesc': 'Packs tasks, conversations, the briefing ledger, the analysis cache, accuracy records and settings into a single JSON file.',
+  'opt.backup.includeMemory': 'Include memory (page embeddings)',
+  'opt.backup.includeMemoryDesc':
+    'Memory can be rebuilt and grows the file to tens of megabytes. Leave it off to pack everything else.',
+  'opt.backup.exported': '{name} · {n} records packed.',
+  'opt.backup.restore': 'Restore from backup file',
+  'opt.backup.restoreDesc':
+    '**Replaces what is stored now with the contents of the backup file. It does not merge.** The extension restarts once the restore finishes.',
+  'opt.backup.confirm':
+    'This backup was taken on {date}. It restores {n} records and erases what is stored now of the same kinds.\n\nContinue?',
+  'opt.backup.restored': 'Restored {n} records. Restarting the extension…',
+  'opt.backup.working': 'Working…',
+  'opt.backup.never': 'No backup taken yet.',
+  'opt.backup.lastAt': 'Last backup: {date}',
+
+  'backup.err.notBackup': 'This is not a sAIde backup file, or the file is damaged.',
+  'backup.err.newer': 'This backup comes from a newer version. Update the extension first, then restore.',
+  'backup.err.newerSchema': 'This backup was made by a newer version. Update the extension first, then restore.',
+
   'opt.reset': 'Restore defaults',
   'opt.resetDesc':
     'Defaults and time estimates use a development CPU baseline ({rate} prefill tok/s), not a guarantee for your current hardware.',
@@ -1056,7 +1120,25 @@ const en = {
   'inbox.empty': 'Nothing to handle',
   'inbox.emptyHint': 'Newly received documents will gather here.',
   'inbox.register': 'Add to schedule',
+  'inbox.registerHint': 'Opens the document so the AI can draft a task. Opening it marks the document as read.',
   'inbox.registered': 'Added to schedule',
+  'inbox.draft.title': 'Read this document and draft a task?',
+  'inbox.draft.readWarn':
+    'The AI opens the document, reads it and fills in the task form. Nothing is saved until you confirm. But opening it records a read in onNara: this document changes from unread to read, and the extension cannot undo that.',
+  'inbox.draft.read': 'Read it and suggest a task',
+  'inbox.draft.listOnly': 'Use list values only (stays unread)',
+  'inbox.draft.noTab': 'To read the document, press this from the tab showing the onNara received-documents list. Open the list and try again, or add the task from the list values only.',
+  'inbox.draft.reading': 'Opening the document…',
+  'inbox.draft.analyzing': 'The AI is reading the document and drafting a task. On CPU this can take several minutes.',
+  'inbox.draft.stop': 'Stop',
+  'inbox.draft.retry': 'Read again',
+  'inbox.draft.opened': 'The document was opened. It is now marked as read.',
+  'inbox.draft.ready': 'Drafted by the AI from the document. Check and edit it, then add it.',
+  'inbox.draft.fromList': 'Taken from the list row.',
+  'inbox.draft.fallback': 'The AI found no task in the document, so the list values were used.',
+  'inbox.draft.summary': 'Document gist',
+  'inbox.draft.others': '{n} other candidates',
+  'inbox.draft.submit': 'Add to schedule',
   'inbox.dismiss': 'Skip',
   'inbox.attachment': 'Attachment',
   'inbox.readOnlyList': 'Reads the list only; documents are not opened.',
