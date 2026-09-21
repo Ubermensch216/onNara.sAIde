@@ -11,7 +11,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { t as translate, useT } from '@/lib/i18n';
 import { isRestrictedUrl, sendToSW, type AppError, type ExtractedPage, type TabSummary } from '@/lib/messaging/protocol';
-import { requestHostAccess } from '@/lib/permissions';
+import { requestAccessForError } from '@/lib/permissions';
 import {
   cancelAutomation,
   clearAutomationHistory,
@@ -133,8 +133,10 @@ export function AutomationPanel({ tab, onDownloadLink, onTabChange }: Props) {
 
   const grantAccess = () => {
     // 권한 요청은 클릭 핸들러의 첫 동작이어야 한다.
+    // 목록이 다른 주소의 iframe에 실려 오면 탭 주소만 허용해서는 풀리지 않는다. 오류가 지목한 주소까지 함께 요청한다.
     const target = readTab.current ?? tab;
-    if (target) void requestHostAccess(target.url).then(ok => { if (ok) void readScreen(); });
+    void requestAccessForError(screen.state === 'error' ? screen.error : null, target?.url)
+      .then(ok => { if (ok) void readScreen(); });
   };
 
   const active = jobs.filter(job => job.status === 'queued' || job.status === 'running');

@@ -73,6 +73,20 @@ export async function requestOriginsAccess(urls: string[]): Promise<boolean> {
   }
 }
 
+/**
+ * 오류 배너의 "권한 허용"이 요청할 주소를 한 번에 확보한다.
+ *
+ * ★ 탭 주소만 요청해서는 풀리지 않는 오류가 있다. 온나라는 목록·본문이 다른 호스트의
+ *   iframe에 실려 오는 경우가 있어(HOST_PERMISSION_REQUIRED의 `origins`), 탭 주소는
+ *   이미 허용돼 있는데도 그 프레임을 읽지 못한다. 두 주소를 함께 요청해야 한 번의
+ *   대화상자로 끝난다.
+ *
+ * ★ requestHostAccess와 같이 클릭 핸들러의 첫 동작이어야 한다.
+ */
+export async function requestAccessForError(error: { origins?: string[] } | null | undefined, tabUrl?: string): Promise<boolean> {
+  return requestOriginsAccess([...(tabUrl ? [tabUrl] : []), ...(error?.origins ?? [])]);
+}
+
 /** 모든 사이트 접근을 한 번에 허용받는다(설정 화면의 선택지). */
 export async function requestAllUrls(): Promise<boolean> {
   try {

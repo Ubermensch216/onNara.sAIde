@@ -14,6 +14,8 @@ import { useT } from '@/lib/i18n';
 import type { AppError, TabSummary } from '@/lib/messaging/protocol';
 import type { Settings } from '@/lib/storage/settings';
 import { isRestrictedUrl } from '@/lib/messaging/protocol';
+import type { ErrorPresentation } from '@/lib/errors/describe';
+import { requestAccessForError, requestAllUrls } from '@/lib/permissions';
 import {
   clearInboxError, clearInboxFocus, collectAndBrief, designateInbox, dismissDoc,
   groupDocs, loadInbox, pendingDocs, registerDocTask, useInbox,
@@ -64,9 +66,42 @@ export function InboxPanel({ tab, settings, onOpenSchedule }: Props) {
 
   const canDesignate = Boolean(tab && !isRestrictedUrl(tab.url));
 
+  /** 오류 배너가 알려 온 동작을 실제로 실행한다. 실패한 일을 다시 해 주는 데까지가 한 벌이다. */
+  const retryFailedWork = () => {
+    clearInboxError();
+    if (!location) { if (tab) void designateInbox(tab); return; }
+    void collectAndBrief(tab, settings, 'manual');
+  };
+
+  /**
+   * 오류 배너의 해결 버튼.
+   *
+   * ★ 권한 요청이 이 핸들러의 **첫 동작**이어야 한다. 앞에 await가 끼면 사용자 제스처가
+   *   소실돼 크롬이 요청을 거부한다(permissions.ts).
+   *
+   * ★ 목록이 다른 주소의 iframe에 실려 오면 탭 주소만 허용해서는 풀리지 않는다.
+   *   오류가 지목한 주소(`origins`)까지 함께 요청한다.
+   */
+  const handleErrorAction = (action: NonNullable<ErrorPresentation['action']>) => {
+    switch (action) {
+      case 'grant-host':
+        void requestAccessForError(error, tab?.url).then(granted => { if (granted) retryFailedWork(); });
+        break;
+      case 'grant-all':
+        void requestAllUrls().then(granted => { if (granted) retryFailedWork(); });
+        break;
+      case 'open-settings':
+        chrome.runtime.openOptionsPage();
+        break;
+      case 'retry':
+        retryFailedWork();
+        break;
+    }
+  };
+
   return (
     <div className="inbox">
-      {error && <ErrorBanner error={error} model={settings.model} onClose={clearInboxError} onAction={() => undefined} />}
+      {error && <ErrorBanner error={error} model={settings.model} onClose={clearInboxError} onAction={handleErrorAction} />}
 
       <section className="inbox-head" aria-busy={running}>
         <div className="inbox-head-row">

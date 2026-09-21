@@ -30,7 +30,7 @@ import {
   type SlashCommand,
 } from '@/lib/prompts/presets';
 import { loadCustomPresets, onCustomPresetsChanged } from '@/lib/storage/presets';
-import { requestAllUrls, requestCaptureAccess, requestHostAccess, requestOriginsAccess } from '@/lib/permissions';
+import { requestAccessForError, requestAllUrls, requestCaptureAccess, requestHostAccess } from '@/lib/permissions';
 import { runDownloadLink } from '@/lib/downloads/links';
 import { estimateTtfbSeconds } from '@/lib/storage/settings';
 import {
@@ -601,29 +601,33 @@ export default function App() {
     if (text.trim()) void chat.send(text, settings);
   };
 
+  /** 어느 배너에서 눌렀든 그 배너의 오류를 지운다. */
+  const clearErrorFor = (failed: AppError | null) => {
+    if (failed && failed === automationError) setAutomationError(null);
+    else chat.clearError();
+  };
+
   /**
    * 오류 배너의 해결 버튼. 계획서 Phase 7-2
    *
    * ★ 권한 요청은 이 핸들러의 첫 동작이어야 한다. 앞에 await가 끼면
    *   사용자 제스처가 소실돼 크롬이 요청을 거부한다(permissions.ts).
    */
-  const handleErrorAction = (action: 'retry' | 'grant-host' | 'grant-all' | 'open-settings') => {
+  const handleErrorAction = (action: 'retry' | 'grant-host' | 'grant-all' | 'open-settings', failed: AppError | null = chat.error) => {
     switch (action) {
       case 'grant-host': {
-        // 본문 뷰어처럼 탭과 다른 주소가 필요하면 그 주소를 요청한다. 탭 주소는 이미 허용돼 있어 다시 요청해도 소용없다.
-        const origins = chat.error?.origins;
-        if (origins?.length) void requestOriginsAccess(tab ? [tab.url, ...origins] : origins).then((ok) => ok && chat.clearError());
-        else if (tab) void requestHostAccess(tab.url).then((ok) => ok && chat.clearError());
+        // 본문 뷰어처럼 탭과 다른 주소가 필요하면 그 주소까지 함께 요청한다. 탭 주소만 요청하면 이미 허용돼 있어 아무 일도 일어나지 않는다.
+        void requestAccessForError(failed, tab?.url).then((ok) => ok && clearErrorFor(failed));
         break;
       }
       case 'grant-all':
-        void requestAllUrls().then((ok) => ok && chat.clearError());
+        void requestAllUrls().then((ok) => ok && clearErrorFor(failed));
         break;
       case 'open-settings':
         chrome.runtime.openOptionsPage();
         break;
       case 'retry':
-        chat.clearError();
+        clearErrorFor(failed);
         void refresh();
         break;
     }
@@ -713,7 +717,8 @@ export default function App() {
       ) : view === 'automation' ? (
         <>
           {automationError && (
-            <ErrorBanner error={automationError} model={settings.model} onClose={() => setAutomationError(null)} onAction={handleErrorAction} />
+            <ErrorBanner error={automationError} model={settings.model} onClose={() => setAutomationError(null)}
+              onAction={action => handleErrorAction(action, automationError)} />
           )}
           <main className="app-main">
             <AutomationPanel tab={tab} onTabChange={adoptTab}
