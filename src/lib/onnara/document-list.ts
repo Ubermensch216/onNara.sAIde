@@ -141,7 +141,7 @@ const EMPTY_LIST_MIN_COLUMNS = 3;
  *   "비어 있는 목록"을 호출부가 구분할 수 없었다 — 문서가 0건인 날 브리핑 대상 지정이
  *   "화면에서 목록을 찾지 못했습니다"로 막혔다. 대신 머리글 조건을 높여 오인을 막는다.
  */
-export function extractStructuredDocumentList(root: ParentNode = document): StructuredDocumentList | null {
+export function extractStructuredDocumentList(root: ParentNode = document, maxRows = 500): StructuredDocumentList | null {
   let best: StructuredDocumentList | null = null;
 
   for (const container of root.querySelectorAll(CONTAINER_SELECTOR)) {
@@ -167,7 +167,7 @@ export function extractStructuredDocumentList(root: ParentNode = document): Stru
       if (cleanText(nativeTitle)) record.title = cleanText(nativeTitle);
       if (record.title) data.push(record);
       if (record.title && row.querySelector('input[type="checkbox"]:checked, [role="checkbox"][aria-checked="true"]')) selectedTitles.push(record.title);
-      if (data.length >= 500) break;
+      if (data.length >= maxRows) break;
     }
     if (!data.length && columns.length < EMPTY_LIST_MIN_COLUMNS) continue;
 

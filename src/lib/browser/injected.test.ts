@@ -105,3 +105,13 @@ it('CHECK_DIALOG 요청 시 data-saide-dialog 속성에 기록된 대화상자 �
   });
 });
 
+
+it('목록 없는 화면에 주입된 메시지도 저장한 요청으로 목록을 읽는다', async () => {
+  document.body.innerHTML = '<h1>업무 홈</h1>';
+  const fetcher = vi.fn(async () => new Response('<table><tr><th>제목</th><th>열람</th></tr><tr><td>자료 요청</td><td>미열람</td></tr></table>'));
+  vi.stubGlobal('fetch', fetcher);
+  const reply = await send({ type: 'FETCH_INBOX_PAGE', location: { url: `${location.origin}/inbox`, framePath: [3], form: { method: 'post', fields: [['pageIndex', '1']] } }, control: control() });
+  expect(reply).toMatchObject({ type: 'INBOX_PAGE', list: { rows: [{ title: '자료 요청', readState: '미열람' }] }, next: null });
+  expect(document.body.innerHTML).toBe('<h1>업무 홈</h1>');
+  expect(fetcher).toHaveBeenCalledTimes(1);
+});

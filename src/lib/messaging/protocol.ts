@@ -252,7 +252,7 @@ export type SWToPanel =
   /** 브리핑 대상으로 지정했다(N1). listName은 화면이 밝힌 목록 이름이다. */
   | { type: 'INBOX_LOCATION_SAVED'; listName: string }
   /** 공유/공람 목록을 읽었다(N1). 본문은 읽지 않는다 — 열람 상태를 바꾸지 않기 위해서다. */
-  | { type: 'INBOX_COLLECTED'; list: StructuredDocumentList; via: 'active-tab' | 'work-tab' }
+  | { type: 'INBOX_COLLECTED'; list: StructuredDocumentList; via: 'active-tab' | 'work-tab' | 'background-request' }
   /**
    * 브리핑할 때가 되었다(N1). 패널이 열려 있을 때만 온다.
    *
@@ -279,6 +279,7 @@ export type SWToContent = (
   | { type: 'PREPARE'; action: PageAction }
   /** 이 프레임이 받은문서 목록이면 그 화면의 위치를 잡아 돌려준다(N1). */
   | { type: 'LOCATE_INBOX' }
+  | { type: 'FETCH_INBOX_PAGE'; location: DocumentListLocation }
 ) & { control: RequestControl };
 
 export type ContentToSW =
@@ -289,6 +290,7 @@ export type ContentToSW =
   | { type: 'OPENING_DOCUMENT'; title: string; target?: string }
   | { type: 'DOCUMENT_LOCATED'; location: DocumentListLocation }
   | { type: 'INBOX_LOCATED'; location: DocumentListLocation; listName: string }
+  | { type: 'INBOX_PAGE'; list: StructuredDocumentList; next: DocumentListLocation | null }
   | { type: 'DOCUMENT_LIST_RESTORED'; restored: boolean }
   | { type: 'ATTACHMENTS_FOUND'; items: AttachmentItem[] }
   | { type: 'ATTACHMENT_CLICKED'; clicked: boolean }

@@ -9,7 +9,7 @@
  */
 
 import { create } from 'zustand';
-import { sendToSW, type AppError, type TabSummary } from '@/lib/messaging/protocol';
+import { sendToSW, type AppError, type SWToPanel, type TabSummary } from '@/lib/messaging/protocol';
 import { addTask } from '@/lib/schedule/store';
 import type { Settings } from '@/lib/storage/settings';
 import { briefingCount, type Briefing, type BriefingGroup } from './briefing';
@@ -29,9 +29,6 @@ import { INBOX_CATEGORIES } from './types';
 export const BRIEFING_PRESET_ID = 'inbox-briefing';
 export const BRIEFING_SLASH = '@브리핑';
 export const BRIEFING_ALIASES = ['@brief', '@inbox', '@공람'];
-
-/** 화면에 담아 둘 원장 상한. 그 아래는 보관 기간이 정리한다. */
-const VIEW_LIMIT = 300;
 
 export interface InboxFocus {
   key: string;
@@ -73,7 +70,7 @@ export function groupDocs(docs: InboxDoc[]): Array<{ category: InboxCategory; do
 }
 
 export async function loadInbox(): Promise<void> {
-  const [docs, lastRun, location] = await Promise.all([listInboxDocs(VIEW_LIMIT), lastInboxRun(), loadInboxLocation()]);
+  const [docs, lastRun, location] = await Promise.all([listInboxDocs(), lastInboxRun(), loadInboxLocation()]);
   useInbox.setState({ docs, lastRun: lastRun ?? null, location, loaded: true });
 }
 
@@ -124,7 +121,7 @@ export async function collectAndBrief(
       type: 'COLLECT_INBOX',
       ...(tab ? { tabId: tab.tabId } : {}),
       budgetTokens: settings.pageTokenBudget,
-    }, undefined, 60_000);
+    }, undefined, 180_000);
 
     if (reply.type === 'ERROR') {
       await recordSkippedRun(trigger, reply.error.message);
@@ -138,7 +135,7 @@ export async function collectAndBrief(
     const briefing: Briefing = markedRead ? { ...briefed, markedRead } : briefed;
     useInbox.setState({
       briefing,
-      docs: await listInboxDocs(VIEW_LIMIT),
+      docs: await listInboxDocs(),
       lastRun: (await lastInboxRun()) ?? null,
     });
     return briefing;
@@ -194,7 +191,7 @@ async function refineWithModel(briefing: Briefing, settings: Settings): Promise<
  */
 async function applyReadPolicy(
   briefing: Briefing,
-  via: 'active-tab' | 'work-tab',
+  via: Extract<SWToPanel, { type: 'INBOX_COLLECTED' }>['via'],
   tab: TabSummary | null,
   settings: Settings,
 ): Promise<number> {

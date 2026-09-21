@@ -6,6 +6,7 @@ import { isHtmlAttachmentName } from '@/lib/onnara/attachments';
 import { clearDownloadName, registerDownloadNaming, reserveDownloadName } from '@/lib/downloads/rename';
 import { isReceivedDocumentList, normalizeForMatch, sameDocumentTitle, type StructuredDocumentList } from '@/lib/onnara/document-list';
 import { loadInboxLocation, saveInboxLocation } from '@/lib/inbox/location';
+import { firstInboxPage } from '@/lib/onnara/inbox-pages';
 import { isWorkTabBusy, runExclusive } from '@/lib/browser/sw-lock';
 import { fitToBudget } from '@/lib/extract/budget';
 import { pdfText, withPdfSections } from '@/lib/extract/pdf-offscreen';
@@ -917,18 +918,16 @@ export function looksLikeLogin(text: string): boolean {
   return /로그인|인증서|세션이\s*만료|다시\s*로그인|sign\s*in|gpki/i.test(text.slice(0, 2000));
 }
 
-const INBOX_COLLECT_BUDGET_MS = 25_000;
-
 /**
  * 지정해 둔 받은문서 목록을 읽어 온다.
  *
  * ★ **본문을 열지 않는다.** 목록 표만 읽는다 — 그것이 열람 상태를 미열람으로 두는 유일한 방법이다.
- * ★ 사용자가 보던 화면을 바꾸지 않는다. 지금 화면이 이미 받은문서면 그대로 읽고,
- *   아니면 탭을 복제해 백그라운드에서 목록을 복원한 뒤 그 탭을 닫는다.
+ * ★ 로그인된 출처에서 저장한 조회 요청을 재전송하므로 현재 화면과 프레임 구조에 의존하지 않는다.
+ *   첫 페이지부터 마지막 페이지까지 읽고, 전부 성공했을 때만 브리핑에 넘긴다.
  */
 export async function collectInbox(
   hintTabId: number | undefined,
-  budgetTokens: number,
+  _budgetTokens: number,
   control: RequestControl,
 ): Promise<SWToPanel> {
   const saved = await loadInboxLocation();
@@ -949,50 +948,39 @@ export async function collectInbox(
     } };
   }
 
-  const current = await dispatchContent(source.id, { type: 'EXTRACT', budgetTokens, purpose: 'page', control });
-  if (current.type === 'FAILED') return { type: 'ERROR', error: current.error };
-  if (current.type === 'EXTRACTED') {
-    /**
-     * ① 지금 보고 있는 화면이 지정해 둔 그 목록이면 복제하지 않는다. 가장 싸고 가장 덜 침입적이다.
-     *
-     * ★ 여기서는 **이름이 같은지** 따진다. 복원 경로와 달리 이 화면은 사용자가 아무 데나
-     *   열어 둔 것일 수 있어, 표가 있다는 것만으로 받아들이면 문서등록대장을 공유/공람으로
-     *   착각해 브리핑한다.
-     */
-    const seen = current.payload.structuredData;
-    const sameList = seen && normalizeForMatch(seen.listName) === normalizeForMatch(saved.listName);
-    if (seen && (sameList || isReceivedDocumentList(seen))) {
-      return { type: 'INBOX_COLLECTED', list: seen, via: 'active-tab' };
-    }
-    if (!current.payload.structuredData && looksLikeLogin(current.payload.text)) {
-      return { type: 'ERROR', error: {
-        code: 'UNKNOWN',
-        message: '온나라 세션이 만료되어 공유/공람 목록을 읽지 못했습니다.',
-        hint: '온나라에 다시 로그인한 뒤 확인하세요. 로그인은 사용자가 직접 해야 합니다.',
-      } };
-    }
-  }
-
-  // ② 저장해 둔 목록을 백그라운드 작업 탭에서 복원한다.
-  const taskControl: RequestControl = {
-    ...control,
-    deadline: Math.min(control.deadline, Date.now() + INBOX_COLLECT_BUDGET_MS),
-    expectedUrl: undefined,
-  };
-  const duplicate = await duplicateWorkTab(source.id);
-  const workTabId = duplicate?.id;
-  if (typeof workTabId !== 'number') {
-    return { type: 'ERROR', error: { code: 'UNKNOWN', message: '백그라운드 작업 탭을 만들지 못했습니다.' } };
-  }
+  const taskControl = { ...control, expectedUrl: undefined };
   try {
-    await keepBackground(workTabId, source);
-    const list = await waitForDocumentList(workTabId, inboxTarget(saved.listName), budgetTokens, taskControl, saved.location);
-    return { type: 'INBOX_COLLECTED', list: list.structuredData!, via: 'work-tab' };
+    let location: DocumentListLocation | null = firstInboxPage(saved.location);
+    let list: StructuredDocumentList | undefined;
+    const requests = new Set<string>();
+    const pages = new Set<string>();
+    while (location) {
+      assertCurrent(taskControl, '', cancelled.has(control.id));
+      const key = JSON.stringify(location);
+      if (requests.has(key)) throw new Error('같은 목록 페이지가 반복되어 전체 수집을 중단했습니다.');
+      requests.add(key);
+      const page: ContentToSW = await sendToFrame(source.id, 0, { type: 'FETCH_INBOX_PAGE', location, control: taskControl });
+      if (page.type === 'FAILED') return { type: 'ERROR', error: page.error };
+      if (page.type !== 'INBOX_PAGE') throw new Error('공유/공람 목록 조회 응답을 확인할 수 없습니다.');
+      const fingerprint = JSON.stringify(page.list.rows);
+      if (page.list.rows.length && pages.has(fingerprint)) throw new Error('페이지를 바꿔도 같은 문서 목록이 반환되어 전체 수집을 중단했습니다.');
+      pages.add(fingerprint);
+      list ??= { ...page.list, listName: saved.listName, rows: [] };
+      list.rows.push(...page.list.rows);
+      location = page.next;
+    }
+    if (!list) throw new Error('공유/공람 목록을 읽지 못했습니다.');
+    // 열람 정책은 기존처럼 실제 목록을 보고 있는 경우에만 허용한다.
+    // 이 확인이 실패해도 백그라운드 목록 수집 결과는 그대로 사용할 수 있다.
+    if (hintTabId === source.id && (await loadSettings()).briefingReadPolicy === 'mark-read') {
+      const current = await dispatchContent(source.id, { type: 'EXTRACT', budgetTokens: LOCATE_BUDGET_TOKENS, purpose: 'page', control: taskControl });
+      if (current.type === 'EXTRACTED' && isReceivedDocumentList(current.payload.structuredData)) {
+        return { type: 'INBOX_COLLECTED', list, via: 'active-tab' };
+      }
+    }
+    return { type: 'INBOX_COLLECTED', list, via: 'background-request' };
   } catch (error) {
-    return { type: 'ERROR', error: error instanceof ReadFailure ? error.appError : accessError(error) };
-  } finally {
-    await chrome.tabs.remove(workTabId).catch(() => undefined);
-    forgetWorkTab(workTabId);
+    return { type: 'ERROR', error: { code: 'UNKNOWN', message: error instanceof Error ? error.message : String(error) } };
   }
 }
 

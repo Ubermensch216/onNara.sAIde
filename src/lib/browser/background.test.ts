@@ -739,3 +739,47 @@ it('화면에 문서 목록이 없으면 무엇을 해야 하는지 알려 준�
   });
   expect(response).toMatchObject({ type: 'ERROR', error: { message: expect.stringContaining('문서 목록을 찾지 못했습니다') } });
 });
+
+it.each([7, undefined])('공유/공람 화면이 없어도 저장한 조회로 모든 페이지를 수집한다 (tabId=%s)', async hint => {
+  const saved = { location: { url: 'https://onnara.test/frame/inbox', framePath: [1], form: { method: 'post', fields: [['pageIndex', '4'], ['searchKeyword', '예산']] } }, listName: '받은문서' };
+  const sendMessage = vi.fn(async (_id: number, message: { type: string; location: typeof saved.location }) => {
+    expect(message.type).toBe('FETCH_INBOX_PAGE');
+    const page = Number(message.location.form.fields.find(([key]) => key === 'pageIndex')?.[1]);
+    expect(message.location.form.fields).toContainEqual(['searchKeyword', '예산']);
+    return { type: 'INBOX_PAGE', list: { kind: 'onnara-document-list', listName: '받은문서', columns: [],
+      rows: Array.from({ length: page === 3 ? 3 : 10 }, (_, i) => ({ title: `문서 ${(page - 1) * 10 + i}` })) },
+      next: page < 3 ? { ...message.location, form: { ...message.location.form, fields: [['pageIndex', String(page + 1)], ['searchKeyword', '예산']] } } : null };
+  });
+  const update = vi.fn();
+  const duplicate = vi.fn();
+  vi.stubGlobal('chrome', {
+    storage: { local: { get: vi.fn(async () => ({ 'saide.inboxLocation': saved })) } },
+    tabs: { get: vi.fn(async () => ({ id: 7, url: 'https://unrelated.test' })), query: vi.fn(async () => [{ id: 8, url: 'https://onnara.test/calendar' }]), sendMessage, update, duplicate },
+    scripting: { executeScript: vi.fn(async () => []) },
+  });
+  const response = await handlePanelMessage({ type: 'COLLECT_INBOX', ...(hint === undefined ? {} : { tabId: hint }), budgetTokens: 1000,
+    control: { id: crypto.randomUUID(), deadline: Date.now() + 180_000 } });
+  expect(response).toMatchObject({ type: 'INBOX_COLLECTED', via: 'background-request' });
+  if (response.type !== 'INBOX_COLLECTED') throw new Error('수집 실패');
+  expect(response.list.rows).toHaveLength(23);
+  expect(sendMessage).toHaveBeenCalledTimes(3);
+  expect(sendMessage).toHaveBeenCalledWith(8, expect.anything(), { frameId: 0 });
+  expect(update).not.toHaveBeenCalled();
+  expect(duplicate).not.toHaveBeenCalled();
+});
+
+it.each(['failed', 'repeated'] as const)('뒤 페이지가 %s이면 앞의 10건만으로 완료하지 않는다', async failure => {
+  const location = { url: 'https://onnara.test/inbox', framePath: [], form: { method: 'post', fields: [['pageIndex', '1']] } };
+  const list = { kind: 'onnara-document-list', listName: '받은문서', columns: [], rows: [{ title: '문서' }] };
+  const sendMessage = vi.fn()
+    .mockResolvedValueOnce({ type: 'INBOX_PAGE', list, next: { ...location, form: { method: 'post', fields: [['pageIndex', '2']] } } })
+    .mockResolvedValueOnce(failure === 'failed' ? { type: 'FAILED', error: { code: 'UNKNOWN', message: '세션 만료' } } : { type: 'INBOX_PAGE', list, next: null });
+  vi.stubGlobal('chrome', {
+    storage: { local: { get: vi.fn(async () => ({ 'saide.inboxLocation': { location, listName: '받은문서' } })) } },
+    tabs: { query: vi.fn(async () => [{ id: 8, url: 'https://onnara.test/calendar' }]), sendMessage },
+    scripting: { executeScript: vi.fn(async () => []) },
+  });
+  const response = await handlePanelMessage({ type: 'COLLECT_INBOX', budgetTokens: 1000, control: { id: crypto.randomUUID(), deadline: Date.now() + 180_000 } });
+  expect(response.type).toBe('ERROR');
+  expect(sendMessage).toHaveBeenCalledTimes(2);
+});

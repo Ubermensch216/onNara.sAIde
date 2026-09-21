@@ -139,3 +139,15 @@ it('급한 것부터 실어 보내고, 빈 갈래는 만들지 않는다', () =>
   expect(briefing.groups[0]!.docs.map(doc => doc.dueDate)).toEqual(['2026-09-21', '2026-09-25']);
   expect(briefing.readState.changed).toBe(0);
 });
+
+it('전체 목록의 200건 이후도 분류하고 마지막 페이지의 키워드 일치 문서도 브리핑한다', () => {
+  const list = { kind: 'onnara-document-list' as const, listName: '받은문서', columns: [],
+    rows: Array.from({ length: 525 }, (_, i) => ({ title: i === 524 ? '예산 편성 지침' : `일반 문서 ${i}`, reportDate: '2026-09-21' })) };
+  const rows = toInboxRows(list);
+  expect(rows).toHaveLength(525);
+  expect(planBriefing(rows, [], options()).briefed).toHaveLength(525);
+  const scoped = planBriefing(rows, [], options({ scope: { scope: 'keywords', keywords: ['예산'], exclude: [], fields: ['title'] } }));
+  expect(scoped.scanned).toBe(525);
+  expect(scoped.filtered).toBe(524);
+  expect(scoped.briefed.map(doc => doc.title)).toEqual(['예산 편성 지침']);
+});

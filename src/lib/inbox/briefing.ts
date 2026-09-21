@@ -19,9 +19,6 @@ import { inboxDocKey, inboxGroupKey, normalizeReportDate, trimEllipsis } from '.
 import { matchScope, type InboxScope } from './scope';
 import type { InboxCategory, InboxDoc, InboxRow, InboxTrigger } from './types';
 
-/** 한 번에 다룰 행 수 상한. 추출기 자체의 상한(500행)보다 앞에서 끊는다. */
-export const MAX_INBOX_ROWS = 200;
-
 /* ── 목록 표 → 행 ──────────────────────────────────────── */
 
 /**
@@ -35,7 +32,7 @@ function readAttachment(value: string | undefined): boolean {
   return Boolean(text) && text !== '0' && text !== '-';
 }
 
-export function toInboxRows(list: StructuredDocumentList, limit = MAX_INBOX_ROWS): InboxRow[] {
+export function toInboxRows(list: StructuredDocumentList, limit = Infinity): InboxRow[] {
   const rows: InboxRow[] = [];
   for (const row of list.rows) {
     const title = trimEllipsis(row.title ?? '');

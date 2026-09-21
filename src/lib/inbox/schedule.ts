@@ -35,7 +35,7 @@ export const OPEN_INBOX_KEY = 'saide.openInbox';
 /** 주기를 따로 정하지 않았을 때 워커를 깨우는 간격. 하루 한 번 모드의 확인 간격이기도 하다. */
 const CHECK_MINUTES = 60;
 /** 알람이 깨운 수집에 주는 마감. 사용자의 요청이 이 뒤에서 오래 기다리지 않게 묶어 둔다. */
-const ALARM_BUDGET_MS = 45_000;
+const ALARM_BUDGET_MS = 180_000;
 /** 알림을 눌러 연 것으로 볼 시간. 그보다 오래된 표시는 무시한다. */
 const OPEN_INBOX_TTL_MS = 60_000;
 

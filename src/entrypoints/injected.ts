@@ -18,6 +18,7 @@ import { requiresApproval, type RequestControl } from '@/lib/messaging/protocol'
 import { Readability } from '@mozilla/readability';
 import { clickAttachment, listAttachments, scanAttachments } from '@/lib/onnara/attachments';
 import { captureDocumentListLocation, captureListLocation, restoreDocumentListLocation } from '@/lib/onnara/document-navigation';
+import { fetchInboxPage } from '@/lib/onnara/inbox-pages';
 import { fitToBudget } from '@/lib/extract/budget';
 import { collectDocumentText } from '@/lib/extract/document-text';
 import { findPdfUrls, readPdfSources } from '@/lib/extract/pdf-source';
@@ -119,6 +120,10 @@ export default defineUnlistedScript(() => {
                   hint: '온나라 공유/공람 > 받은문서 목록이 화면에 보이는 상태에서 다시 지정하세요.',
                 },
               } satisfies ContentToSW);
+        } else if (msg.type === 'FETCH_INBOX_PAGE') {
+          const page = await fetchInboxPage(msg.location, AbortSignal.timeout(Math.max(1, Math.min(7500, msg.control.deadline - Date.now()))));
+          assertCurrent(msg.control, location.href, cancelled.has(msg.control.id));
+          sendResponse({ type: 'INBOX_PAGE', ...page } satisfies ContentToSW);
         } else if (msg.type === 'SCAN_ATTACHMENTS') {
           sendResponse({ type: 'ATTACHMENTS_FOUND', items: listAttachments() } satisfies ContentToSW);
         } else if (msg.type === 'CLICK_ATTACHMENT') {

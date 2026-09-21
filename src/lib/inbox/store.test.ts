@@ -106,3 +106,9 @@ it('넘긴 표시를 되돌리면 그 자리가 실제로 비워진다', async (
   expect(stored.dismissedAt).toBeUndefined();
   expect(stored.openedAt).toBeUndefined();
 });
+
+it('저장된 문서가 500건을 넘어도 화면에 전체를 돌려준다', async () => {
+  await saveInboxDocs(Array.from({ length: 525 }, (_, i) => doc({ title: `문서 ${i}` })));
+  expect(await listInboxDocs()).toHaveLength(525);
+  expect(await listInboxDocs(10)).toHaveLength(10);
+});

@@ -74,9 +74,10 @@ export async function unmarkBriefed(keys: string[]): Promise<void> {
   } catch { /* 저장소 없음 */ }
 }
 
-export async function listInboxDocs(limit = 500): Promise<InboxDoc[]> {
+export async function listInboxDocs(limit?: number): Promise<InboxDoc[]> {
   try {
-    return await db.inboxDocs.orderBy('firstSeenAt').reverse().limit(limit).toArray();
+    const docs = db.inboxDocs.orderBy('firstSeenAt').reverse();
+    return await (limit === undefined ? docs : docs.limit(limit)).toArray();
   } catch {
     return [];
   }
