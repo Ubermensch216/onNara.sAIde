@@ -1,6 +1,6 @@
 # onNara.sAIde 최종 구축 계획서
 
-작성: 2026-09-17 · 갱신: 2026-09-21 · 상태: 구축 진행 중 (0~2단계 완료, 3단계 핵심 MVP 완료, 진단 보완 B1~B5·B9 및 N1 공유/공람 브리핑 완료 · 73파일 831개 테스트 통과) · 대상 브라우저: Microsoft Edge (Chromium MV3)
+작성: 2026-09-17 · 갱신: 2026-09-22 · 상태: 구축 진행 중 (0~2단계 완료, 3단계 핵심 MVP 완료, 진단 보완 B1~B5·B9, N1 공유/공람 브리핑, 데이터 백업·복원 및 본문 다운로드 완료 · 78파일 885개 테스트 통과) · 대상 브라우저: Microsoft Edge (Chromium MV3)
 현재 구현 사실은 [구현 현황](../docs/IMPLEMENTATION_STATUS.md)이 기준이다. 이 계획서의 단계표는 목표를 담는다.
 근거 자료: [참조 프로젝트 분석 및 서비스 제안](../docs/reference-analysis-and-ideas.md) · 현황: [구현 현황](../docs/IMPLEMENTATION_STATUS.md)
 

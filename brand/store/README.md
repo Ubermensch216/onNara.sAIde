@@ -1,6 +1,6 @@
 # 웹스토어 및 마켓플레이스 등록 준비 자산
 
-기준일: **2026-09-21**. 이 디렉터리는 Microsoft Edge Add-ons 및 Chrome 웹스토어 등록을 위해 준비된 홍보 및 메타데이터 자산이며, 확장 프로그램 빌드 번들(`.output/edge-mv3`)에는 포함되지 않습니다.
+기준일: **2026-09-22**. 이 디렉터리는 Microsoft Edge Add-ons 및 Chrome 웹스토어 등록을 위해 준비된 홍보 및 메타데이터 자산이며, 확장 프로그램 빌드 번들(`.output/edge-mv3`)에는 포함되지 않습니다.
 
 ---
 
@@ -46,8 +46,11 @@
 * **핵심 기능:**
   * **공문 핵심 요약 및 조치사항 도출**: 수신된 공문의 요지, 세부 할 일, 제출물, 제출 기한을 원문과 대조하여 한눈에 정리합니다.
   * **원문 대조 검증**: AI의 환각을 방지하기 위해 추출된 기한과 근거 문장을 원문과 실시간 대조하여 표시합니다.
-  * **첨부파일 일괄 다운로드**: 체크한 문서의 첨부파일을 백그라운드에서 안전하게 순차적으로 내려받습니다.
+  * **아침 공유/공람 브리핑 (미열람 유지)**: 받은문서 목록을 훑어 기한 임박, 내 업무, 단순 공람으로 자동 분류합니다 (본문을 열지 않아 미열람 유지).
+  * **공문 본문 및 첨부파일 일괄 다운로드**: 체크한 공문의 본문(HTML/PDF)과 첨부파일을 백그라운드에서 안전하게 일괄 내려받습니다.
+  * **일정 및 기한 관리**: 공문에서 도출된 조치사항과 마감 기한을 개인 D-day 보드로 관리하고 데스크톱 알림을 수신합니다.
   * **공문 비교 및 교정**: 여러 공문의 변경 사항과 연관성을 한 화면에서 비교 분석합니다.
+  * **로컬 데이터 백업 및 복원**: 일정, 대화, 브리핑 기록, 프리셋을 JSON 파일로 안전하게 보관하고 복원합니다.
   * **철저한 로컬 보안**: 내 PC의 Ollama 모델(Gemma 4 등)을 기본 활용하여 공문 본문이 외부로 유출되지 않습니다.
   * **안전한 조작 승인**: 브라우저 조작이 필요한 경우 사전에 사용자 승인을 받습니다.
 
@@ -62,8 +65,11 @@ onNara.sAIde is a Microsoft Edge extension designed to help administrative perso
 * **Key Features:**
   * **Action Cards & Summary**: Extracts summaries, to-do items, required deliverables, and deadlines from official documents.
   * **Source Verification**: Verifies extracted deadlines and sentences against the original document text to prevent hallucinations.
-  * **Sequential Attachment Downloads**: Safely downloads document attachments in the background without manual clicks.
+  * **Inbox Briefing (Unread Preservation)**: Automatically categorizes incoming documents without opening them, preserving unread status.
+  * **Batch Body & Attachment Downloads**: Safely downloads document bodies (HTML/PDF) and attachments in the background.
+  * **Schedule & Deadline Tracking**: Converts actions and deadlines into D-day boards with desktop notifications.
   * **Document Comparison**: Compares multiple notices or guidelines side-by-side.
+  * **Local Data Backup & Restore**: Exports and imports sessions, tasks, and inbox records locally.
   * **Local-First Privacy**: Runs inference locally via Ollama (e.g., Gemma 4), keeping sensitive document content on your PC.
   * **Approval-Gated Safety**: Every browser interaction requires explicit user confirmation.
 
@@ -77,7 +83,15 @@ onNara.sAIde is a Microsoft Edge extension designed to help administrative perso
 | `activeTab` | 사용자가 온나라 화면에서 확장을 호출할 때 현재 탭 접근 허용 |
 | `scripting` | 온나라 문서 목록 및 본문 DOM 구조화를 위한 스크립트 실행 |
 | `storage` | 사용자 환경설정, 프리셋, 세션 문맥 경계 정보의 로컬 보관 |
-| `downloads` | 공문 첨부파일의 백그라운드 순차 다운로드 및 다운로드 상태 감시 |
+| `unlimitedStorage` | 브라우저 공용 할당량 축출로부터 대용량 일정, 대화, 브리핑 원장 및 백업 데이터 보호 |
+| `downloads` | 공문 첨부파일 및 본문 파일의 백그라운드 순차 다운로드 및 상태 감시 |
+| `downloads.open` | 다운로드 완료된 공문 파일/폴더를 사용자 PC 기본 프로그램으로 즉시 열람 |
 | `offscreen` | PDF 뷰어로 렌더링된 공문에서 텍스트 레이어를 안전하게 파싱 (`PDF.js`) |
-| `host_permissions` (`http://localhost:11434/*`) | 로컬 Ollama AI 데몬과의 안전한 로컬 통신 |
+| `alarms` | 패널이 닫혀 있어도 하루 한 번 기한 알림 및 주기적 공유/공람 브리핑을 실행하기 위한 타이머 |
+| `notifications` | 지난 기한/오늘 기한 및 브리핑 새 문서 발생 알림 제공 |
+| `contextMenus` | 웹페이지 선택 텍스트 우클릭 메뉴를 통한 프리셋 프롬프트 실행 |
+| `tabs` | 백그라운드 공문 수집 탭 및 옵션 탭 관리 |
+| `webNavigation` | 온나라 내부 프레임 탐색 및 페이지 전환 감지 |
+| `host_permissions` (`http://localhost:11434/*`, `http://127.0.0.1:11434/*`) | 로컬 Ollama AI 데몬과의 안전한 로컬 통신 |
 | `optional_host_permissions` (`<all_urls>`) | 온나라 전용 뷰어 등 서로 다른 출처의 프레임에 대해 사용자가 승인한 경우에만 동적 요청 |
+
