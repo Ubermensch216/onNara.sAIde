@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { directInsertAtTarget, getElementLabel, isEditableElement } from '@/lib/onnara/draft-editor';
+import {
+  directInsertAtTarget,
+  getElementLabel,
+  isEditableElement,
+  isHwpElementOrContainer,
+  cleanupAccidentalContentEditable,
+  tryApplyHwpCtrl,
+} from '@/lib/onnara/draft-editor';
 
 describe('온나라 타깃 지정 초안 직접 삽입 (directInsertAtTarget)', () => {
   beforeEach(() => {
@@ -35,6 +42,27 @@ describe('온나라 타깃 지정 초안 직접 삽입 (directInsertAtTarget)', 
       const hwp = document.createElement('object');
       hwp.id = 'HwpCtrl';
       expect(isEditableElement(hwp)).toBe(true);
+      expect(isHwpElementOrContainer(hwp)).toBe(true);
+    });
+  });
+
+  describe('cleanupAccidentalContentEditable', () => {
+    it('우발적으로 레이아웃 div에 걸린 contenteditable 속성을 안전하게 제거한다', () => {
+      const outerLayout = document.createElement('div');
+      outerLayout.id = 'hwpWrapperLayout';
+      outerLayout.setAttribute('contenteditable', 'true');
+      document.body.appendChild(outerLayout);
+
+      const realEditor = document.createElement('div');
+      realEditor.id = 'mainWebEditor';
+      realEditor.className = 'editor-area';
+      realEditor.setAttribute('contenteditable', 'true');
+      document.body.appendChild(realEditor);
+
+      cleanupAccidentalContentEditable(document);
+
+      expect(outerLayout.getAttribute('contenteditable')).toBeNull();
+      expect(realEditor.getAttribute('contenteditable')).toBe('true');
     });
   });
 
@@ -53,6 +81,12 @@ describe('온나라 타깃 지정 초안 직접 삽입 (directInsertAtTarget)', 
       div.setAttribute('contenteditable', 'true');
       div.setAttribute('aria-label', '기안문 본문');
       expect(getElementLabel(div)).toBe('기안문 본문');
+    });
+
+    it('WebHWP 관련 요소는 한글 기안기 본문 라벨을 반환한다', () => {
+      const hwpDiv = document.createElement('div');
+      hwpDiv.id = 'hwpArea';
+      expect(getElementLabel(hwpDiv)).toBe('한글 기안기 본문');
     });
   });
 
@@ -105,37 +139,110 @@ describe('온나라 타깃 지정 초안 직접 삽입 (directInsertAtTarget)', 
   });
 
   describe('directInsertAtTarget with General DOM Container (div, td)', () => {
-    it('일반 div 컨테이너를 클릭해도 복사로 포기하지 않고 텍스트를 직접 삽입한다', async () => {
+    it('일반 div 클릭 시 외곽에 contenteditable을 강제로 부여하지 않고 안전하게 클립보드 폴백한다', async () => {
       const bodyBox = document.createElement('div');
       bodyBox.id = 'divBodyContent';
       document.body.appendChild(bodyBox);
 
       const res = await directInsertAtTarget(bodyBox, '공문서 본문 텍스트', undefined, undefined, document);
 
-      expect(res.status).toBe('applied');
-      expect(bodyBox.innerText).toContain('공문서 본문 텍스트');
-      expect(bodyBox.getAttribute('contenteditable')).toBe('true');
+      // 외곽 div에 contenteditable이 붙지 않아야 함! (중요)
+      expect(bodyBox.getAttribute('contenteditable')).toBeNull();
+      expect(res.status).toBe('clipboard-fallback');
+      expect(res.message).toContain('Ctrl+V');
     });
   });
 
-  describe('directInsertAtTarget with WebHWP HwpCtrl', () => {
-    it('윈도우에 WebHWP 컨트롤(HwpCtrl)이 있으면 InsertText를 직접 호출한다', async () => {
-      let insertedHwpText = '';
+  describe('WebHWP tryApplyHwpCtrl', () => {
+    it('온나라 기안기 누름틀(Field) "본문"이 존재하면 MoveToField 후 InsertText를 우선 호출한다', () => {
+      const calls: string[] = [];
       const mockHwp = {
-        InsertText: vi.fn((txt: string) => {
-          insertedHwpText = txt;
+        FieldExist: vi.fn((name: string) => name === '본문'),
+        MoveToField: vi.fn((name: string) => {
+          calls.push(`MoveToField:${name}`);
         }),
+        InsertText: vi.fn((text: string) => {
+          calls.push(`InsertText:${text}`);
+        }),
+      };
+
+      const res = tryApplyHwpCtrl(mockHwp, '초안 본문');
+      expect(res.success).toBe(true);
+      expect(res.fieldName).toBe('본문');
+      expect(mockHwp.MoveToField).toHaveBeenCalledWith('본문', true, true, true);
+      expect(mockHwp.InsertText).toHaveBeenCalledWith('초안 본문');
+    });
+
+    it('MoveToField가 없고 PutFieldText만 지원할 때 PutFieldText를 호출한다', () => {
+      const mockHwp = {
+        FieldExist: vi.fn((name: string) => name === '본문'),
+        PutFieldText: vi.fn(),
+      };
+
+      const res = tryApplyHwpCtrl(mockHwp, '초안 본문');
+      expect(res.success).toBe(true);
+      expect(mockHwp.PutFieldText).toHaveBeenCalledWith('본문', '초안 본문');
+    });
+
+    it('누름틀 필드가 없으면 현재 위치의 InsertText를 호출한다', () => {
+      const mockHwp = {
+        FieldExist: vi.fn(() => false),
+        InsertText: vi.fn(),
+      };
+
+      const res = tryApplyHwpCtrl(mockHwp, '커서 위치 초안');
+      expect(res.success).toBe(true);
+      expect(mockHwp.InsertText).toHaveBeenCalledWith('커서 위치 초안');
+    });
+
+    it('InsertText 메서드가 없고 CreateAction 방식일 때 액션을 실행한다', () => {
+      const mockSet = { SetItem: vi.fn() };
+      const mockAct = {
+        CreateSet: vi.fn(() => mockSet),
+        Execute: vi.fn(),
+      };
+      const mockHwp = {
+        FieldExist: vi.fn(() => false),
+        CreateAction: vi.fn(() => mockAct),
+      };
+
+      const res = tryApplyHwpCtrl(mockHwp, '액션 삽입 텍스트');
+      expect(res.success).toBe(true);
+      expect(mockAct.CreateSet).toHaveBeenCalled();
+      expect(mockSet.SetItem).toHaveBeenCalledWith('Text', '액션 삽입 텍스트');
+      expect(mockAct.Execute).toHaveBeenCalledWith(mockSet);
+    });
+
+    it('직접 삽입 메서드가 없을 때 Run("Paste")를 실행한다', () => {
+      const mockHwp = {
+        FieldExist: vi.fn(() => false),
+        Run: vi.fn(),
+      };
+
+      const res = tryApplyHwpCtrl(mockHwp, '붙여넣기 텍스트');
+      expect(res.success).toBe(true);
+      expect(mockHwp.Run).toHaveBeenCalledWith('Paste');
+    });
+  });
+
+  describe('directInsertAtTarget with WebHWP HwpCtrl in Window', () => {
+    it('윈도우에 WebHWP 컨트롤(HwpCtrl)이 있으면 누름틀 또는 InsertText를 실행한다', async () => {
+      const mockHwp = {
+        FieldExist: vi.fn((name: string) => name === '본문'),
+        MoveToField: vi.fn(),
+        InsertText: vi.fn(),
       };
       (window as any).HwpCtrl = mockHwp;
 
       const dummyEl = document.createElement('div');
+      dummyEl.id = 'hwpArea';
       document.body.appendChild(dummyEl);
 
       const res = await directInsertAtTarget(dummyEl, '한글 기안문 본문 초안', undefined, undefined, document);
 
       expect(res.status).toBe('applied');
+      expect(mockHwp.MoveToField).toHaveBeenCalledWith('본문', true, true, true);
       expect(mockHwp.InsertText).toHaveBeenCalledWith('한글 기안문 본문 초안');
-      expect(insertedHwpText).toBe('한글 기안문 본문 초안');
 
       delete (window as any).HwpCtrl;
     });

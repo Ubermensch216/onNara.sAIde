@@ -6,7 +6,7 @@
  */
 
 import { captureDraftContext } from '@/lib/onnara/draft-context';
-import { resolveEditorAdapter, directInsertAtTarget } from '@/lib/onnara/draft-editor';
+import { resolveEditorAdapter, directInsertAtTarget, cleanupAccidentalContentEditable } from '@/lib/onnara/draft-editor';
 import { DraftTransactionController } from '@/lib/onnara/draft-controller';
 import { findWriteBodyButton } from '@/lib/onnara/draft-route';
 
@@ -386,14 +386,14 @@ export default defineUnlistedScript(() => {
       // ignore
     }
 
-    // 클릭한 위치에 100% 직접 삽입 실행 (WebHWP/DOM/Caret)
+    // 클릭한 위치에 직접 삽입 실행 (WebHWP/DOM/Caret)
     const res = await directInsertAtTarget(targetEl, textToInsert, clickX, clickY, targetEl.ownerDocument || document);
-    showToast(res.message, 3000);
+    showToast(res.message, 3500);
 
     iframe.contentWindow?.postMessage(
       {
         type: 'SAIDE_TARGET_INSERT_RESULT',
-        status: 'applied',
+        status: res.status,
         message: res.message,
       },
       '*'
@@ -418,6 +418,9 @@ export default defineUnlistedScript(() => {
   }
 
   function startTargetPicker(text: string) {
+    // 이전에 우발적으로 레이아웃 div에 걸렸을 수 있는 contenteditable 정리
+    cleanupAccidentalContentEditable(document);
+
     isPickingTarget = true;
     pendingInsertText = text;
     targetBanner.classList.add('active');
@@ -425,6 +428,7 @@ export default defineUnlistedScript(() => {
     // 기안기 문서들에 캡처 리스너 등록
     const docs = getAccessibleDocuments(document);
     for (const doc of docs) {
+      cleanupAccidentalContentEditable(doc);
       doc.addEventListener('pointermove', handlePickerPointerMove as any, true);
       doc.addEventListener('click', handlePickerClick, true);
       doc.addEventListener('keydown', handlePickerKeydown, true);

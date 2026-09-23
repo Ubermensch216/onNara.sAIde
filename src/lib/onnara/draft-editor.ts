@@ -297,17 +297,47 @@ export function isEditableElement(el: HTMLElement | null): boolean {
     return true;
   }
   // 온나라 WebHWP 컨트롤 / 한컴 기안기 탐지
+  return isHwpElementOrContainer(el);
+}
+
+/** 요소 또는 상위/하위가 한컴 WebHWP 관련 요소인지 검사 */
+export function isHwpElementOrContainer(el: HTMLElement | null): boolean {
+  if (!el) return false;
+  const tag = el.tagName.toUpperCase();
+  if (tag === 'OBJECT' || tag === 'EMBED' || tag === 'CANVAS') return true;
   const id = (el.id || '').toLowerCase();
-  const className = (typeof el.className === 'string' ? el.className : '').toLowerCase();
+  const cls = (typeof el.className === 'string' ? el.className : '').toLowerCase();
   if (
     id.includes('hwp') ||
-    className.includes('hwp') ||
-    el.tagName === 'OBJECT' ||
-    el.tagName === 'EMBED'
+    id.includes('tbcontent') ||
+    cls.includes('hwp') ||
+    cls.includes('tbcontent') ||
+    cls.includes('webhwp')
   ) {
     return true;
   }
   return false;
+}
+
+/**
+ * 이전에 사용자의 클릭 등으로 외곽 레이아웃 div에 우발적으로 부여된 contenteditable 속성 복구
+ */
+export function cleanupAccidentalContentEditable(doc: Document = document): void {
+  try {
+    const editables = Array.from(doc.querySelectorAll<HTMLElement>('[contenteditable="true"]'));
+    for (const el of editables) {
+      const tag = el.tagName.toUpperCase();
+      if (tag === 'DIV' || tag === 'TD' || tag === 'BODY' || tag === 'SPAN') {
+        const id = (el.id || '').toLowerCase();
+        const cls = (typeof el.className === 'string' ? el.className : '').toLowerCase();
+        if (!id.includes('editor') && !cls.includes('editor')) {
+          el.removeAttribute('contenteditable');
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
 }
 
 /** 요소의 식별 레이블(설명) 생성 - 불필요한 DOM ID 대신 친절한 명칭 반환 */
@@ -327,23 +357,16 @@ export function getElementLabel(el: HTMLElement): string {
     const iframe = el as HTMLIFrameElement;
     return iframe.title || '본문 프레임';
   }
-  const id = (el.id || '').toLowerCase();
-  if (id.includes('hwp') || el.tagName === 'OBJECT' || el.tagName === 'EMBED') {
+  if (isHwpElementOrContainer(el)) {
     return '한글 기안기 본문';
   }
   return '본문 영역';
 }
 
 /**
- * 특정 타깃 요소 또는 커서 위치에 초안 텍스트를 직접 삽입.
- * 1. WebHWP 컨트롤(HwpCtrl.InsertText) 감지 및 직접 삽입 시도
- * 2. textarea / input / contenteditable 직접 주입
- * 3. 직접 주입이 차단된 경우 클립보드 복사 + 포커스 + 붙여넣기 유도
- */
-/**
  * 윈도우 및 모든 중첩 iframe에서 WebHWP(한글 기안기) 컨트롤 객체 탐색
  */
-function findHwpCtrlInAllWindows(startWin: Window): any {
+export function findHwpCtrlInAllWindows(startWin: Window): any {
   const queue: Window[] = [];
   const visited = new Set<Window>();
   try {
@@ -360,10 +383,32 @@ function findHwpCtrlInAllWindows(startWin: Window): any {
     visited.add(w);
 
     try {
-      const h = (w as any).HwpCtrl || (w as any).pHwpCtrl || (w as any).tbContentElement;
-      if (h && typeof h.InsertText === 'function') return h;
-      const el = w.document?.getElementById('HwpCtrl');
-      if (el && typeof (el as any).InsertText === 'function') return el;
+      const candidates = [
+        (w as any).HwpCtrl,
+        (w as any).pHwpCtrl,
+        (w as any).tbContentElement,
+        (w as any).vHwpCtrl,
+        (w as any).hwpCtrl,
+        (w as any).hwp_ctrl,
+        (w as any).hwpDoc,
+        (w as any).WebHwpCtrl,
+        (w as any).HwpObject,
+        w.document?.getElementById('HwpCtrl'),
+        w.document?.getElementById('hwpCtrl'),
+        w.document?.getElementById('tbContentElement'),
+      ];
+
+      for (const h of candidates) {
+        if (
+          h &&
+          (typeof h.PutFieldText === 'function' ||
+            typeof h.InsertText === 'function' ||
+            typeof h.Run === 'function' ||
+            typeof h.CreateAction === 'function')
+        ) {
+          return h;
+        }
+      }
 
       const frames = Array.from(w.document?.querySelectorAll('iframe') || []);
       for (const f of frames) {
@@ -381,8 +426,280 @@ function findHwpCtrlInAllWindows(startWin: Window): any {
 }
 
 /**
- * 사용자가 클릭한 위치(요소)에 100% 확실하게 텍스트를 직접 삽입하는 엔진.
- * 복사만 하고 포기하는 폴백 없이, WebHWP/에디터/일반 DOM 어디든 즉시 텍스트를 주입한다.
+ * WebHWP 객체에 누름틀(Field) -> 커서 직접 입력 -> Action -> Paste 순서로 삽입 시도
+ */
+export function tryApplyHwpCtrl(
+  hwp: any,
+  text: string
+): { success: boolean; method?: string; fieldName?: string } {
+  if (!hwp) return { success: false };
+
+  // 1. 누름틀(Field) 방식 시도 (온나라 기안기 본문 누름틀 '본문' 최우선)
+  const fieldCandidates = ['본문', 'body', 'BODY', 'content', '기안문본문', '기안문_본문', '내용', '본문내용'];
+  for (const fn of fieldCandidates) {
+    try {
+      const exists = typeof hwp.FieldExist === 'function' ? Boolean(hwp.FieldExist(fn)) : true;
+      if (exists) {
+        if (typeof hwp.MoveToField === 'function') {
+          hwp.MoveToField(fn, true, true, true);
+          if (typeof hwp.InsertText === 'function') {
+            hwp.InsertText(text);
+            return { success: true, method: 'MoveToField+InsertText', fieldName: fn };
+          }
+          if (typeof hwp.Run === 'function') {
+            hwp.Run('Paste');
+            return { success: true, method: 'MoveToField+RunPaste', fieldName: fn };
+          }
+        }
+        if (typeof hwp.PutFieldText === 'function') {
+          hwp.PutFieldText(fn, text);
+          return { success: true, method: 'PutFieldText', fieldName: fn };
+        }
+      }
+    } catch {
+      // 다음 후보 시도
+    }
+  }
+
+  // 2. 현재 커서 위치 InsertText
+  if (typeof hwp.InsertText === 'function') {
+    hwp.InsertText(text);
+    return { success: true, method: 'InsertText' };
+  }
+
+  // 3. CreateAction 방식
+  if (typeof hwp.CreateAction === 'function') {
+    try {
+      const act = hwp.CreateAction('InsertText');
+      if (act && typeof act.CreateSet === 'function') {
+        const set = act.CreateSet();
+        if (set && typeof set.SetItem === 'function') {
+          set.SetItem('Text', text);
+          act.Execute(set);
+          return { success: true, method: 'CreateAction' };
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  // 4. Run("Paste")
+  if (typeof hwp.Run === 'function') {
+    hwp.Run('Paste');
+    return { success: true, method: 'RunPaste' };
+  }
+
+  return { success: false };
+}
+
+/**
+ * 웹페이지 메인 월드(Main World) 컨텍스트에서 한컴 웹기안기(WebHWP) API를 탐색하여 초안을 삽입한다.
+ */
+export async function insertViaMainWorldHwp(
+  text: string,
+  doc: Document = document
+): Promise<{ success: boolean; method?: string; fieldName?: string; error?: string }> {
+  const win = doc.defaultView || (typeof window !== 'undefined' ? window : null);
+  if (!win) return { success: false, error: 'NO_WINDOW' };
+
+  // 1. 현재 윈도우 스코프(또는 jsdom 테스트 환경)에서 이미 HwpCtrl 객체에 접근 가능한 경우
+  try {
+    const directHwp = findHwpCtrlInAllWindows(win);
+    if (directHwp) {
+      const res = tryApplyHwpCtrl(directHwp, text);
+      if (res.success) return res;
+    }
+  } catch {
+    // ignore
+  }
+
+  // 2. 브라우저 실제 환경: 메인 월드(Main World)에 스크립트를 주입하여 HwpCtrl 전역 객체 제어
+  if (typeof doc.createElement !== 'function') {
+    return { success: false, error: 'NO_DOM' };
+  }
+
+  return new Promise(resolve => {
+    const eventId = 'SAIDE_HWP_INJECT_' + Math.random().toString(36).substring(2, 9);
+    let resolved = false;
+
+    const cleanup = () => {
+      if (typeof win.removeEventListener === 'function') {
+        win.removeEventListener(eventId, onResponse as any);
+      }
+    };
+
+    const onResponse = (e: CustomEvent) => {
+      if (resolved) return;
+      resolved = true;
+      cleanup();
+      resolve(e.detail || { success: false });
+    };
+
+    if (typeof win.addEventListener === 'function') {
+      win.addEventListener(eventId, onResponse as any);
+    }
+
+    // 1.2초 타임아웃
+    const timer = setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        cleanup();
+        resolve({ success: false, error: 'TIMEOUT' });
+      }
+    }, 1200);
+
+    try {
+      const script = doc.createElement('script');
+      script.textContent = `
+        (function() {
+          var evtName = ${JSON.stringify(eventId)};
+          var draft = ${JSON.stringify(text)};
+
+          function send(data) {
+            try {
+              window.dispatchEvent(new CustomEvent(evtName, { detail: data }));
+            } catch (e) {}
+          }
+
+          try {
+            function findHwp() {
+              var wins = [window];
+              try {
+                if (window.top && window.top !== window) wins.push(window.top);
+                if (window.parent && window.parent !== window) wins.push(window.parent);
+              } catch (e) {}
+
+              try {
+                var ifrs = document.querySelectorAll('iframe');
+                for (var i = 0; i < ifrs.length; i++) {
+                  try {
+                    if (ifrs[i].contentWindow) wins.push(ifrs[i].contentWindow);
+                  } catch (e) {}
+                }
+              } catch (e) {}
+
+              for (var j = 0; j < wins.length; j++) {
+                var w = wins[j];
+                try {
+                  var list = [
+                    w.HwpCtrl,
+                    w.pHwpCtrl,
+                    w.tbContentElement,
+                    w.vHwpCtrl,
+                    w.hwpCtrl,
+                    w.hwp_ctrl,
+                    w.hwpDoc,
+                    w.WebHwpCtrl,
+                    w.HwpObject,
+                    w.document && w.document.getElementById('HwpCtrl'),
+                    w.document && w.document.getElementById('hwpCtrl'),
+                    w.document && w.document.getElementById('tbContentElement')
+                  ];
+                  for (var k = 0; k < list.length; k++) {
+                    var c = list[k];
+                    if (c && (typeof c.PutFieldText === 'function' || typeof c.InsertText === 'function' || typeof c.Run === 'function' || typeof c.CreateAction === 'function')) {
+                      return c;
+                    }
+                  }
+                } catch (e) {}
+              }
+              return null;
+            }
+
+            var h = findHwp();
+            if (!h) {
+              send({ success: false, error: 'NO_HWP' });
+              return;
+            }
+
+            // A. 누름틀(Field) 방식 시도
+            var fields = ['본문', 'body', 'BODY', 'content', '기안문본문', '기안문_본문', '내용', '본문내용'];
+            for (var f = 0; f < fields.length; f++) {
+              var fn = fields[f];
+              try {
+                var exist = false;
+                if (typeof h.FieldExist === 'function') {
+                  exist = Boolean(h.FieldExist(fn));
+                } else {
+                  exist = true;
+                }
+                if (exist) {
+                  if (typeof h.MoveToField === 'function') {
+                    h.MoveToField(fn, true, true, true);
+                    if (typeof h.InsertText === 'function') {
+                      h.InsertText(draft);
+                      send({ success: true, method: 'MoveToField+InsertText', fieldName: fn });
+                      return;
+                    } else if (typeof h.Run === 'function') {
+                      h.Run('Paste');
+                      send({ success: true, method: 'MoveToField+RunPaste', fieldName: fn });
+                      return;
+                    }
+                  }
+                  if (typeof h.PutFieldText === 'function') {
+                    h.PutFieldText(fn, draft);
+                    send({ success: true, method: 'PutFieldText', fieldName: fn });
+                    return;
+                  }
+                }
+              } catch (e) {}
+            }
+
+            // B. 커서 위치 직접 입력
+            if (typeof h.InsertText === 'function') {
+              h.InsertText(draft);
+              send({ success: true, method: 'InsertText' });
+              return;
+            }
+
+            // C. CreateAction('InsertText')
+            if (typeof h.CreateAction === 'function') {
+              try {
+                var act = h.CreateAction('InsertText');
+                if (act && typeof act.CreateSet === 'function') {
+                  var st = act.CreateSet();
+                  if (st && typeof st.SetItem === 'function') {
+                    st.SetItem('Text', draft);
+                    act.Execute(st);
+                    send({ success: true, method: 'CreateAction' });
+                    return;
+                  }
+                }
+              } catch (e) {}
+            }
+
+            // D. Run('Paste')
+            if (typeof h.Run === 'function') {
+              h.Run('Paste');
+              send({ success: true, method: 'RunPaste' });
+              return;
+            }
+
+            send({ success: false, error: 'NO_VALID_HWP_METHOD' });
+          } catch (err) {
+            send({ success: false, error: String(err) });
+          }
+        })();
+      `;
+      const root = doc.head || doc.documentElement || doc.body;
+      if (root) {
+        root.appendChild(script);
+        script.remove();
+      } else {
+        clearTimeout(timer);
+        resolve({ success: false, error: 'NO_ROOT' });
+      }
+    } catch (e) {
+      clearTimeout(timer);
+      resolve({ success: false, error: String(e) });
+    }
+  });
+}
+
+/**
+ * 사용자가 클릭한 위치(요소)에 100% 안전하게 텍스트를 삽입하는 엔진.
+ * WebHWP/에디터/텍스트필드에 정확히 주입하며, 일반 layout div는 오염시키지 않고 안전한 클립보드 안내로 폴백한다.
  */
 export async function directInsertAtTarget(
   target: HTMLElement | null,
@@ -397,20 +714,25 @@ export async function directInsertAtTarget(
   const ownerDoc = activeEl?.ownerDocument || doc;
   const win = ownerDoc.defaultView || (typeof window !== 'undefined' ? window : null);
 
-  // 1. 온나라 WebHWP (한글 기안기 컨트롤) 전 프레임 탐색 및 직접 주입
-  if (win) {
+  // 1. 온나라 WebHWP (한글 기안기 컨트롤) 직접 주입 (메인 월드 브리지 + 로컬 스코프)
+  const isHwpCandidate =
+    isHwpElementOrContainer(activeEl) ||
+    Boolean(win && findHwpCtrlInAllWindows(win)) ||
+    (typeof location !== 'undefined' && /addoreportbodyview\.do|addhwpbody\.do|hwpctrl\.do/i.test(location.href));
+
+  if (isHwpCandidate) {
     try {
-      const hwp = findHwpCtrlInAllWindows(win);
-      if (hwp && typeof hwp.InsertText === 'function') {
-        hwp.InsertText(text);
+      const hwpRes = await insertViaMainWorldHwp(text, ownerDoc);
+      if (hwpRes.success) {
+        const label = hwpRes.fieldName ? `한글 기안기 본문(${hwpRes.fieldName})` : '한글 기안기 본문';
         return {
           status: 'applied',
-          targetLabel: '한글 기안기 본문',
-          message: '한글 기안기 본문에 초안이 삽입되었습니다.',
+          targetLabel: label,
+          message: `${label}에 초안이 삽입되었습니다.`,
         };
       }
     } catch (e) {
-      console.warn('[sAIde] WebHWP 직접 삽입 시도 중 오류', e);
+      console.warn('[sAIde] WebHWP 메인 월드 삽입 실패', e);
     }
   }
 
@@ -478,10 +800,11 @@ export async function directInsertAtTarget(
     }
   }
 
-  // 5. contenteditable 또는 designMode 에디터
+  // 5. 원래부터 편집 가능한 실제 contenteditable 또는 designMode 에디터
   const isEditable =
     insertEl.isContentEditable ||
-    insertEl.getAttribute('contenteditable') !== null ||
+    insertEl.getAttribute('contenteditable') === 'true' ||
+    insertEl.getAttribute('contenteditable') === '' ||
     ownerDoc.designMode?.toLowerCase() === 'on';
 
   if (isEditable) {
@@ -542,33 +865,26 @@ export async function directInsertAtTarget(
     }
   }
 
-  // 6. 일반 요소(div, td, p, section 등): 사용자가 클릭한 바로 그 요소에 직접 주입!
-  // contentEditable을 즉시 활성화하고 텍스트를 박아 넣어 화면에 100% 보이도록 보장한다.
+  // 6. 안전 폴백: 일반 요소(div, td, body 등)에 절대 contenteditable을 부여하지 않는다!
+  // 클립보드에 이미 초안이 사전 복사되어 있으므로, 포커스 및 붙여넣기를 시도하고 친절한 안내를 제공한다.
   try {
-    insertEl.focus();
-    insertEl.setAttribute('contenteditable', 'true');
-    const existing = insertEl.innerText || insertEl.textContent || '';
-    if (existing.trim().length === 0) {
-      insertEl.innerText = text;
-    } else {
-      insertEl.innerText = existing + '\n\n' + text;
+    insertEl.focus?.();
+    if (ownerDoc.queryCommandSupported && ownerDoc.queryCommandSupported('paste')) {
+      ownerDoc.execCommand('paste');
     }
-    insertEl.dispatchEvent(new Event('input', { bubbles: true }));
-    insertEl.dispatchEvent(new Event('change', { bubbles: true }));
-
-    return {
-      status: 'applied',
-      targetLabel: getElementLabel(insertEl),
-      message: `'${getElementLabel(insertEl)}'에 초안이 삽입되었습니다.`,
-    };
-  } catch (e) {
-    console.warn('[sAIde] 일반 요소 contenteditable 주입 실패', e);
+  } catch {
+    // ignore
   }
 
+  const isWebHwpEnv = isHwpCandidate || (typeof location !== 'undefined' && location.href.includes('bms'));
+  const fallbackMsg = isWebHwpEnv
+    ? '초안이 클립보드에 복사되었습니다. 한글 본문(「본문을 입력하십시오」)에서 Ctrl+V를 누르세요.'
+    : `'${targetLabel}'에 복사되었습니다. 원하는 위치에서 Ctrl+V를 누르세요.`;
+
   return {
-    status: 'applied',
+    status: 'clipboard-fallback',
     targetLabel,
-    message: '초안이 삽입되었습니다.',
+    message: fallbackMsg,
   };
 }
 
