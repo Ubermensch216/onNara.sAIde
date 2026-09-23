@@ -783,3 +783,58 @@ it.each(['failed', 'repeated'] as const)('뒤 페이지가 %s이면 앞의 10건
   expect(response.type).toBe('ERROR');
   expect(sendMessage).toHaveBeenCalledTimes(2);
 });
+
+/** 받은문서 목록 프레임(2번)을 흉내 낸다. rowsAfter는 읽기처리 뒤 목록이 다시 그린 행이다. */
+function markReadHarness(rowsAfter: Array<{ title: string; readState?: string }>, dialogs: string[] = []) {
+  const common = { truncated: false, keptRatio: 1, estimatedTokens: 20, extractedAt: 1 };
+  let clicked = false;
+  const listPayload = (rows: Array<{ title: string; readState?: string }>) => ({
+    type: 'EXTRACTED',
+    payload: {
+      ...common, url: 'https://onnara.test/frame/list', title: '받은문서', text: '행', charCount: 1,
+      method: 'onnara-document-list',
+      structuredData: { kind: 'onnara-document-list', listName: '받은문서', columns: [{ key: 'title', label: '제목', sourceIndex: 0 }], rows },
+    },
+  });
+  const sendMessage = vi.fn(async (_tabId: number, message: { type: string; titles?: string[] }, options: { frameId: number }) => {
+    if (options.frameId !== 2) return { type: 'EXTRACTED', payload: { ...common, url: 'https://onnara.test/main', title: '온나라', text: '', charCount: 0, method: 'innerText' } };
+    if (message.type === 'PREPARE_MARK_READ') return { type: 'MARK_READ_PREPARED', checked: message.titles, missing: [] };
+    return listPayload(clicked ? rowsAfter : [{ title: '법원문서 통보', readState: '미열람' }, { title: '다른 공문 제목', readState: '미열람' }]);
+  });
+  const executeScript = vi.fn(async (injection: { world?: string; func?: { name: string } }) => {
+    if (injection.world !== 'MAIN') return [];
+    if (injection.func?.name === 'clickMarkedReadButton') { clicked = true; return [{ result: { clicked: true } }]; }
+    return [{ result: dialogs }];
+  });
+  vi.stubGlobal('chrome', {
+    tabs: { get: vi.fn(async () => ({ id: 9, url: 'https://onnara.test/main', title: '온나라' })), sendMessage },
+    scripting: { executeScript },
+    webNavigation: { getAllFrames: vi.fn(async () => [
+      { frameId: 0, parentFrameId: -1, url: 'https://onnara.test/main' },
+      { frameId: 2, parentFrameId: 0, url: 'https://onnara.test/frame/list' },
+    ]) },
+  });
+  return { sendMessage, executeScript };
+}
+
+it('읽기처리 뒤 미열람 목록에서 빠진 문서만 열람으로 보고한다', async () => {
+  const { executeScript } = markReadHarness([{ title: '다른 공문 제목', readState: '미열람' }]);
+  const response = await handlePanelMessage({
+    type: 'MARK_DOCUMENTS_READ', tabId: 9, titles: ['법원문서 통보'],
+    control: { id: crypto.randomUUID(), deadline: Date.now() + 30_000 },
+  });
+  expect(response).toMatchObject({ type: 'DOCUMENTS_MARKED_READ', marked: ['법원문서 통보'], unconfirmed: [] });
+  // 목록이 있는 프레임에서, 페이지 영역으로 누른다.
+  expect(executeScript).toHaveBeenCalledWith(expect.objectContaining({ target: { tabId: 9, frameIds: [2] }, world: 'MAIN' }));
+});
+
+it('온나라가 실패를 알리면 기다리지 않고 확인하지 못한 채로 돌려준다', async () => {
+  markReadHarness([{ title: '법원문서 통보', readState: '미열람' }], ['처리 권한이 없습니다.']);
+  const started = Date.now();
+  const response = await handlePanelMessage({
+    type: 'MARK_DOCUMENTS_READ', tabId: 9, titles: ['법원문서 통보'],
+    control: { id: crypto.randomUUID(), deadline: Date.now() + 30_000 },
+  });
+  expect(response).toMatchObject({ type: 'DOCUMENTS_MARKED_READ', marked: [], unconfirmed: ['법원문서 통보'], dialogs: ['처리 권한이 없습니다.'] });
+  expect(Date.now() - started).toBeLessThan(5000);
+});

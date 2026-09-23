@@ -268,6 +268,8 @@ export function sameDocumentTitle(left: string, right: string): boolean {
 
 interface OpenCandidate {
   target: HTMLElement;
+  /** 그 문서의 행. 읽기처리 체크박스를 찾을 때 쓴다. */
+  row: Element;
   /** 그 행이 실제로 가리키는 문서 제목. 후보가 여럿일 때 같은 문서인지 가리는 기준이다. */
   rowTitle: string;
   /** 제목이 정확히 일치했는가(줄임·꼬리표 때문에 부분만 겹친 경우와 구분). */
@@ -302,6 +304,7 @@ export function findDocumentOpenCandidates(title: string, root: ParentNode = doc
       if (!isAvailable(target)) continue;
       candidates.push({
         target,
+        row,
         rowTitle: cleanText(nativeTitle?.value) || elementText(titleCell),
         exact: Boolean(exactCell),
         checked: Boolean(row.querySelector('input[type="checkbox"]:checked, [role="checkbox"][aria-checked="true"]')),
@@ -329,6 +332,11 @@ function chooseOpenCandidate(candidates: OpenCandidate[]): OpenCandidate | null 
 
 export function findDocumentOpenTarget(title: string, root: ParentNode = document): HTMLElement | null {
   return chooseOpenCandidate(findDocumentOpenCandidates(title, root))?.target ?? null;
+}
+
+/** 제목으로 목록의 행 하나를 고른다. 여는 대상과 같은 규칙이라 다른 문서의 행을 집지 않는다. */
+export function findDocumentRow(title: string, root: ParentNode = document): Element | null {
+  return chooseOpenCandidate(findDocumentOpenCandidates(title, root))?.row ?? null;
 }
 
 /** 열 문서를 하나로 고르지 못한 이유. 오류 안내에 붙여 어디를 확인할지 알려 준다. */

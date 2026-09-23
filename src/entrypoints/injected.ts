@@ -19,6 +19,7 @@ import { Readability } from '@mozilla/readability';
 import { clickAttachment, listAttachments, scanAttachments } from '@/lib/onnara/attachments';
 import { captureDocumentListLocation, captureListLocation, restoreDocumentListLocation } from '@/lib/onnara/document-navigation';
 import { fetchInboxPage } from '@/lib/onnara/inbox-pages';
+import { prepareMarkRead } from '@/lib/onnara/mark-read';
 import { fitToBudget } from '@/lib/extract/budget';
 import { collectDocumentText } from '@/lib/extract/document-text';
 import { findPdfUrls, readPdfSources } from '@/lib/extract/pdf-source';
@@ -124,6 +125,11 @@ export default defineUnlistedScript(() => {
           const page = await fetchInboxPage(msg.location, AbortSignal.timeout(Math.max(1, Math.min(7500, msg.control.deadline - Date.now()))));
           assertCurrent(msg.control, location.href, cancelled.has(msg.control.id));
           sendResponse({ type: 'INBOX_PAGE', ...page } satisfies ContentToSW);
+        } else if (msg.type === 'PREPARE_MARK_READ') {
+          const prepared = prepareMarkRead(msg.titles);
+          sendResponse(prepared.ok
+            ? { type: 'MARK_READ_PREPARED', checked: prepared.checked, missing: prepared.missing } satisfies ContentToSW
+            : { type: 'FAILED', error: { code: 'UNKNOWN', message: prepared.message, ...(prepared.hint ? { hint: prepared.hint } : {}) } } satisfies ContentToSW);
         } else if (msg.type === 'SCAN_ATTACHMENTS') {
           sendResponse({ type: 'ATTACHMENTS_FOUND', items: listAttachments() } satisfies ContentToSW);
         } else if (msg.type === 'GET_BODY_PDF') {

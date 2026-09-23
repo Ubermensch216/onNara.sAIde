@@ -4,7 +4,10 @@ import { forgetPanelSpawn, isReportedPanelTab, notePanelSpawn, panelOpener, reme
 import type { AppError, AttachmentDownloadResult, AttachmentNaming, ExtractedPage, RequestControl, SWToContent } from '@/lib/messaging/protocol';
 import { isHtmlAttachmentName } from '@/lib/onnara/attachments';
 import { clearDownloadName, registerDownloadNaming, reserveDownloadName } from '@/lib/downloads/rename';
-import { isReceivedDocumentList, normalizeForMatch, sameDocumentTitle, type StructuredDocumentList } from '@/lib/onnara/document-list';
+import { documentReadState, isReceivedDocumentList, normalizeForMatch, sameDocumentTitle, type StructuredDocumentList } from '@/lib/onnara/document-list';
+import {
+  clickMarkedReadButton, READ_BUTTON_MARK, READ_DIALOG_ATTR, READ_FAILURE_PATTERN, READ_SUCCESS_PATTERN, readMarkReadDialogs,
+} from '@/lib/onnara/mark-read';
 import { loadInboxLocation, saveInboxLocation } from '@/lib/inbox/location';
 import { firstInboxPage } from '@/lib/onnara/inbox-pages';
 import { isWorkTabBusy, runExclusive } from '@/lib/browser/sw-lock';
@@ -289,6 +292,8 @@ export async function handlePanelMessage(msg: PanelToSW): Promise<SWToPanel> {
 
     case 'COLLECT_INBOX':
       return runExclusive(() => collectInbox(msg.tabId, msg.budgetTokens, control));
+    case 'MARK_DOCUMENTS_READ':
+      return runExclusive(() => markDocumentsRead(msg.tabId, msg.titles, control));
     case 'GET_ACTIVE_TAB': {
       const tab = await activeTab(msg.windowId);
       const summary = tab ? toSummary(tab) : null;
@@ -928,6 +933,89 @@ export async function releaseKeptWorkTab(sourceTabId: number): Promise<void> {
  *   구조화된 목록은 예산과 무관하게 행·열로 추출된다.
  */
 const LOCATE_BUDGET_TOKENS = 1000;
+
+/** `읽기처리`를 누른 뒤 목록이 결과를 보일 때까지 기다리는 한도. */
+const MARK_READ_WAIT_MS = 12_000;
+const MARK_READ_POLL_MS = 700;
+
+/**
+ * 받은문서 목록에서 문서들을 체크하고 `읽기처리`를 눌러 열람으로 바꾼다.
+ *
+ * ★ 사용자가 보고 있는 목록 탭에서 그대로 한다. 온나라의 `읽기처리`는 목록 화면의 체크 상태를
+ *   읽어 처리하므로, 복제 탭에 목록을 복원하는 위험을 질 이유가 없다.
+ *
+ * ★ **결과는 목록을 다시 읽어 코드가 확인한다.** 버튼을 눌렀다는 것만으로 열람이 됐다고 말하지
+ *   않는다. 미열람 목록에서 행이 빠졌거나 열람 칸이 바뀐 문서만 `marked`에 넣는다.
+ */
+export async function markDocumentsRead(tabId: number, titles: string[], control: RequestControl): Promise<SWToPanel> {
+  const taskControl: RequestControl = { ...control, expectedUrl: undefined };
+  const found = await dispatchContent(tabId, { type: 'EXTRACT', budgetTokens: LOCATE_BUDGET_TOKENS, purpose: 'page', targetTitle: titles[0], control: taskControl });
+  if (found.type === 'FAILED') return { type: 'ERROR', error: found.error };
+  if (found.type !== 'EXTRACTED' || !found.payload.structuredData) {
+    return { type: 'ERROR', error: {
+      code: 'UNKNOWN',
+      message: '현재 화면에서 받은문서 목록을 찾지 못했습니다.',
+      hint: '온나라 공유/공람 > 받은문서 목록이 화면에 보이는 탭에서 다시 시도하세요.',
+    } };
+  }
+  const frameId = found.payload.sourceFrameId ?? 0;
+
+  const prepared = await sendToFrame(tabId, frameId, { type: 'PREPARE_MARK_READ', titles, control: taskControl });
+  if (prepared.type === 'FAILED') return { type: 'ERROR', error: prepared.error };
+  if (prepared.type !== 'MARK_READ_PREPARED') return { type: 'ERROR', error: { code: 'UNKNOWN', message: '읽기처리할 문서를 체크하지 못했습니다.' } };
+
+  let clicked = false;
+  try {
+    const [result] = await chrome.scripting.executeScript({
+      target: { tabId, frameIds: [frameId] }, world: 'MAIN',
+      func: clickMarkedReadButton, args: [READ_BUTTON_MARK, READ_DIALOG_ATTR],
+    });
+    clicked = Boolean((result?.result as { clicked?: boolean } | undefined)?.clicked);
+  } catch (error) {
+    return { type: 'ERROR', error: accessError(error) };
+  }
+  if (!clicked) return { type: 'ERROR', error: { code: 'UNKNOWN', message: "'읽기처리' 버튼을 누르지 못했습니다. 목록 화면이 바뀌었을 수 있습니다." } };
+
+  const pending = new Set(prepared.checked);
+  const marked: string[] = [];
+  let dialogs: string[] = [];
+  const until = Date.now() + MARK_READ_WAIT_MS;
+  while (pending.size && Date.now() < until && !cancelled.has(control.id)) {
+    await delay(MARK_READ_POLL_MS);
+    dialogs = await frameDialogs(tabId, frameId, dialogs);
+    if (dialogs.some(message => READ_FAILURE_PATTERN.test(message) && !READ_SUCCESS_PATTERN.test(message))) break;
+    const list = await dispatchContent(tabId, { type: 'EXTRACT', budgetTokens: LOCATE_BUDGET_TOKENS, purpose: 'page', control: { ...taskControl, deadline: Math.max(taskControl.deadline, Date.now() + 5000) } });
+    const rows = list.type === 'EXTRACTED' ? list.payload.structuredData?.rows : undefined;
+    if (!rows) continue; // 목록을 다시 그리는 중이다.
+    for (const title of [...pending]) {
+      const row = rows.find(item => item.title && sameDocumentTitle(item.title, title));
+      // 미열람 목록에서 빠졌거나, 전용 열람 칸이 열람으로 바뀌었다. 상태 칸('담당확인' 등)은 보지 않는다.
+      if (!row || documentReadState({ readState: row.readState }) === 'read') {
+        pending.delete(title);
+        marked.push(title);
+      }
+    }
+  }
+  // 목록이 스스로 다시 그려지지 않는 판본이 있다. 온나라가 완료를 알렸다면 그 말을 믿는다.
+  if (pending.size && dialogs.some(message => READ_SUCCESS_PATTERN.test(message))) {
+    marked.push(...pending);
+    pending.clear();
+  }
+  return { type: 'DOCUMENTS_MARKED_READ', marked, unconfirmed: [...pending], missing: prepared.missing, dialogs };
+}
+
+async function frameDialogs(tabId: number, frameId: number, previous: string[]): Promise<string[]> {
+  try {
+    const [result] = await chrome.scripting.executeScript({
+      target: { tabId, frameIds: [frameId] }, world: 'MAIN', func: readMarkReadDialogs, args: [READ_DIALOG_ATTR],
+    });
+    const messages = (result?.result as string[] | undefined) ?? [];
+    // 목록 프레임이 다시 그려지면 기록이 사라진다. 앞서 모은 글을 잃지 않는다.
+    return [...new Set([...previous, ...messages.filter(Boolean)])];
+  } catch {
+    return previous;
+  }
+}
 
 /** 목록 대신 로그인 화면이 왔는가. 세션이 끊긴 것과 화면을 못 읽은 것은 사용자가 할 일이 다르다. */
 export function looksLikeLogin(text: string): boolean {

@@ -21,7 +21,7 @@ const FRAME_ORIGIN = 'http://99.1.2.134';
 
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
-  useInbox.setState({ docs: [], briefing: null, lastRun: null, location: null, loaded: false, running: false, error: null, focus: null, draft: null });
+  useInbox.setState({ docs: [], briefing: null, lastRun: null, location: null, loaded: false, running: false, error: null, focus: null, draft: null, dismissing: null });
   document.body.innerHTML = '<div id="fixture"></div>';
   root = createRoot(document.getElementById('fixture')!);
 });
@@ -138,4 +138,54 @@ it('본문을 읽는 동안 화면이 멎어 있지 않다 — 점·막대·흘�
   settleRead();
   await act(async () => { closeTaskDraft(); });
   await settle();
+});
+
+it('"넘기기"는 목록에서 읽기처리해 미열람을 열람으로 바꾸고, 그 뒤에 카드를 치운다', async () => {
+  const sendMessage = vi.fn(async (message: { type: string; titles?: string[] }) => {
+    if (message.type !== 'MARK_DOCUMENTS_READ') return { type: 'ACTIVE_TAB', tab: null };
+    return { type: 'DOCUMENTS_MARKED_READ', marked: message.titles, unconfirmed: [], missing: [], dialogs: [] };
+  });
+  vi.stubGlobal('chrome', {
+    runtime: { sendMessage, openOptionsPage: vi.fn() },
+    storage: { local: { get: vi.fn(async () => ({})), set: vi.fn(async () => undefined) } },
+  });
+  await act(() => root.render(createElement(InboxPanel, { tab, settings: DEFAULT_SETTINGS, onOpenSchedule: vi.fn() })));
+  await settle();
+  await act(async () => { useInbox.setState({ docs: [doc()], loaded: true }); });
+  await settle();
+
+  await act(async () => button('넘기기').click());
+  await settle();
+
+  expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'MARK_DOCUMENTS_READ', tabId: 3, titles: ['정산자료 제출 협조'] }));
+  // 문서를 열지 않는다. 여는 것으로는 열람으로 바뀌지 않았다.
+  expect(sendMessage.mock.calls.some(([message]) => message.type === 'READ_DOCUMENT')).toBe(false);
+  const saved = useInbox.getState().docs[0]!;
+  expect(saved.readState).toBe('read');
+  expect(saved.markedReadAt).toBeTypeOf('number');
+  expect(saved.dismissedAt).toBeTypeOf('number');
+});
+
+it('"넘기기"에서 열람으로 바뀐 것을 확인하지 못하면 카드를 남기고 미열람 그대로 둔다', async () => {
+  const sendMessage = vi.fn(async (message: { type: string; titles?: string[] }) =>
+    message.type === 'MARK_DOCUMENTS_READ'
+      ? { type: 'DOCUMENTS_MARKED_READ', marked: [], unconfirmed: message.titles, missing: [], dialogs: ['처리 권한이 없습니다.'] }
+      : { type: 'ACTIVE_TAB', tab: null });
+  vi.stubGlobal('chrome', {
+    runtime: { sendMessage, openOptionsPage: vi.fn() },
+    storage: { local: { get: vi.fn(async () => ({})), set: vi.fn(async () => undefined) } },
+  });
+  await act(() => root.render(createElement(InboxPanel, { tab, settings: DEFAULT_SETTINGS, onOpenSchedule: vi.fn() })));
+  await settle();
+  await act(async () => { useInbox.setState({ docs: [doc()], loaded: true }); });
+  await settle();
+
+  await act(async () => button('넘기기').click());
+  await settle();
+
+  const kept = useInbox.getState().docs[0]!;
+  expect(kept.readState).toBe('unread');
+  expect(kept.dismissedAt).toBeUndefined();
+  // 온나라가 알린 글을 그대로 보인다.
+  expect(document.querySelector('.banner')!.textContent).toContain('처리 권한이 없습니다');
 });

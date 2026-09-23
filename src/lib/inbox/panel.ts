@@ -9,7 +9,8 @@
  */
 
 import { create } from 'zustand';
-import { sendToSW, type AppError, type SWToPanel, type TabSummary } from '@/lib/messaging/protocol';
+import { t } from '@/lib/i18n';
+import { isRestrictedUrl, sendToSW, type AppError, type SWToPanel, type TabSummary } from '@/lib/messaging/protocol';
 import { addTask } from '@/lib/schedule/store';
 import type { Settings } from '@/lib/storage/settings';
 import { briefingCount, type Briefing, type BriefingGroup } from './briefing';
@@ -91,11 +92,13 @@ interface InboxState {
   focus: InboxFocus | null;
   /** 지금 일정으로 옮기는 중인 문서. 한 번에 하나다. */
   draft: TaskDraftSession | null;
+  /** 넘기면서 열람 처리하는 중인 문서. 작업 탭을 쓰므로 한 번에 하나다. */
+  dismissing: string | null;
 }
 
 export const useInbox = create<InboxState>(() => ({
   docs: [], briefing: null, lastRun: null, location: null, loaded: false, running: false, error: null, focus: null,
-  draft: null,
+  draft: null, dismissing: null,
 }));
 
 /** 아직 손대지 않은 문서. 탭 배지의 숫자이자 화면의 본문이다. */
@@ -224,16 +227,15 @@ async function refineWithModel(briefing: Briefing, settings: Settings): Promise<
 }
 
 /**
- * 열람 정책(`mark-read`)을 실행한다. 실제로 연 문서 수를 돌려준다.
+ * 열람 정책(`mark-read`)을 실행한다. 실제로 열람 처리된 문서 수를 돌려준다.
  *
- * ★ **기본값에서는 아무 일도 하지 않는다.** 문서를 여는 순간 온나라 서버에 열람 기록이
- *   남고, 확장은 그것을 되돌릴 수 없다. 설정을 켠 사용자에게만 일어나는 일이다.
+ * ★ **기본값에서는 아무 일도 하지 않는다.** 온나라에 열람 기록이 남고, 확장은 그것을
+ *   되돌릴 수 없다. 설정을 켠 사용자에게만 일어나는 일이다.
  *
- * ★ 받은문서 목록을 보고 있는 탭에서만 할 수 있다. 문서를 여는 길은 "그 목록에서 제목을
- *   누르는 것"뿐이라, 목록이 화면에 없으면 열 대상을 찾을 수 없다. 조용히 실패하지 않고
- *   아무것도 하지 않는다.
+ * ★ 받은문서 목록을 보고 있는 탭에서만 할 수 있다. `읽기처리`는 그 목록의 체크 상태로
+ *   처리하는 버튼이라, 목록이 화면에 없으면 누를 수 없다. 조용히 실패하지 않고 아무것도 하지 않는다.
  *
- * ★ 한 건이 실패하면 멈춘다. 같은 이유로 나머지도 실패하고, 그동안 작업 탭이 묶인다.
+ * ★ 한 번에 체크해 한 번 누른다. 문서마다 누르면 목록이 그때마다 다시 그려진다.
  */
 async function applyReadPolicy(
   briefing: Briefing,
@@ -242,33 +244,68 @@ async function applyReadPolicy(
   settings: Settings,
 ): Promise<number> {
   if (settings.briefingReadPolicy !== 'mark-read' || via !== 'active-tab' || !tab) return 0;
-  const targets = briefing.groups.flatMap(group => group.docs).slice(0, settings.briefingOpenLimit);
-  let opened = 0;
-  try {
-    for (const doc of targets) {
-      const reply = await sendToSW({
-        type: 'READ_DOCUMENT', tabId: tab.tabId, title: doc.title,
-        // 본문은 쓰지 않는다. 여는 것 자체가 목적이라 예산을 최소로 둔다.
-        budgetTokens: 500, keepWorkTab: true,
-      }, undefined, 90_000);
-      if (reply.type !== 'DOCUMENT_READ') break;
-      await patchLocal(doc.key, { markedReadAt: Date.now(), readState: 'read' });
-      opened++;
-    }
-  } finally {
-    if (opened) await sendToSW({ type: 'RELEASE_WORK_TAB', tabId: tab.tabId }).catch(() => undefined);
-  }
-  return opened;
+  const targets = briefing.groups.flatMap(group => group.docs)
+    .filter(doc => doc.readState === 'unread')
+    .slice(0, settings.briefingOpenLimit);
+  if (!targets.length) return 0;
+  const reply = await sendToSW({ type: 'MARK_DOCUMENTS_READ', tabId: tab.tabId, titles: targets.map(doc => doc.title) }, undefined, MARK_READ_TIMEOUT_MS)
+    .catch(() => null);
+  if (reply?.type !== 'DOCUMENTS_MARKED_READ') return 0;
+  const now = Date.now();
+  const marked = new Set(reply.marked);
+  for (const doc of targets) if (marked.has(doc.title)) await patchLocal(doc.key, { markedReadAt: now, readState: 'read' });
+  return marked.size;
 }
+
+/** 체크 → `읽기처리` → 목록 재확인까지. 서비스 워커의 대기 한도(12초)보다 넉넉히 둔다. */
+const MARK_READ_TIMEOUT_MS = 45_000;
 
 async function patchLocal(key: string, patch: Partial<InboxDoc>): Promise<void> {
   await patchInboxDoc(key, patch);
   useInbox.setState(state => ({ docs: state.docs.map(doc => doc.key === key ? { ...doc, ...patch } : doc) }));
 }
 
-/** 넘기기. 다음 브리핑에도 다시 올라오지 않는다. */
-export async function dismissDoc(key: string): Promise<void> {
-  await patchLocal(key, { dismissedAt: Date.now() });
+/**
+ * 넘기기. 온나라 받은문서 목록에서 이 문서를 체크하고 `읽기처리`를 눌러 `미열람` → `열람`으로
+ * 바꾸고, 다음 브리핑에도 다시 올라오지 않게 한다.
+ *
+ * ★ 문서를 열어서는 열람으로 바뀌지 않는다. 온나라가 열람 처리를 위해 둔 길은 목록의
+ *   `읽기처리` 버튼이다(lib/onnara/mark-read.ts).
+ *
+ * ★ **열람으로 바뀐 것을 확인하지 못하면 넘기지 않는다.** 카드가 사라진 뒤에는 미열람으로
+ *   남은 문서를 다시 짚을 길이 없다. 오류를 보이고 카드를 남겨 다시 누를 수 있게 한다.
+ */
+export async function dismissDoc(doc: InboxDoc, tab: TabSummary | null): Promise<boolean> {
+  if (useInbox.getState().dismissing) return false;
+  if (doc.readState !== 'unread') {
+    await patchLocal(doc.key, { dismissedAt: Date.now() });
+    return true;
+  }
+  if (!tab || isRestrictedUrl(tab.url)) {
+    useInbox.setState({ error: { code: 'UNKNOWN', message: t('inbox.dismiss.noTab') } });
+    return false;
+  }
+  useInbox.setState({ dismissing: doc.key, error: null });
+  try {
+    const reply = await sendToSW({ type: 'MARK_DOCUMENTS_READ', tabId: tab.tabId, titles: [doc.title] }, undefined, MARK_READ_TIMEOUT_MS);
+    if (reply.type === 'ERROR') {
+      useInbox.setState({ error: reply.error });
+      return false;
+    }
+    if (reply.type !== 'DOCUMENTS_MARKED_READ' || !reply.marked.includes(doc.title)) {
+      const said = reply.type === 'DOCUMENTS_MARKED_READ' ? reply.dialogs.filter(Boolean).at(-1) : undefined;
+      useInbox.setState({ error: { code: 'UNKNOWN', message: t('inbox.dismiss.failed'), ...(said ? { hint: said } : {}) } });
+      return false;
+    }
+    const now = Date.now();
+    await patchLocal(doc.key, { readState: 'read', markedReadAt: now, dismissedAt: now });
+    return true;
+  } catch (error) {
+    useInbox.setState({ error: { code: 'UNKNOWN', message: error instanceof Error ? error.message : String(error) } });
+    return false;
+  } finally {
+    useInbox.setState({ dismissing: null });
+  }
 }
 
 export async function restoreDoc(key: string): Promise<void> {

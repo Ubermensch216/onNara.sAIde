@@ -193,6 +193,12 @@ export type PanelToSW = (
    *   알람이 깨운 실행에는 "지금 보고 있는 탭"이 없기 때문이다.
    */
   | { type: 'COLLECT_INBOX'; tabId?: number; budgetTokens: number }
+  /**
+   * 받은문서 목록에서 이 문서들을 체크하고 `읽기처리`를 누른다(미열람 → 열람).
+   *
+   * ★ 되돌릴 수 없다. 사용자가 누른 동작(넘기기, 열람 정책 설정)에서만 보낸다.
+   */
+  | { type: 'MARK_DOCUMENTS_READ'; tabId: number; titles: string[] }
 ) & { control?: RequestControl };
 
 /* ── Service Worker → Panel ────────────────────────────── */
@@ -257,6 +263,11 @@ export type SWToPanel =
   /** 공유/공람 목록을 읽었다(N1). 본문은 읽지 않는다 — 열람 상태를 바꾸지 않기 위해서다. */
   | { type: 'INBOX_COLLECTED'; list: StructuredDocumentList; via: 'active-tab' | 'work-tab' | 'background-request' }
   /**
+   * `읽기처리` 결과. marked는 목록에서 열람으로 바뀐 것(또는 미열람 목록에서 빠진 것)을
+   * 코드가 확인한 제목, unconfirmed는 눌렀지만 확인하지 못한 제목이다.
+   */
+  | { type: 'DOCUMENTS_MARKED_READ'; marked: string[]; unconfirmed: string[]; missing: string[]; dialogs: string[] }
+  /**
    * 브리핑할 때가 되었다(N1). 패널이 열려 있을 때만 온다.
    *
    * ★ 실행은 패널이 한다. 패널에는 모델도, 작업 기록도, 화면도 있다.
@@ -284,6 +295,8 @@ export type SWToContent = (
   /** 이 프레임이 받은문서 목록이면 그 화면의 위치를 잡아 돌려준다(N1). */
   | { type: 'LOCATE_INBOX' }
   | { type: 'FETCH_INBOX_PAGE'; location: DocumentListLocation }
+  /** 이 프레임의 목록에서 문서들을 체크하고 `읽기처리` 버튼에 표지를 붙인다. 누르지는 않는다. */
+  | { type: 'PREPARE_MARK_READ'; titles: string[] }
 ) & { control: RequestControl };
 
 export type ContentToSW =
@@ -300,6 +313,7 @@ export type ContentToSW =
   | { type: 'ATTACHMENTS_FOUND'; items: AttachmentItem[] }
   | { type: 'ATTACHMENT_CLICKED'; clicked: boolean }
   | { type: 'DIALOG_CHECKED'; message?: string | null }
+  | { type: 'MARK_READ_PREPARED'; checked: string[]; missing: string[] }
   | { type: 'ACTED'; result: ActionResult }
   | { type: 'FAILED'; error: AppError };
 
