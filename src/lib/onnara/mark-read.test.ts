@@ -22,7 +22,7 @@ function list(extra = '') {
 
 const box = (id: string) => document.getElementById(id) as HTMLInputElement;
 
-afterEach(() => { document.body.innerHTML = ''; });
+afterEach(() => { document.body.innerHTML = ''; sessionStorage.removeItem(READ_DIALOG_ATTR); });
 
 it('대상 행만 체크하고, 사용자가 체크해 둔 다른 문서는 풀고, 버튼에 표지를 붙인다', () => {
   list();
@@ -83,6 +83,8 @@ it('버튼을 누르는 동안만 확인창을 수락하고, 뜬 글을 남긴�
     expect(clickMarkedReadButton(READ_BUTTON_MARK, READ_DIALOG_ATTR)).toEqual({ clicked: true });
     expect(answered).toBe(true);
     expect(nativeConfirm).not.toHaveBeenCalled();
+    expect(readMarkReadDialogs(READ_DIALOG_ATTR)).toEqual(['선택한 문서를 읽기처리 하시겠습니까?', '읽기처리 되었습니다.']);
+    document.documentElement.removeAttribute(READ_DIALOG_ATTR);
     expect(readMarkReadDialogs(READ_DIALOG_ATTR)).toEqual(['선택한 문서를 읽기처리 하시겠습니까?', '읽기처리 되었습니다.']);
     // 표지는 한 번 쓰고 없앤다. 다음 요청이 옛 버튼을 누르지 않게 한다.
     expect(document.querySelector(`[${READ_BUTTON_MARK}]`)).toBeNull();

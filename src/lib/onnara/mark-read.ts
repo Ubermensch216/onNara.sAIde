@@ -137,11 +137,16 @@ export function clickMarkedReadButton(mark: string, attr: string): { clicked: bo
   button.removeAttribute(mark);
   const root = document.documentElement;
   root.setAttribute(attr, '[]');
+  // 온나라는 처리 알림을 띄운 직후 목록을 다시 불러오는 일이 있다. 문서 속성은 그때 사라지므로
+  // 프레임을 새로 불러와도 남는 sessionStorage에도 적는다.
+  try { sessionStorage.setItem(attr, '[]'); } catch { /* 저장소 없음 */ }
   const record = (message: unknown) => {
     try {
       const list = JSON.parse(root.getAttribute(attr) || '[]') as string[];
       list.push(String(message ?? '').trim());
-      root.setAttribute(attr, JSON.stringify(list.slice(-10)));
+      const text = JSON.stringify(list.slice(-10));
+      root.setAttribute(attr, text);
+      try { sessionStorage.setItem(attr, text); } catch { /* 저장소 없음 */ }
     } catch { /* 기록 실패는 처리에 영향이 없다 */ }
   };
   const windows: Window[] = [window];
@@ -166,7 +171,10 @@ export function clickMarkedReadButton(mark: string, attr: string): { clicked: bo
 
 /** 2단계 뒤 페이지에 뜬 알림 글. `func`로 쓰이므로 바깥 이름을 참조하지 않는다. */
 export function readMarkReadDialogs(attr: string): string[] {
-  try { return JSON.parse(document.documentElement.getAttribute(attr) || '[]') as string[]; } catch { return []; }
+  const read = (text: string | null) => { try { return JSON.parse(text || '[]') as string[]; } catch { return []; } };
+  let stored: string | null = null;
+  try { stored = sessionStorage.getItem(attr); } catch { /* 저장소 없음 */ }
+  return [...new Set([...read(document.documentElement.getAttribute(attr)), ...read(stored)])];
 }
 
 export const READ_DIALOG_ATTR = 'data-saide-read-dialogs';

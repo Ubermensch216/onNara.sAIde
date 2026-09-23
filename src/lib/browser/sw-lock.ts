@@ -19,11 +19,22 @@ export function isWorkTabBusy(): boolean {
   return waiting > 0;
 }
 
-/** 작업 탭·다운로드를 쓰는 동작을 한 번에 하나씩 실행한다. */
-export function runExclusive<T>(work: () => Promise<T>): Promise<T> {
+/**
+ * 작업 탭·다운로드를 쓰는 동작을 한 번에 하나씩 실행한다.
+ *
+ * ★ `holdLimitMs`를 주면 그 시간이 지나면 잠금을 놓는다. 페이지에 뜬 확인창이 프레임을 멈추면
+ *   `executeScript`가 끝나지 않는데, 그 한 건이 잠금을 쥔 채 남으면 뒤의 `지금 확인`·`넘기기`가
+ *   모두 줄에 묶여 "확인 중"에서 풀리지 않는다. 요청 쪽이 이미 포기한 일을 기다릴 이유는 없다.
+ */
+export function runExclusive<T>(work: () => Promise<T>, holdLimitMs?: number): Promise<T> {
   waiting++;
+  const expiresAt = holdLimitMs === undefined ? undefined : Date.now() + Math.max(0, holdLimitMs);
   const result = tail.then(work, work);
-  tail = result.then(() => undefined, () => undefined).then(() => { waiting--; });
+  const settled = result.then(() => undefined, () => undefined);
+  const held = expiresAt === undefined
+    ? settled
+    : tail.then(() => Promise.race([settled, new Promise<void>(resolve => setTimeout(resolve, Math.max(0, expiresAt - Date.now())))]));
+  tail = held.then(() => { waiting--; });
   return result;
 }
 

@@ -17,7 +17,7 @@ import { briefingCount, type Briefing, type BriefingGroup } from './briefing';
 import { classifyWithModel } from './classify';
 import { loadInboxLocation, type InboxLocation } from './location';
 import { recordSkippedRun, runBriefing } from './run';
-import { lastInboxRun, listInboxDocs, patchInboxDoc, saveInboxDocs } from './store';
+import { lastInboxRun, listInboxDocs, patchInboxDoc } from './store';
 import { draftFromDoc, draftTasksFromBody, toNewTask, type TaskDraft } from './task-draft';
 import type { InboxCategory, InboxDoc, InboxRun, InboxTrigger } from './types';
 import { INBOX_CATEGORIES } from './types';
@@ -179,15 +179,21 @@ export async function collectAndBrief(
     }
     if (reply.type !== 'INBOX_COLLECTED') return null;
 
-    const briefed = await refineWithModel(await runBriefing({ list: reply.list, settings, trigger }), settings);
-    const markedRead = await applyReadPolicy(briefed, reply.via, tab, settings);
-    const briefing: Briefing = markedRead ? { ...briefed, markedRead } : briefed;
+    const briefed = await runBriefing({ list: reply.list, settings, trigger });
     useInbox.setState({
-      briefing,
+      briefing: briefed,
       docs: await listInboxDocs(),
       lastRun: (await lastInboxRun()) ?? null,
     });
-    return briefing;
+    // 브리핑을 먼저 보여 준다. 자동 읽기처리와 모델 분류는 각각 오래 걸릴 수 있다.
+    const serial = ++briefingSerial;
+    void applyReadPolicy(briefed, reply.via, tab, settings).then(markedRead => {
+      if (markedRead && serial === briefingSerial) {
+        useInbox.setState(state => state.briefing ? { briefing: { ...state.briefing, markedRead } } : {});
+      }
+    }).catch(() => undefined);
+    void refineInBackground(briefed, settings, serial);
+    return briefed;
   } catch (error) {
     const appError: AppError = { code: 'UNKNOWN', message: error instanceof Error ? error.message : String(error) };
     await recordSkippedRun(trigger, appError.message);
@@ -198,31 +204,54 @@ export async function collectAndBrief(
   }
 }
 
+/** 모델 보강을 기다리는 한도. 넘기면 규칙이 매긴 갈래가 그대로 남는다. */
+const REFINE_TIMEOUT_MS = 180_000;
+let refining: AbortController | null = null;
+let briefingSerial = 0;
+
 /**
- * 규칙이 매긴 갈래를 모델 판단으로 보강한다(M4).
+ * 규칙이 매긴 갈래를 모델 판단으로 보강한다(M4). 브리핑을 낸 뒤 뒤에서 돈다.
  *
- * ★ **실패해도 브리핑은 그대로 나간다.** Ollama가 꺼져 있거나 응답이 어긋나면 규칙 결과가
+ * ★ **실패해도 브리핑은 그대로 있다.** Ollama가 꺼져 있거나 응답이 어긋나거나 늦으면 규칙 결과가
  *   남는다. 이 기능이 모델 없이 성립한다는 약속은 여기서도 지켜진다.
  *
  * ★ 모델 호출은 목록 전체에 1회다. 문서마다 부르면 20건에 몇 분이 걸린다.
+ *
+ * ★ 갈래 칸만 고친다. 기다리는 동안 사용자가 넘기거나 일정으로 옮긴 문서의 기록을
+ *   브리핑 시점의 사본으로 덮어쓰면, 넘긴 카드가 되살아난다.
  */
-async function refineWithModel(briefing: Briefing, settings: Settings): Promise<Briefing> {
+async function refineInBackground(briefing: Briefing, settings: Settings, serial: number): Promise<void> {
   const docs = briefing.groups.flatMap(group => group.docs);
-  if (!docs.length) return briefing;
+  if (!docs.length) return;
+  refining?.abort();
+  const abort = new AbortController();
+  refining = abort;
+  const timer = setTimeout(() => abort.abort(), REFINE_TIMEOUT_MS);
   try {
-    const next = await classifyWithModel(docs, settings);
+    const next = await classifyWithModel(docs, settings, abort.signal);
+    if (abort.signal.aborted || serial !== briefingSerial) return;
     const changed = next.filter((doc, index) => doc.category !== docs[index]!.category);
-    if (!changed.length) return briefing;
-    await saveInboxDocs(changed);
-    const groups: BriefingGroup[] = [];
-    for (const category of INBOX_CATEGORIES) {
-      const members = next.filter(doc => doc.category === category);
-      if (members.length && category !== 'filtered') groups.push({ category, docs: members });
+    if (!changed.length) return;
+    for (const doc of changed) {
+      if (abort.signal.aborted || serial !== briefingSerial) return;
+      await patchLocal(doc.key, { category: doc.category, reason: doc.reason, classifier: doc.classifier });
     }
-    return { ...briefing, groups };
+    if (abort.signal.aborted || serial !== briefingSerial) return;
+    useInbox.setState(state => {
+      if (!state.briefing) return {};
+      const keys = new Set(briefing.groups.flatMap(group => group.docs.map(doc => doc.key)));
+      const current = state.docs.filter(doc => keys.has(doc.key) && !doc.dismissedAt);
+      const groups: BriefingGroup[] = INBOX_CATEGORIES
+        .filter(category => category !== 'filtered')
+        .map(category => ({ category, docs: current.filter(doc => doc.category === category) }))
+        .filter(group => group.docs.length > 0);
+      return { briefing: { ...state.briefing, groups } };
+    });
   } catch {
-    // 모델을 부르지 못했다. 규칙이 매긴 갈래가 그대로 남는다.
-    return briefing;
+    // 모델을 부르지 못했거나 늦었다. 규칙이 매긴 갈래가 그대로 남는다.
+  } finally {
+    clearTimeout(timer);
+    if (refining === abort) refining = null;
   }
 }
 
