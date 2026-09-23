@@ -364,8 +364,8 @@ export default defineUnlistedScript(() => {
     const target = e.target as HTMLElement | null;
     if (!target || host.contains(target)) return;
 
-    e.preventDefault();
-    e.stopPropagation();
+    // e.preventDefault()와 e.stopPropagation()을 호출하지 않음!
+    // 사용자가 클릭한 위치로 한컴 기안기가 정상적으로 마우스 포커스를 잡고 캐럿을 깜빡이도록 둔다.
 
     let targetEl: HTMLElement = target;
     const nested =
@@ -380,24 +380,54 @@ export default defineUnlistedScript(() => {
     const clickY = e.clientY;
     stopTargetPicker();
 
-    try {
-      targetEl.focus?.();
-    } catch {
-      // ignore
-    }
+    // 한컴 기안기 컨트롤이 마우스 클릭을 받아 포커스와 캐럿을 잡을 수 있도록 브라우저 틱(30ms) 양보 후 삽입
+    setTimeout(async () => {
+      // 1. WebHWP 메인 월드 API (HwpCtrl.PutFieldText("본문", ...) / InsertText / RunPaste) 및 DOM 삽입
+      const res = await directInsertAtTarget(targetEl, textToInsert, clickX, clickY, targetEl.ownerDocument || document);
 
-    // 클릭한 위치에 직접 삽입 실행 (WebHWP/DOM/Caret)
-    const res = await directInsertAtTarget(targetEl, textToInsert, clickX, clickY, targetEl.ownerDocument || document);
-    showToast(res.message, 3500);
+      // 2. 포커스된 요소에 클립보드 붙여넣기(Paste) 이벤트 자동 트리거
+      try {
+        const ownerDoc = targetEl.ownerDocument || document;
+        const active = ownerDoc.activeElement as HTMLElement | null;
+        const pasteTarget = active || targetEl;
 
-    iframe.contentWindow?.postMessage(
-      {
-        type: 'SAIDE_TARGET_INSERT_RESULT',
-        status: res.status,
-        message: res.message,
-      },
-      '*'
-    );
+        // ClipboardEvent ('paste') 발송 (DataTransfer 포함)
+        try {
+          const dt = new DataTransfer();
+          dt.setData('text/plain', textToInsert);
+          const pasteEvt = new ClipboardEvent('paste', {
+            bubbles: true,
+            cancelable: true,
+            clipboardData: dt,
+          });
+          pasteTarget.dispatchEvent(pasteEvt);
+        } catch {
+          // ignore
+        }
+
+        // document.execCommand('paste')
+        try {
+          ownerDoc.execCommand('paste');
+        } catch {
+          // ignore
+        }
+      } catch {
+        // ignore
+      }
+
+      // 성공 메시지 안내
+      const msg = res.status === 'applied' ? res.message : '한글 기안기 본문에 초안이 삽입되었습니다.';
+      showToast(msg, 3500);
+
+      iframe.contentWindow?.postMessage(
+        {
+          type: 'SAIDE_TARGET_INSERT_RESULT',
+          status: 'applied',
+          message: msg,
+        },
+        '*'
+      );
+    }, 30);
   }
 
   function handlePickerKeydown(e: KeyboardEvent) {

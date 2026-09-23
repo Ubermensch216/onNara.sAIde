@@ -500,10 +500,25 @@ export async function insertViaMainWorldHwp(
   text: string,
   doc: Document = document
 ): Promise<{ success: boolean; method?: string; fieldName?: string; error?: string }> {
+  // 1. 서비스 워커(background.ts)를 통해 CSP를 우회하고 모든 프레임의 메인 월드에서 HwpCtrl 실행 (최우선)
+  if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+    try {
+      const resp = await chrome.runtime.sendMessage({
+        type: 'DRAFT_MAIN_WORLD_HWP_INSERT',
+        text,
+      });
+      if (resp && resp.success) {
+        return resp;
+      }
+    } catch {
+      // background 미응답 시 폴백
+    }
+  }
+
   const win = doc.defaultView || (typeof window !== 'undefined' ? window : null);
   if (!win) return { success: false, error: 'NO_WINDOW' };
 
-  // 1. 현재 윈도우 스코프(또는 jsdom 테스트 환경)에서 이미 HwpCtrl 객체에 접근 가능한 경우
+  // 2. 현재 윈도우 스코프(또는 jsdom 테스트 환경)에서 이미 HwpCtrl 객체에 접근 가능한 경우
   try {
     const directHwp = findHwpCtrlInAllWindows(win);
     if (directHwp) {

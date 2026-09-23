@@ -62,6 +62,153 @@ async function maybeAttachDraftDrawer(tabId: number, frameId: number, url?: stri
   }
 }
 
+/**
+ * 온나라 기안기 탭의 모든 프레임(allFrames: true)에서 메인 월드(world: 'MAIN')로
+ * 한컴 웹기안기(HwpCtrl) 객체를 찾아 누름틀('본문') 또는 커서 위치에 초안을 삽입한다.
+ * CSP의 인라인 스크립트 차단 정책을 완전히 우회한다.
+ */
+async function handleMainWorldHwpInsert(
+  tabId: number,
+  text: string
+): Promise<{ success: boolean; method?: string; fieldName?: string; error?: string }> {
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId, allFrames: true },
+      world: 'MAIN',
+      func: (draftText: string) => {
+        try {
+          function findHwp() {
+            var wins: any[] = [window as any];
+            try {
+              if (window.top && window.top !== window) wins.push(window.top as any);
+              if (window.parent && window.parent !== window) wins.push(window.parent as any);
+            } catch (e) {}
+
+            try {
+              var ifrs = document.querySelectorAll('iframe');
+              for (var i = 0; i < ifrs.length; i++) {
+                try {
+                  var ifr = ifrs[i] as HTMLIFrameElement;
+                  if (ifr && ifr.contentWindow) wins.push(ifr.contentWindow as any);
+                } catch (e) {}
+              }
+            } catch (e) {}
+
+            for (var j = 0; j < wins.length; j++) {
+              var w: any = wins[j];
+              if (!w) continue;
+              try {
+                var list = [
+                  w.HwpCtrl,
+                  w.pHwpCtrl,
+                  w.tbContentElement,
+                  w.vHwpCtrl,
+                  w.hwpCtrl,
+                  w.hwp_ctrl,
+                  w.hwpDoc,
+                  w.WebHwpCtrl,
+                  w.HwpObject,
+                  w.document && w.document.getElementById('HwpCtrl'),
+                  w.document && w.document.getElementById('hwpCtrl'),
+                  w.document && w.document.getElementById('tbContentElement'),
+                ];
+                for (var k = 0; k < list.length; k++) {
+                  var c = list[k];
+                  if (
+                    c &&
+                    (typeof c.PutFieldText === 'function' ||
+                      typeof c.InsertText === 'function' ||
+                      typeof c.Run === 'function' ||
+                      typeof c.CreateAction === 'function')
+                  ) {
+                    return c;
+                  }
+                }
+              } catch (e) {}
+            }
+            return null;
+          }
+
+          var h = findHwp();
+          if (!h) return { success: false, error: 'NO_HWP' };
+
+          // 1. 온나라 공문서 누름틀(Field) 방식 시도 (본문 필드 최우선)
+          var fields = ['본문', 'body', 'BODY', 'content', '기안문본문', '기안문_본문', '내용', '본문내용'];
+          for (var f = 0; f < fields.length; f++) {
+            var fn = fields[f];
+            try {
+              var exist = false;
+              if (typeof h.FieldExist === 'function') {
+                exist = Boolean(h.FieldExist(fn));
+              } else {
+                exist = true;
+              }
+              if (exist) {
+                if (typeof h.MoveToField === 'function') {
+                  h.MoveToField(fn, true, true, true);
+                  if (typeof h.InsertText === 'function') {
+                    h.InsertText(draftText);
+                    return { success: true, method: 'MoveToField+InsertText', fieldName: fn };
+                  }
+                  if (typeof h.Run === 'function') {
+                    h.Run('Paste');
+                    return { success: true, method: 'MoveToField+RunPaste', fieldName: fn };
+                  }
+                }
+                if (typeof h.PutFieldText === 'function') {
+                  h.PutFieldText(fn, draftText);
+                  return { success: true, method: 'PutFieldText', fieldName: fn };
+                }
+              }
+            } catch (e) {}
+          }
+
+          // 2. 현재 커서 위치 직접 입력
+          if (typeof h.InsertText === 'function') {
+            h.InsertText(draftText);
+            return { success: true, method: 'InsertText' };
+          }
+
+          // 3. CreateAction 방식
+          if (typeof h.CreateAction === 'function') {
+            try {
+              var act = h.CreateAction('InsertText');
+              if (act && typeof act.CreateSet === 'function') {
+                var st = act.CreateSet();
+                if (st && typeof st.SetItem === 'function') {
+                  st.SetItem('Text', draftText);
+                  act.Execute(st);
+                  return { success: true, method: 'CreateAction' };
+                }
+              }
+            } catch (e) {}
+          }
+
+          // 4. Run('Paste') 방식
+          if (typeof h.Run === 'function') {
+            h.Run('Paste');
+            return { success: true, method: 'RunPaste' };
+          }
+
+          return { success: false, error: 'NO_VALID_HWP_METHOD' };
+        } catch (err) {
+          return { success: false, error: String(err) };
+        }
+      },
+      args: [text],
+    });
+
+    for (const r of results ?? []) {
+      if (r?.result?.success) {
+        return r.result;
+      }
+    }
+    return { success: false, error: 'NO_FRAME_SUCCESS' };
+  } catch (err) {
+    return { success: false, error: String(err) };
+  }
+}
+
 export default defineBackground(() => {
   // ★ 워커에도 로케일을 물려준다.
   //   여기서 만든 오류 문구 중 일부는 UNKNOWN 코드로 패널에 그대로 뜬다 —
@@ -93,6 +240,15 @@ export default defineBackground(() => {
   registerDownloadNaming();
 
   chrome.runtime.onMessage.addListener((msg: unknown, sender, sendResponse) => {
+    if (msg && typeof msg === 'object' && (msg as any).type === 'DRAFT_MAIN_WORLD_HWP_INSERT') {
+      const tabId = sender.tab?.id;
+      if (tabId) {
+        handleMainWorldHwpInsert(tabId, String((msg as any).text || ''))
+          .then(res => sendResponse(res))
+          .catch(err => sendResponse({ success: false, error: String(err) }));
+        return true;
+      }
+    }
     if (!trustedPanel(sender)) return false;
     if (!validPanelRequest(msg)) {
       sendResponse({ type: 'ERROR', error: { code: 'ACTION_DENIED', message: '유효하지 않거나 만료된 요청입니다.' } });
