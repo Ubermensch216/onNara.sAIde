@@ -22,6 +22,7 @@ import {
   type CalendarMode,
 } from '@/lib/schedule/calendar';
 import { bucketOf, daysUntil, ddayLabel, groupTasks, todayISO, type ScheduleTask, type TaskBucket } from '@/lib/schedule/task';
+import { useHolidays } from '@/lib/schedule/holidays';
 
 const BUCKETS: TaskBucket[] = ['overdue', 'today', 'soon', 'later', 'someday'];
 const MODES: CalendarMode[] = ['month', 'week', 'day', 'list'];
@@ -91,6 +92,7 @@ export function SchedulePanel() {
   }, [spotlight]);
 
   const today = todayISO();
+  const holidays = useHolidays(cursor);
   const byDate = useMemo(() => tasksByDate(tasks), [tasks]);
   const undated = useMemo(() => undatedTasks(tasks), [tasks]);
   const groups = useMemo(() => groupTasks(tasks, new Date()), [tasks]);
@@ -161,19 +163,19 @@ export function SchedulePanel() {
 
       {mode === 'month' && (
         <>
-          <MonthGrid cursor={cursor} today={today} byDate={byDate} onPick={setCursor} />
-          <DayAgenda date={cursor} tasks={byDate.get(cursor) ?? []} today={today} quiet={!tasks.length}
+          <MonthGrid cursor={cursor} today={today} byDate={byDate} holidays={holidays} onPick={setCursor} />
+          <DayAgenda date={cursor} tasks={byDate.get(cursor) ?? []} today={today} holiday={holidays[cursor]} quiet={!tasks.length}
             onAdd={() => setEditing({ newOn: cursor })} {...rowProps} />
         </>
       )}
 
       {mode === 'week' && weekDates(cursor).map(date => (
-        <DayAgenda key={date} date={date} tasks={byDate.get(date) ?? []} today={today} compact
+        <DayAgenda key={date} date={date} tasks={byDate.get(date) ?? []} today={today} holiday={holidays[date]} compact
           onAdd={() => setEditing({ newOn: date })} {...rowProps} />
       ))}
 
       {mode === 'day' && (
-        <DayAgenda date={cursor} tasks={byDate.get(cursor) ?? []} today={today} quiet={!tasks.length}
+        <DayAgenda date={cursor} tasks={byDate.get(cursor) ?? []} today={today} holiday={holidays[cursor]} quiet={!tasks.length}
           onAdd={() => setEditing({ newOn: cursor })} {...rowProps} />
       )}
 
@@ -242,8 +244,8 @@ function rangeLabel(t: (key: MessageKey, vars?: Record<string, string | number>)
   return t('cal.monthLabel', { year: Number(year), month: Number(month) });
 }
 
-function MonthGrid({ cursor, today, byDate, onPick }: {
-  cursor: string; today: string; byDate: Map<string, ScheduleTask[]>; onPick: (date: string) => void;
+function MonthGrid({ cursor, today, byDate, holidays, onPick }: {
+  cursor: string; today: string; byDate: Map<string, ScheduleTask[]>; holidays: Record<string, string>; onPick: (date: string) => void;
 }) {
   const t = useT();
   const weeks = monthGrid(cursor);
@@ -262,6 +264,8 @@ function MonthGrid({ cursor, today, byDate, onPick }: {
           const open = items.filter(item => item.status !== 'done');
           const overdue = open.some(item => date < today);
           const day = weekday(date);
+          const holiday = holidays[date];
+          const isRed = day === 0 || Boolean(holiday);
           return (
             <button
               key={date}
@@ -271,13 +275,20 @@ function MonthGrid({ cursor, today, byDate, onPick }: {
                 monthOf(date) === month ? '' : 'other',
                 date === today ? 'today' : '',
                 date === cursor ? 'picked' : '',
-                day === 0 ? 'sun' : day === 6 ? 'sat' : '',
+                isRed ? 'sun' : day === 6 ? 'sat' : '',
+                holiday ? 'holiday' : '',
               ].filter(Boolean).join(' ')}
               aria-pressed={date === cursor}
-              aria-label={t('cal.cellLabel', { date: shortDate(date), n: open.length })}
+              aria-label={t('cal.cellLabel', {
+                date: shortDate(date),
+                n: open.length,
+              })}
               onClick={() => onPick(date)}
             >
-              <span className="cal-day">{Number(date.slice(8))}</span>
+              <div className="cal-day-row">
+                <span className="cal-day">{Number(date.slice(8))}</span>
+                {holiday && <span className="cal-holiday-name" title={holiday}>{holiday}</span>}
+              </div>
               {items.slice(0, CELL_CHIPS).map(item => (
                 <span key={item.id} className={`cal-chip ${item.status === 'done' ? 'done' : date < today ? 'overdue' : ''}`}>
                   {item.title}
@@ -294,8 +305,8 @@ function MonthGrid({ cursor, today, byDate, onPick }: {
 }
 
 /** 하루치 일정. 주 보기에서는 이것을 이레 쌓는다. */
-function DayAgenda({ date, tasks, today, compact = false, quiet = false, spotlight = null, onAdd, onEdit, onDelete }: {
-  date: string; tasks: ScheduleTask[]; today: string; compact?: boolean;
+function DayAgenda({ date, tasks, today, holiday, compact = false, quiet = false, spotlight = null, onAdd, onEdit, onDelete }: {
+  date: string; tasks: ScheduleTask[]; today: string; holiday?: string | null; compact?: boolean;
   /** 등록된 일정이 하나도 없을 때. 위의 안내와 겹치므로 빈 문구를 접는다. */
   quiet?: boolean;
   spotlight?: number | null;
@@ -303,6 +314,7 @@ function DayAgenda({ date, tasks, today, compact = false, quiet = false, spotlig
 }) {
   const t = useT();
   const day = weekday(date);
+  const isRed = day === 0 || Boolean(holiday);
   // 주 보기는 이레가 같은 달인 경우가 대부분이다. 연·월을 매 줄 반복하지 않고 날짜와 요일만 적는다.
   const label = compact
     ? t('cal.shortDayLabel', { month: Number(date.slice(5, 7)), day: Number(date.slice(8)), weekday: t(`cal.wd.${day}` as MessageKey) })
@@ -311,8 +323,9 @@ function DayAgenda({ date, tasks, today, compact = false, quiet = false, spotlig
   return (
     <section className={`cal-agenda ${date === today ? 'today' : ''} ${compact ? 'compact' : ''}`}>
       <div className="sched-section-head">
-        <h3 className={`sched-section-title ${day === 0 ? 'sun' : day === 6 ? 'sat' : ''}`}>
+        <h3 className={`sched-section-title ${isRed ? 'sun' : day === 6 ? 'sat' : ''}`}>
           {label}
+          {holiday && <span className="cal-holiday-badge">{holiday}</span>}
           {date === today && <span className="cal-today-badge">{t('sched.today')}</span>}
           {tasks.length > 0 && <span className="sched-section-count">{tasks.length}</span>}
         </h3>

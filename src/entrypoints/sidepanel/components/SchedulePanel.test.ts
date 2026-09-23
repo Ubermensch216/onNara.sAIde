@@ -316,6 +316,15 @@ it('고른 보기 방식은 다음에 열 때도 유지된다', async () => {
   expect(document.querySelectorAll('.cal-agenda')).toHaveLength(7);
 });
 
+it('★ 캘린더에 공휴일이 표시되고 빨간색 및 공휴일명이 렌더링된다', async () => {
+  await render('month');
+  const holidayCells = document.querySelectorAll('.cal-cell.holiday');
+  expect(holidayCells.length).toBeGreaterThan(0);
+
+  const holidayNames = document.querySelectorAll('.cal-holiday-name');
+  expect(holidayNames.length).toBeGreaterThan(0);
+});
+
 /** React가 제어하는 입력에 값을 넣는다. value를 직접 대입하면 React가 변화를 알아채지 못한다. */
 function setValue(input: HTMLInputElement, value: string): void {
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;

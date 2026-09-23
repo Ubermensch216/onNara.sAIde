@@ -1345,9 +1345,32 @@
   color: var(--fg);
 }
 
-.cal-cell.sun:not(.other) .cal-day { color: var(--danger); }
+.cal-cell.sun:not(.other) .cal-day,
+.cal-cell.holiday:not(.other) .cal-day { color: var(--danger); }
 .cal-cell.sat:not(.other) .cal-day { color: var(--accent); }
 .cal-cell.today .cal-day { color: var(--accent); }
+
+.cal-day-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 2px;
+}
+
+.cal-holiday-name {
+  font-size: 8.5px;
+  font-weight: 600;
+  color: var(--danger);
+  line-height: 1.1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 34px;
+}
+
+.cal-cell.other .cal-holiday-name {
+  color: var(--fg-muted);
+}
 
 .cal-chip {
   display: block;
@@ -1379,12 +1402,22 @@
 .cal-agenda { display: flex; flex-direction: column; gap: 6px; }
 .cal-agenda.compact .sched-section-head { padding-top: 2px; border-top: 1px solid var(--border); }
 .cal-agenda.today .sched-section-title { color: var(--accent); }
+.sched-section-title.holiday { color: var(--danger); }
 
 .cal-today-badge {
   font-size: 10px;
   font-weight: 700;
   color: var(--accent);
   background: var(--accent-soft);
+  border-radius: 999px;
+  padding: 1px 6px;
+}
+
+.cal-holiday-badge {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--danger);
+  background: var(--danger-soft);
   border-radius: 999px;
   padding: 1px 6px;
 }
