@@ -966,11 +966,28 @@ export async function markDocumentsRead(tabId: number, titles: string[], control
     : null;
   const found = await dispatchContent(tabId, { type: 'EXTRACT', budgetTokens: LOCATE_BUDGET_TOKENS, purpose: 'page', targetTitle: titles[0], control: taskControl });
   if (found.type === 'FAILED') return { type: 'ERROR', error: found.error };
+  // 현재 화면에서 이미 열람(read) 상태인 문서는 온나라 버튼을 다시 누를 필요 없이 바로 완료로 본다.
+  const pageRows = found.type === 'EXTRACTED' ? found.payload.structuredData?.rows : undefined;
+  const alreadyRead: string[] = [];
+  let remainingTitles = titles;
+  if (pageRows) {
+    for (const title of titles) {
+      const row = pageRows.find(r => r.title && sameDocumentTitle(r.title, title));
+      if (row && documentReadState(row) === 'read') alreadyRead.push(title);
+    }
+    if (alreadyRead.length === titles.length) {
+      return { type: 'DOCUMENTS_MARKED_READ', marked: alreadyRead, unconfirmed: [], missing: [], dialogs: [] };
+    }
+    if (alreadyRead.length > 0) {
+      remainingTitles = titles.filter(t => !alreadyRead.includes(t));
+    }
+  }
+
   // 브리핑은 서버 목록의 모든 페이지를 읽는다. 카드의 문서가 현재 화면 페이지에 없으면
   // 원본 화면을 바꾸지 않고 작업 탭에 해당 페이지를 복원해 같은 버튼을 누른다.
-  if (!restored && titles.length === 1 && saved && serverTab !== undefined &&
-      !(found.type === 'EXTRACTED' && found.payload.structuredData?.rows.some(row => row.title && sameDocumentTitle(row.title, titles[0]!)))) {
-    return markOffPageDocument(serverTab, saved, titles[0]!, control);
+  if (!restored && remainingTitles.length === 1 && saved && serverTab !== undefined &&
+      !(found.type === 'EXTRACTED' && found.payload.structuredData?.rows.some(row => row.title && sameDocumentTitle(row.title, remainingTitles[0]!)))) {
+    return markOffPageDocument(serverTab, saved, remainingTitles[0]!, control);
   }
   if (found.type !== 'EXTRACTED' || !found.payload.structuredData) {
     return { type: 'ERROR', error: {
@@ -981,7 +998,7 @@ export async function markDocumentsRead(tabId: number, titles: string[], control
   }
   const frameId = found.payload.sourceFrameId ?? 0;
 
-  const prepared = await sendToFrame(tabId, frameId, { type: 'PREPARE_MARK_READ', titles, control: taskControl });
+  const prepared = await sendToFrame(tabId, frameId, { type: 'PREPARE_MARK_READ', titles: remainingTitles, control: taskControl });
   if (prepared.type === 'FAILED') return { type: 'ERROR', error: prepared.error };
   if (prepared.type !== 'MARK_READ_PREPARED') return { type: 'ERROR', error: { code: 'UNKNOWN', message: '읽기처리할 문서를 체크하지 못했습니다.' } };
 
@@ -1068,7 +1085,7 @@ export async function markDocumentsRead(tabId: number, titles: string[], control
       pending.delete(title);
     }
   }
-  return { type: 'DOCUMENTS_MARKED_READ', marked, unconfirmed: [...pending], missing: prepared.missing, dialogs };
+  return { type: 'DOCUMENTS_MARKED_READ', marked: [...alreadyRead, ...marked], unconfirmed: [...pending], missing: prepared.missing, dialogs };
 }
 
 async function frameDialogs(tabId: number, frameId: number, previous: string[], control: RequestControl): Promise<string[]> {
@@ -1119,10 +1136,11 @@ async function markOffPageDocument(
       }
       location = response.next;
     }
-    return { type: 'ERROR', error: {
-      code: 'UNKNOWN', message: '저장된 받은문서 목록에서 해당 문서를 찾지 못했습니다.',
-      hint: '온나라에서 목록을 새로 고친 뒤 브리핑을 다시 확인하세요.',
-    } };
+    // 저장된 받은문서 목록(미열람 목록) 전체를 확인했으나 해당 문서를 찾지 못한 경우:
+    // 사용자가 온나라 메인 화면에서 직접 읽었거나 '읽기처리'를 눌러 이미 '열람' 상태가 됨으로써
+    // 미열람 목록에서 제외된 것이다(settle 함수의 complete 판정과 동일).
+    // 이미 읽기 처리가 완료된 것으로 보고 브리핑 리스트에서 정상적으로 정리(삭제)할 수 있게 한다.
+    return { type: 'DOCUMENTS_MARKED_READ', marked: [title], unconfirmed: [], missing: [], dialogs: [] };
   } catch (error) {
     if (error instanceof InboxPageError) return { type: 'ERROR', error: error.appError };
     if (error instanceof ReadFailure) return { type: 'ERROR', error: error.appError };
