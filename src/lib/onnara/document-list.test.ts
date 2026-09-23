@@ -174,6 +174,8 @@ it('열람 열이 없으면 상태 칸을 보되, 처리 단계를 열람으로 
   // '미열람'은 '열람'을 포함한다. 부정 낱말을 먼저 가리지 않으면 전부 열람으로 집계된다.
   expect(documentReadState({ readState: '미열람', status: '열람' })).toBe('unread');
   expect(documentReadState({ status: '접수' })).toBe('unknown');
+  expect(documentReadState({ status: '담당확인' })).toBe('unknown');
+  expect(documentReadState({ status: '접수확인' })).toBe('unknown');
   expect(documentReadState({})).toBe('unknown');
 });
 

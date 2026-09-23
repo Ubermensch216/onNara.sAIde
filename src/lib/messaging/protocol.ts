@@ -295,8 +295,10 @@ export type SWToContent = (
   /** 이 프레임이 받은문서 목록이면 그 화면의 위치를 잡아 돌려준다(N1). */
   | { type: 'LOCATE_INBOX' }
   | { type: 'FETCH_INBOX_PAGE'; location: DocumentListLocation }
-  /** 이 프레임의 목록에서 문서들을 체크하고 `읽기처리` 버튼에 표지를 붙인다. 누르지는 않는다. */
+  /** 이 프레임의 목록에서 문서들을 체크한다. 같은 프레임에 버튼이 있으면 표지도 붙인다. */
   | { type: 'PREPARE_MARK_READ'; titles: string[] }
+  /** 목록과 도구 모음이 다른 프레임에 있을 때 읽기처리 버튼을 찾는다. */
+  | { type: 'MARK_READ_BUTTON' }
 ) & { control: RequestControl };
 
 export type ContentToSW =
@@ -313,7 +315,8 @@ export type ContentToSW =
   | { type: 'ATTACHMENTS_FOUND'; items: AttachmentItem[] }
   | { type: 'ATTACHMENT_CLICKED'; clicked: boolean }
   | { type: 'DIALOG_CHECKED'; message?: string | null }
-  | { type: 'MARK_READ_PREPARED'; checked: string[]; missing: string[] }
+  | { type: 'MARK_READ_PREPARED'; checked: string[]; missing: string[]; buttonMarked: boolean }
+  | { type: 'READ_BUTTON_MARKED'; marked: boolean }
   | { type: 'ACTED'; result: ActionResult }
   | { type: 'FAILED'; error: AppError };
 

@@ -6,7 +6,7 @@
  *   대상 외 문서가 함께 처리되지 않는지를 가장 먼저 본다.
  */
 import { afterEach, expect, it, vi } from 'vitest';
-import { clickMarkedReadButton, findReadButton, prepareMarkRead, READ_BUTTON_MARK, READ_DIALOG_ATTR, readMarkReadDialogs } from './mark-read';
+import { clickMarkedReadButton, findReadButton, markReadButton, prepareMarkRead, READ_BUTTON_MARK, READ_DIALOG_ATTR, readMarkReadDialogs, selectMarkReadRows } from './mark-read';
 
 function list(extra = '') {
   document.body.innerHTML = `
@@ -54,6 +54,17 @@ it('읽기처리 버튼이 없으면 아무것도 체크하지 않고 멈춘다'
   const prepared = prepareMarkRead(['법원문서 통보(회생 등 10건)']);
   expect(prepared.ok).toBe(false);
   expect(box('c3').checked).toBe(false);
+});
+
+it('목록 프레임에 버튼이 없어도 대상 행을 체크하고 다른 프레임의 버튼을 표시할 수 있다', () => {
+  list();
+  document.getElementById('read')!.remove();
+  expect(selectMarkReadRows(['법원문서 통보(회생 등 10건)'])).toMatchObject({ ok: true, checked: ['법원문서 통보(회생 등 10건)'] });
+  expect(box('c3').checked).toBe(true);
+  const toolbar = document.implementation.createHTMLDocument('상위 도구 모음');
+  toolbar.body.innerHTML = '<button>읽기처리</button>';
+  expect(markReadButton(toolbar)).toBe(true);
+  expect(toolbar.querySelector(`[${READ_BUTTON_MARK}]`)).not.toBeNull();
 });
 
 it('같은 글자의 버튼이 둘이면 고르지 않는다', () => {

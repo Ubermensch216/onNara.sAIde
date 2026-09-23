@@ -231,10 +231,14 @@ const READ_WORDS = ['열람', '읽음', '확인'];
  *   모든 미열람 문서가 열람으로 집계되어, 브리핑이 "상태를 바꾸지 않았다"고 거짓말하게 된다.
  */
 export function documentReadState(row: Partial<Record<DocumentListField, string>>): DocumentReadState {
-  const value = normalizedHeader(`${row.readState ?? ''} ${row.status ?? ''}`);
-  if (!value) return 'unknown';
-  if (UNREAD_WORDS.some(word => value.includes(word))) return 'unread';
-  if (READ_WORDS.some(word => value.includes(word))) return 'read';
+  const dedicated = normalizedHeader(row.readState ?? '');
+  if (UNREAD_WORDS.some(word => dedicated.includes(word))) return 'unread';
+  if (READ_WORDS.some(word => dedicated.includes(word))) return 'read';
+  // 일반 처리 상태의 '담당확인'·'접수확인'은 열람 기록이 아니다. 전용 열이 없는
+  // 판본에서도 상태 칸에 열람/읽음이 명시된 경우에만 열람 여부로 쓴다.
+  const status = normalizedHeader(row.status ?? '');
+  if (UNREAD_WORDS.filter(word => word !== '미확인' && word !== '신규').some(word => status.includes(word))) return 'unread';
+  if (['열람', '읽음'].some(word => status.includes(word))) return 'read';
   return 'unknown';
 }
 

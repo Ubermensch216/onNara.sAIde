@@ -232,9 +232,9 @@ function InboxCard({ doc, lit, model, verdict, onOpenSchedule, tab, settings, dr
         {/* ★ 분류가 맞았는지 한 번 누르는 것으로 받는다(B4). 이 수치가 관심도 학습의 표본이 된다. */}
         <FeedbackButtons kind="inbox-relevance" targetKey={doc.key} model={model} initial={verdict} compact />
         <span className="spacer" />
-        {/* ★ 넘기면 문서를 열어 온나라에서 열람 처리한다. 되돌릴 수 없으므로 제목 풍선에 적어 둔다. */}
+        {/* ★ 넘기면 목록에서 읽기처리를 누른다. 되돌릴 수 없으므로 제목 풍선에 적어 둔다. */}
         <button type="button" className="inbox-link" disabled={Boolean(dismissing)}
-          title={doc.readState === 'unread' ? t('inbox.dismissHint') : undefined}
+          title={t('inbox.dismissHint')}
           onClick={() => void dismissDoc(doc, tab)}>
           {dismissing === doc.key ? t('inbox.dismissing') : t('inbox.dismiss')}
         </button>

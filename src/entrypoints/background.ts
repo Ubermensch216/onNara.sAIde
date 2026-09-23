@@ -957,7 +957,7 @@ const MARK_READ_SERVER_CHECK_MS = 3_000;
  * ★ 페이지 스크립트를 부르는 모든 걸음에 제한 시간을 둔다. 페이지에 확인창이 떠 프레임이
  *   멈추면 `executeScript`가 돌아오지 않고, 그 한 건이 작업 잠금을 쥔 채 남는다.
  */
-export async function markDocumentsRead(tabId: number, titles: string[], control: RequestControl): Promise<SWToPanel> {
+export async function markDocumentsRead(tabId: number, titles: string[], control: RequestControl, restored = false): Promise<SWToPanel> {
   const taskControl: RequestControl = { ...control, expectedUrl: undefined };
   const saved = await loadInboxLocation();
   const serverTab = saved ? (await findOnnaraTab(tabId, saved.origin))?.id : undefined;
@@ -966,6 +966,12 @@ export async function markDocumentsRead(tabId: number, titles: string[], control
     : null;
   const found = await dispatchContent(tabId, { type: 'EXTRACT', budgetTokens: LOCATE_BUDGET_TOKENS, purpose: 'page', targetTitle: titles[0], control: taskControl });
   if (found.type === 'FAILED') return { type: 'ERROR', error: found.error };
+  // 브리핑은 서버 목록의 모든 페이지를 읽는다. 카드의 문서가 현재 화면 페이지에 없으면
+  // 원본 화면을 바꾸지 않고 작업 탭에 해당 페이지를 복원해 같은 버튼을 누른다.
+  if (!restored && titles.length === 1 && saved && serverTab !== undefined &&
+      !(found.type === 'EXTRACTED' && found.payload.structuredData?.rows.some(row => row.title && sameDocumentTitle(row.title, titles[0]!)))) {
+    return markOffPageDocument(serverTab, saved, titles[0]!, control);
+  }
   if (found.type !== 'EXTRACTED' || !found.payload.structuredData) {
     return { type: 'ERROR', error: {
       code: 'UNKNOWN',
@@ -979,10 +985,31 @@ export async function markDocumentsRead(tabId: number, titles: string[], control
   if (prepared.type === 'FAILED') return { type: 'ERROR', error: prepared.error };
   if (prepared.type !== 'MARK_READ_PREPARED') return { type: 'ERROR', error: { code: 'UNKNOWN', message: '읽기처리할 문서를 체크하지 못했습니다.' } };
 
+  let buttonFrameId = frameId;
+  if (!prepared.buttonMarked) {
+    const frames = await chrome.webNavigation.getAllFrames({ tabId }).catch(() => null);
+    const byId = new Map(frames?.map(frame => [frame.frameId, frame]) ?? []);
+    let parentId = byId.get(frameId)?.parentFrameId ?? -1;
+    let buttonFound = false;
+    while (parentId >= 0) {
+      const response = await sendToFrame(tabId, parentId, { type: 'MARK_READ_BUTTON', control: taskControl });
+      if (response.type === 'READ_BUTTON_MARKED' && response.marked) {
+        buttonFrameId = parentId;
+        buttonFound = true;
+        break;
+      }
+      parentId = byId.get(parentId)?.parentFrameId ?? -1;
+    }
+    if (!buttonFound) return { type: 'ERROR', error: {
+      code: 'UNKNOWN', message: "'읽기처리' 버튼을 찾지 못했습니다.",
+      hint: '온나라 공유/공람 > 받은문서 목록과 우측 상단의 읽기처리 버튼이 보이는 상태에서 다시 시도하세요.',
+    } };
+  }
+
   let clicked = false;
   try {
     const [result] = await frameTimeout(chrome.scripting.executeScript({
-      target: { tabId, frameIds: [frameId] }, world: 'MAIN',
+      target: { tabId, frameIds: [buttonFrameId] }, world: 'MAIN',
       func: clickMarkedReadButton, args: [READ_BUTTON_MARK, READ_DIALOG_ATTR],
     }), taskControl);
     clicked = Boolean((result?.result as { clicked?: boolean } | undefined)?.clicked);
@@ -1000,13 +1027,14 @@ export async function markDocumentsRead(tabId: number, titles: string[], control
   let dialogs: string[] = [];
   const serverStillUnread = new Set<string>();
   /** 판정할 수 없던 문서. 열람 칸이 없는 목록이면 행이 남아 있어도 열람인지 알 수 없다. */
-  const settle = (rows: Array<{ title?: string; readState?: string }>, complete: boolean) => {
+  const settle = (rows: StructuredDocumentList['rows'], complete: boolean) => {
     for (const title of [...pending]) {
       const row = rows.find(item => item.title && sameDocumentTitle(item.title, title));
-      if (complete && row && documentReadState({ readState: row.readState }) === 'unread') serverStillUnread.add(title);
-      // 미열람 목록에서 빠졌거나, 전용 열람 칸이 열람으로 바뀌었다. 상태 칸('담당확인' 등)은 보지 않는다.
+      if (complete && row && documentReadState(row) === 'unread') serverStillUnread.add(title);
+      // 미열람 목록에서 빠졌거나, 열람 여부가 명시적으로 열람으로 바뀌었다.
+      // 일반 처리 상태('담당확인' 등)는 documentReadState가 열람으로 보지 않는다.
       // 행이 없다는 것은 목록 전체를 읽었을 때만 근거가 된다 — 화면 목록은 한 페이지뿐이다.
-      if (row ? documentReadState({ readState: row.readState }) === 'read' : complete) {
+      if (row ? documentReadState(row) === 'read' : complete) {
         pending.delete(title);
         marked.push(title);
       }
@@ -1016,7 +1044,7 @@ export async function markDocumentsRead(tabId: number, titles: string[], control
   let serverCheckedAt = Date.now();
   while (pending.size && Date.now() < until && !cancelled.has(control.id)) {
     await delay(MARK_READ_POLL_MS);
-    dialogs = await frameDialogs(tabId, frameId, dialogs, taskControl);
+    dialogs = await frameDialogs(tabId, buttonFrameId, dialogs, taskControl);
     if (dialogs.some(message => READ_FAILURE_PATTERN.test(message))) break;
     const list = await dispatchContent(tabId, { type: 'EXTRACT', budgetTokens: LOCATE_BUDGET_TOKENS, purpose: 'page', control: taskControl });
     const rows = list.type === 'EXTRACTED' ? list.payload.structuredData?.rows : undefined;
@@ -1053,6 +1081,57 @@ async function frameDialogs(tabId: number, frameId: number, previous: string[], 
     return [...new Set([...previous, ...messages.filter(Boolean)])];
   } catch {
     return previous;
+  }
+}
+
+/** 화면에 없는 카드 한 건은 저장된 조회 조건에서 해당 페이지를 찾아 작업 탭에 복원한다. */
+async function markOffPageDocument(
+  sourceTabId: number,
+  saved: NonNullable<Awaited<ReturnType<typeof loadInboxLocation>>>,
+  title: string,
+  control: RequestControl,
+): Promise<SWToPanel> {
+  const taskControl: RequestControl = { ...control, expectedUrl: undefined };
+  let workTabId: number | undefined;
+  try {
+    let location: DocumentListLocation | null = firstInboxPage(saved.location);
+    const visited = new Set<string>();
+    while (location) {
+      assertCurrent(taskControl, '', cancelled.has(control.id));
+      const key = JSON.stringify(location);
+      if (visited.has(key)) throw new Error('목록 페이지가 반복되어 문서를 찾지 못했습니다.');
+      visited.add(key);
+      const response = await sendToFrame(sourceTabId, 0, { type: 'FETCH_INBOX_PAGE', location, control: taskControl });
+      if (response.type === 'FAILED') throw new InboxPageError(response.error);
+      if (response.type !== 'INBOX_PAGE') throw new Error('받은문서 목록을 다시 조회하지 못했습니다.');
+      const row = response.list.rows.find(item => item.title && sameDocumentTitle(item.title, title));
+      if (row) {
+        if (documentReadState(row) === 'read') {
+          return { type: 'DOCUMENTS_MARKED_READ', marked: [title], unconfirmed: [], missing: [], dialogs: [] };
+        }
+        const source = await chrome.tabs.get(sourceTabId);
+        const work = await duplicateWorkTab(sourceTabId);
+        workTabId = work.id;
+        if (workTabId === undefined) throw new Error('받은문서 작업 탭을 만들지 못했습니다.');
+        await keepBackground(workTabId, source);
+        await waitForDocumentList(workTabId, documentTarget(title), LOCATE_BUDGET_TOKENS, taskControl, location);
+        return await markDocumentsRead(workTabId, [title], control, true);
+      }
+      location = response.next;
+    }
+    return { type: 'ERROR', error: {
+      code: 'UNKNOWN', message: '저장된 받은문서 목록에서 해당 문서를 찾지 못했습니다.',
+      hint: '온나라에서 목록을 새로 고친 뒤 브리핑을 다시 확인하세요.',
+    } };
+  } catch (error) {
+    if (error instanceof InboxPageError) return { type: 'ERROR', error: error.appError };
+    if (error instanceof ReadFailure) return { type: 'ERROR', error: error.appError };
+    return { type: 'ERROR', error: { code: 'UNKNOWN', message: error instanceof Error ? error.message : String(error) } };
+  } finally {
+    if (workTabId !== undefined) {
+      await chrome.tabs.remove(workTabId).catch(() => undefined);
+      forgetWorkTab(workTabId);
+    }
   }
 }
 

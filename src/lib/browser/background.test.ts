@@ -785,10 +785,10 @@ it.each(['failed', 'repeated'] as const)('뒤 페이지가 %s이면 앞의 10건
 });
 
 /** 받은문서 목록 프레임(2번)을 흉내 낸다. rowsAfter는 읽기처리 뒤 목록이 다시 그린 행이다. */
-function markReadHarness(rowsAfter: Array<{ title: string; readState?: string }>, dialogs: string[] = [], serverRowsAfter?: Array<{ title: string; readState?: string }>) {
+function markReadHarness(rowsAfter: Array<{ title: string; readState?: string; status?: string }>, dialogs: string[] = [], serverRowsAfter?: Array<{ title: string; readState?: string; status?: string }>, buttonFrameId = 2) {
   const common = { truncated: false, keptRatio: 1, estimatedTokens: 20, extractedAt: 1 };
   let clicked = false;
-  const listPayload = (rows: Array<{ title: string; readState?: string }>) => ({
+  const listPayload = (rows: Array<{ title: string; readState?: string; status?: string }>) => ({
     type: 'EXTRACTED',
     payload: {
       ...common, url: 'https://onnara.test/frame/list', title: '받은문서', text: '행', charCount: 1,
@@ -797,11 +797,12 @@ function markReadHarness(rowsAfter: Array<{ title: string; readState?: string }>
     },
   });
   const sendMessage = vi.fn(async (_tabId: number, message: { type: string; titles?: string[] }, options: { frameId: number }) => {
+    if (message.type === 'MARK_READ_BUTTON') return { type: 'READ_BUTTON_MARKED', marked: options.frameId === buttonFrameId };
     if (message.type === 'FETCH_INBOX_PAGE') return {
       type: 'INBOX_PAGE', list: { kind: 'onnara-document-list', listName: '받은문서', columns: [], rows: serverRowsAfter ?? [] }, next: null,
     };
     if (options.frameId !== 2) return { type: 'EXTRACTED', payload: { ...common, url: 'https://onnara.test/main', title: '온나라', text: '', charCount: 0, method: 'innerText' } };
-    if (message.type === 'PREPARE_MARK_READ') return { type: 'MARK_READ_PREPARED', checked: message.titles, missing: [] };
+    if (message.type === 'PREPARE_MARK_READ') return { type: 'MARK_READ_PREPARED', checked: message.titles, missing: [], buttonMarked: buttonFrameId === 2 };
     return listPayload(clicked ? rowsAfter : [{ title: '법원문서 통보', readState: '미열람' }, { title: '다른 공문 제목', readState: '미열람' }]);
   });
   const executeScript = vi.fn(async (injection: { world?: string; func?: { name: string } }) => {
@@ -839,6 +840,78 @@ it('읽기처리 뒤 서버의 전체 미열람 목록에서 빠진 문서만 �
   // 목록이 있는 프레임에서, 페이지 영역으로 누른다.
   expect(executeScript).toHaveBeenCalledWith(expect.objectContaining({ target: { tabId: 9, frameIds: [2] }, world: 'MAIN' }));
   expect(sendMessage).toHaveBeenCalledWith(9, expect.objectContaining({ type: 'FETCH_INBOX_PAGE' }), { frameId: 0 });
+});
+
+it('전용 열람 열이 없어도 서버 상태 칸이 명시적으로 열람이면 성공으로 확인한다', async () => {
+  markReadHarness([{ title: '법원문서 통보', status: '담당확인' }], [], [{ title: '법원문서 통보', status: '열람' }]);
+  const response = await handlePanelMessage({ type: 'MARK_DOCUMENTS_READ', tabId: 9, titles: ['법원문서 통보'],
+    control: { id: crypto.randomUUID(), deadline: Date.now() + 30_000 } });
+  expect(response).toMatchObject({ type: 'DOCUMENTS_MARKED_READ', marked: ['법원문서 통보'], unconfirmed: [] });
+});
+
+it('목록은 하위 프레임에 있고 읽기처리 버튼은 상위 프레임에 있어도 실행한다', async () => {
+  const { executeScript, sendMessage } = markReadHarness(
+    [{ title: '다른 공문 제목' }], [], [{ title: '다른 공문 제목' }], 0,
+  );
+  const response = await handlePanelMessage({
+    type: 'MARK_DOCUMENTS_READ', tabId: 9, titles: ['법원문서 통보'],
+    control: { id: crypto.randomUUID(), deadline: Date.now() + 30_000 },
+  });
+  expect(response).toMatchObject({ type: 'DOCUMENTS_MARKED_READ', marked: ['법원문서 통보'] });
+  expect(sendMessage).toHaveBeenCalledWith(9, expect.objectContaining({ type: 'MARK_READ_BUTTON' }), { frameId: 0 });
+  expect(executeScript).toHaveBeenCalledWith(expect.objectContaining({ target: { tabId: 9, frameIds: [0] }, world: 'MAIN' }));
+});
+
+it('카드의 문서가 현재 페이지에 없으면 작업 탭에 해당 페이지를 복원해 읽기처리한다', async () => {
+  vi.useFakeTimers();
+  const title = '두 번째 페이지 문서';
+  const location = { url: 'https://onnara.test/frame/list', framePath: [1], form: { method: 'post' as const, fields: [['pageIndex', '1']] } };
+  const common = { url: location.url, title: '받은문서', text: '행', charCount: 1, method: 'onnara-document-list', truncated: false, keptRatio: 1, estimatedTokens: 20, extractedAt: 1 };
+  let restored = false;
+  let clicked = false;
+  const sendMessage = vi.fn(async (tabId: number, message: { type: string; location?: typeof location; titles?: string[] }, options: { frameId: number }) => {
+    if (message.type === 'FETCH_INBOX_PAGE') {
+      const page = message.location!.form.fields[0]![1];
+      return { type: 'INBOX_PAGE', list: { kind: 'onnara-document-list', listName: '받은문서', columns: [],
+        rows: page === '1' ? [{ title: '첫 페이지 문서' }] : clicked ? [] : [{ title, readState: '미열람' }] },
+      next: page === '1' ? { ...location, form: { ...location.form, fields: [['pageIndex', '2']] } } : null };
+    }
+    if (message.type === 'RESTORE_DOCUMENT_LIST') {
+      if (tabId === 20 && options.frameId === 0) restored = true;
+      return { type: 'DOCUMENT_LIST_RESTORED', restored: tabId === 20 && options.frameId === 0 };
+    }
+    if (message.type === 'PREPARE_MARK_READ') return { type: 'MARK_READ_PREPARED', checked: message.titles, missing: [], buttonMarked: true };
+    if (options.frameId === 2) return { type: 'EXTRACTED', payload: { ...common, structuredData: {
+      kind: 'onnara-document-list', listName: '받은문서', columns: [{ key: 'title', label: '제목', sourceIndex: 0 }],
+      rows: tabId === 20 && restored && !clicked ? [{ title, readState: '미열람' }] : [{ title: '첫 페이지 문서' }],
+    } } };
+    return { type: 'EXTRACTED', payload: { ...common, text: '메뉴', structuredData: undefined } };
+  });
+  const remove = vi.fn(async () => undefined);
+  vi.stubGlobal('chrome', {
+    storage: { local: { get: vi.fn(async () => ({ 'saide.inboxLocation': { location, listName: '받은문서' } })) } },
+    tabs: {
+      get: vi.fn(async (id: number) => ({ id, url: 'https://onnara.test/main', active: id === 9, status: 'complete', windowId: 1 })),
+      query: vi.fn(async () => [{ id: 9, url: 'https://onnara.test/main', active: true }, { id: 20, url: 'https://onnara.test/main' }]),
+      duplicate: vi.fn(async () => ({ id: 20, url: 'https://onnara.test/main', active: false, windowId: 1 })),
+      sendMessage, remove,
+    },
+    scripting: { executeScript: vi.fn(async (injection: { world?: string; func?: { name: string } }) => {
+      if (injection.world !== 'MAIN') return [];
+      if (injection.func?.name === 'clickMarkedReadButton') { clicked = true; return [{ result: { clicked: true } }]; }
+      return [{ result: [] }];
+    }) },
+    webNavigation: { getAllFrames: vi.fn(async () => [
+      { frameId: 0, parentFrameId: -1, url: 'https://onnara.test/main' },
+      { frameId: 2, parentFrameId: 0, url: location.url },
+    ]) },
+  });
+  const pending = handlePanelMessage({ type: 'MARK_DOCUMENTS_READ', tabId: 9, titles: [title],
+    control: { id: crypto.randomUUID(), deadline: Date.now() + 90_000 } });
+  await vi.advanceTimersByTimeAsync(20_000);
+  expect(await pending).toMatchObject({ type: 'DOCUMENTS_MARKED_READ', marked: [title] });
+  expect(sendMessage).toHaveBeenCalledWith(20, expect.objectContaining({ type: 'PREPARE_MARK_READ', titles: [title] }), { frameId: 2 });
+  expect(remove).toHaveBeenCalledWith(20);
 });
 
 it('온나라가 실패를 알리면 기다리지 않고 확인하지 못한 채로 돌려준다', async () => {

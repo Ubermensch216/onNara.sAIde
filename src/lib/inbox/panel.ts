@@ -286,8 +286,8 @@ async function applyReadPolicy(
   return marked.size;
 }
 
-/** 체크 → `읽기처리` → 목록 재확인까지. 서비스 워커의 대기 한도(12초)보다 넉넉히 둔다. */
-const MARK_READ_TIMEOUT_MS = 45_000;
+/** 다른 페이지의 문서는 작업 탭에 목록을 복원한 뒤 처리하므로 복원 시간까지 허용한다. */
+const MARK_READ_TIMEOUT_MS = 90_000;
 
 async function patchLocal(key: string, patch: Partial<InboxDoc>): Promise<void> {
   await patchInboxDoc(key, patch);
@@ -306,10 +306,8 @@ async function patchLocal(key: string, patch: Partial<InboxDoc>): Promise<void> 
  */
 export async function dismissDoc(doc: InboxDoc, tab: TabSummary | null): Promise<boolean> {
   if (useInbox.getState().dismissing) return false;
-  if (doc.readState !== 'unread') {
-    await patchLocal(doc.key, { dismissedAt: Date.now() });
-    return true;
-  }
+  // 원장의 readState는 이전 목록에서 읽은 값이다. 과거 판본은 '담당확인'도
+  // 열람으로 잘못 저장했으므로, 이 값만 믿고 온나라 요청을 건너뛰지 않는다.
   if (!tab || isRestrictedUrl(tab.url)) {
     useInbox.setState({ error: { code: 'UNKNOWN', message: t('inbox.dismiss.noTab') } });
     return false;

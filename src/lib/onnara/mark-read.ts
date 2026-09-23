@@ -77,6 +77,14 @@ function toggle(box: HTMLInputElement, checked: boolean): void {
 }
 
 /** 1단계: 대상 행만 체크하고 버튼에 표지를 붙인다. 아직 아무것도 처리하지 않는다. */
+export function markReadButton(root: Document = document): boolean {
+  const button = findReadButton(root);
+  if (!button) return false;
+  for (const old of root.querySelectorAll(`[${READ_BUTTON_MARK}]`)) old.removeAttribute(READ_BUTTON_MARK);
+  button.setAttribute(READ_BUTTON_MARK, '');
+  return true;
+}
+
 export function prepareMarkRead(titles: string[], root: Document = document): MarkReadPrepared {
   const button = findReadButton(root);
   if (!button) {
@@ -87,6 +95,13 @@ export function prepareMarkRead(titles: string[], root: Document = document): Ma
     };
   }
 
+  const prepared = selectMarkReadRows(titles, root);
+  if (prepared.ok) markReadButton(root);
+  return prepared;
+}
+
+/** 목록 프레임과 읽기처리 도구 모음이 다른 프레임이어도 행 선택은 수행한다. */
+export function selectMarkReadRows(titles: string[], root: Document = document): MarkReadPrepared {
   const targets = new Map<string, Element>();
   const missing: string[] = [];
   for (const title of titles) {
@@ -116,8 +131,6 @@ export function prepareMarkRead(titles: string[], root: Document = document): Ma
   }
   if (!checked.length) return { ok: false, message: '처리할 문서를 체크하지 못했습니다.' };
 
-  for (const old of root.querySelectorAll(`[${READ_BUTTON_MARK}]`)) old.removeAttribute(READ_BUTTON_MARK);
-  button.setAttribute(READ_BUTTON_MARK, '');
   return { ok: true, checked, missing };
 }
 
