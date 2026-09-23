@@ -113,5 +113,12 @@ export default defineConfig({
         description: '__MSG_commandFocusInput__',
       },
     },
+
+    web_accessible_resources: [
+      {
+        resources: ['drawer-page.html', 'sidepanel.html', 'assets/*', 'icon/*', 'cmaps/*'],
+        matches: ['<all_urls>'],
+      },
+    ],
   },
 });

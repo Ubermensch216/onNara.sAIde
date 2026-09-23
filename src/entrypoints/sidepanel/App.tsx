@@ -116,6 +116,9 @@ export default function App() {
   const [automationError, setAutomationError] = useState<AppError | null>(null);
   /** 첫 실행 안내(B3). 저장소를 읽어 한 번만 켠다. */
   const [onboarding, setOnboarding] = useState(false);
+  const isDrawerMode = useMemo(() => {
+    try { return new URLSearchParams(window.location.search).get('mode') === 'drawer'; } catch { return false; }
+  }, []);
   const runningJobs = useAutomation(state => state.jobs.filter(job => job.status === 'queued' || job.status === 'running').length);
   // 기한이 임박한 일정은 어느 탭에 있든 보여야 한다. 그러려고 배지를 헤더가 아니라 탭에 둔다.
   const dueTasks = useSchedule(state => urgentCount(state.tasks));
@@ -135,6 +138,14 @@ export default function App() {
   useEffect(() => { void loadInbox(); }, []);
   // 알림을 눌러 연 패널은 공유/공람 탭을 편다(N1). 표시는 한 번 쓰고 지운다.
   useEffect(() => { void takeInboxViewRequest().then(open => { if (open) setView('inbox'); }); }, []);
+
+  // 기안기 드로어 모드일 때 기본 뷰를 AI 도우미로 맞춘다
+  useEffect(() => {
+    if (isDrawerMode) {
+      setView('ai');
+      window.parent.postMessage({ type: 'SAIDE_REQUEST_DRAFT_INFO' }, '*');
+    }
+  }, [isDrawerMode]);
 
   // 처음 여는 사람에게는 `/`와 `@`의 규칙을 아무도 알려 주지 않았다(B3).
   useEffect(() => { void shouldShowOnboarding().then(setOnboarding); }, []);
@@ -680,6 +691,12 @@ export default function App() {
         <button className="icon-btn" onClick={() => chrome.runtime.openOptionsPage()} title={t('ui.settings')} aria-label={t('ui.settings')}>
           <GearIcon />
         </button>
+        {isDrawerMode && (
+          <button type="button" className="icon-btn" onClick={() => window.parent.postMessage({ type: 'SAIDE_CLOSE_DRAWER' }, '*')}
+            title="사이드카 접기" aria-label="사이드카 접기" style={{ fontWeight: 'bold', fontSize: '15px' }}>
+            ✕
+          </button>
+        )}
       </header>
 
       <nav className="view-tabs" role="tablist" aria-label={t('view.tabs')}>

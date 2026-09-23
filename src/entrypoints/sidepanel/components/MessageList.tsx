@@ -9,7 +9,7 @@ import type { PerfSample } from '@/types/ollama';
 import { AgentSteps } from './AgentSteps';
 import { TaskRegisterCard } from './TaskRegisterCard';
 import { Markdown } from './Markdown';
-import { CopyIcon, DeleteIcon } from './ChatActionIcons';
+import { CopyIcon, DeleteIcon, InsertIcon } from './ChatActionIcons';
 import { FeedbackButtons } from './FeedbackButtons';
 import { loadFeedbackMap } from '@/lib/feedback/store';
 import type { FeedbackVerdict } from '@/lib/feedback/store';
@@ -191,12 +191,19 @@ function MessageActions({ msg, deleteDisabled, onDelete }: {
   msg: UiMessage; deleteDisabled: boolean; onDelete: Props['onDelete'];
 }) {
   const t = useT();
-  const [status, setStatus] = useState<'idle' | 'copied' | 'failed'>('idle');
+  const [status, setStatus] = useState<'idle' | 'copied' | 'inserted' | 'failed'>('idle');
   useEffect(() => {
     if (status === 'idle') return;
     const timer = setTimeout(() => setStatus('idle'), 2000);
     return () => clearTimeout(timer);
   }, [status]);
+
+  const isDrawer = typeof window !== 'undefined' && window.parent !== window;
+
+  const insertToEditor = () => {
+    window.parent.postMessage({ type: 'SAIDE_INSERT_TEXT', text: msg.content }, '*');
+    setStatus('inserted');
+  };
 
   const copy = async () => {
     try {
@@ -207,6 +214,15 @@ function MessageActions({ msg, deleteDisabled, onDelete }: {
 
   return (
     <div className="message-actions">
+      {isDrawer && (
+        <button type="button" className="message-action message-action-insert" onClick={insertToEditor}
+          disabled={!msg.content || Boolean(msg.streaming)}
+          title="기안기 본문 에디터에 삽입" aria-label="기안기 본문 에디터에 삽입"
+          style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', color: '#2563eb', fontWeight: 600 }}>
+          <InsertIcon />
+          <span style={{ fontSize: '11px' }}>본문 삽입</span>
+        </button>
+      )}
       <button type="button" className="message-action" onClick={copy} disabled={!msg.content}
         title={t('msg.copy')} aria-label={t('msg.copy')}>
         <CopyIcon />
@@ -217,7 +233,7 @@ function MessageActions({ msg, deleteDisabled, onDelete }: {
         <DeleteIcon />
       </button>
       <span className={`message-action-status ${status === 'failed' ? 'failed' : ''}`} role="status">
-        {status === 'copied' ? t('ui.copied') : status === 'failed' ? t('msg.copyFailed') : ''}
+        {status === 'inserted' ? '본문 삽입 완료' : status === 'copied' ? t('ui.copied') : status === 'failed' ? t('msg.copyFailed') : ''}
       </span>
     </div>
   );

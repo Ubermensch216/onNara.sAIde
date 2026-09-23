@@ -38,7 +38,29 @@ import {
   type TabSummary,
 } from '@/lib/messaging/protocol';
 
+import { isExactDraftPath } from '@/lib/onnara/draft-route';
+
 const INJECTED_SCRIPT = 'injected.js';
+const DRAWER_SCRIPT = 'drawer.js';
+
+const attachedDrawers = new Map<number, string>();
+
+async function maybeAttachDraftDrawer(tabId: number, frameId: number, url?: string, documentId?: string): Promise<boolean> {
+  if (frameId !== 0 || !url || !isExactDraftPath(url)) return false;
+  const key = documentId || url;
+  if (attachedDrawers.get(tabId) === key) return true; // 이미 주입됨
+
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId, frameIds: [0] },
+      files: [DRAWER_SCRIPT],
+    });
+    attachedDrawers.set(tabId, key);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export default defineBackground(() => {
   // ★ 워커에도 로케일을 물려준다.
@@ -104,6 +126,9 @@ export default defineBackground(() => {
    *   history API 이동은 `info.url`로 온다. 둘 다 받아야 한다.
    */
   chrome.tabs.onUpdated.addListener(async (_tabId, info, tab) => {
+    if (tab.url && isExactDraftPath(tab.url)) {
+      void maybeAttachDraftDrawer(_tabId, 0, tab.url);
+    }
     if (!tab.active) return;
     if (info.url || info.status === 'complete') {
       const visible = await panelTab(_tabId);
@@ -119,7 +144,12 @@ export default defineBackground(() => {
    *   그대로 붙들고 답을 만든다 — 다른 문서를 근거로 한 그럴듯한 오답이다.
    *   프레임 단위 이동을 그대로 알려, 붙어 있던 본문을 떼어낼 수 있게 한다.
    */
-  chrome.webNavigation.onCommitted.addListener(details => notifyScreenChange(details));
+  chrome.webNavigation.onCommitted.addListener(details => {
+    if (details.frameId === 0 && details.url && isExactDraftPath(details.url)) {
+      void maybeAttachDraftDrawer(details.tabId, details.frameId, details.url, (details as any).documentId);
+    }
+    notifyScreenChange(details);
+  });
   chrome.webNavigation.onHistoryStateUpdated?.addListener(details => notifyScreenChange(details));
 
   // 팝업을 닫으면 패널이 붙들던 탭이 사라진다. 알려 주지 않으면 없는 탭을 계속 읽으려 한다.
@@ -136,14 +166,27 @@ export default defineBackground(() => {
    *   이미 열려 있으면 여는 쪽은 조용히 실패하고 메시지만 남는다.
    */
   chrome.commands?.onCommand.addListener(async (command, tab) => {
+    const targetTab = tab ?? (await activeTab());
+    const windowId = targetTab?.windowId ?? (await chrome.windows.getCurrent().then(w => w?.id).catch(() => undefined));
+
+    if (targetTab?.id && targetTab.url && isExactDraftPath(targetTab.url)) {
+      await maybeAttachDraftDrawer(targetTab.id, 0, targetTab.url);
+      const sent = await chrome.tabs.sendMessage(targetTab.id, { type: 'TOGGLE_DRAWER' }).catch(() => null);
+      if (sent) return;
+    }
+
     if (command !== 'focus-input') return;
-    const windowId = tab?.windowId ?? (await chrome.windows.getCurrent().then(w => w?.id).catch(() => undefined));
-    await (tab?.id
-      ? chrome.sidePanel.open({ tabId: tab.id })
+    await (targetTab?.id
+      ? chrome.sidePanel.open({ tabId: targetTab.id })
       : windowId === undefined
         ? Promise.resolve()
         : chrome.sidePanel.open({ windowId })
-    ).catch(() => undefined);
+    ).catch(async () => {
+      if (targetTab?.id) {
+        await maybeAttachDraftDrawer(targetTab.id, 0, targetTab.url);
+        await chrome.tabs.sendMessage(targetTab.id, { type: 'TOGGLE_DRAWER' }).catch(() => undefined);
+      }
+    });
     pushToPanel({ type: 'FOCUS_COMPOSER' });
   });
 

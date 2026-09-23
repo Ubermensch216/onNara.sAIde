@@ -12,7 +12,8 @@ assert.ok(!manifest.content_scripts?.length, 'Content scripts must remain on-dem
 assert.deepEqual(manifest.host_permissions, ['http://localhost:11434/*', 'http://127.0.0.1:11434/*']);
 // 본문이 PDF 뷰어로 표시되는 문서를 읽으려면 오프스크린 문서와 pdf.js 워커가 함께 실려야 한다.
 assert.ok(manifest.permissions.includes('offscreen'), 'PDF body reading requires the offscreen permission');
-for (const file of [manifest.background.service_worker, manifest.side_panel.default_path, manifest.options_ui.page, 'injected.js', 'offscreen.html', ...Object.values(manifest.icons)]) {
+assert.ok(manifest.web_accessible_resources?.length, 'Drawer iframe requires web_accessible_resources');
+for (const file of [manifest.background.service_worker, manifest.side_panel.default_path, manifest.options_ui.page, 'injected.js', 'drawer.js', 'drawer-page.html', 'offscreen.html', ...Object.values(manifest.icons)]) {
   assert.ok(existsSync(`${dir}/${file}`), `Missing build artifact: ${file}`);
 }
 assert.ok(readdirSync(`${dir}/assets`).some(file => /^pdf\.worker.*\.mjs$/.test(file)), 'Missing pdf.js worker asset');

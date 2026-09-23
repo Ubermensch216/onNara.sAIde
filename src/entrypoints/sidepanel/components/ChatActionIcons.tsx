@@ -23,3 +23,11 @@ export function ResetIcon() {
     </svg>
   );
 }
+
+export function InsertIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 3v14M5 10l7 7 7-7M3 21h18" />
+    </svg>
+  );
+}
