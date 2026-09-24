@@ -1,4 +1,4 @@
-import { readdirSync } from 'node:fs';
+import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { defineConfig } from 'wxt';
 import tailwindcss from '@tailwindcss/vite';
@@ -20,6 +20,26 @@ export default defineConfig({
     'build:publicAssets': (_wxt, files) => {
       for (const name of readdirSync(CMAP_DIR).filter(file => KOREAN_CMAP.test(file))) {
         files.push({ absoluteSrc: resolve(CMAP_DIR, name), relativeDest: `cmaps/${name}` });
+      }
+    },
+    // 번들러가 Dexie 등의 비문자 코드포인트(U+FFFF 등)를 JS에 직접 넣으면
+    // Chromium의 콘텐츠 스크립트 UTF-8 검사에서 거부된다. JS 이스케이프로 보존한다.
+    'build:done': (wxt, output) => {
+      for (const step of output.steps) {
+        for (const chunk of step.chunks) {
+          if (!/\.m?js$/.test(chunk.fileName)) continue;
+          const fullPath = resolve(wxt.config.outDir, chunk.fileName);
+          const source = readFileSync(fullPath, 'utf8');
+          const escaped = source.replace(
+            /[\uFDD0-\uFDEF\uFFFE\uFFFF]|[\uD800-\uDBFF][\uDFFE\uDFFF]/g,
+            character => Array.from({ length: character.length }, (_, i) =>
+              `\\u${character.charCodeAt(i).toString(16).padStart(4, '0')}`
+            ).join('')
+          );
+          if (escaped !== source) {
+            writeFileSync(fullPath, escaped, 'utf8');
+          }
+        }
       }
     },
   },
@@ -82,18 +102,25 @@ export default defineConfig({
       'unlimitedStorage',
     ],
 
-    // 설치 시점에 확정으로 갖는 접근권은 로컬 Ollama뿐이다.
-    host_permissions: ['http://localhost:11434/*', 'http://127.0.0.1:11434/*'],
+    // 기안기 사이드카 자동 주입 및 온나라 업무망 지원을 위해 설치 시 모든 사이트 권한을 요청한다.
+    // 선택 호스트 권한에도 <all_urls>를 중복 선언하면 Chrome이 redundant permission 경고를 낸다.
+    host_permissions: [
+      '<all_urls>',
+      'http://localhost:11434/*',
+      'http://127.0.0.1:11434/*',
+      'http://99.1.2.134/*',
+      'http://*/*',
+      'https://*/*',
+    ],
 
-    /**
-     * 페이지 본문 읽기용. 설치할 때는 아무 사이트 권한도 갖지 않고,
-     * 사용자가 "이 페이지 요약" 같은 버튼을 누른 순간에만 해당 사이트를 요청한다.
-     *
-     * ★ activeTab만으로는 불가능하다 — activeTab은 사용자가 그 탭에서 확장을
-     *   직접 호출한 순간에만 부여되고 페이지 이동 시 회수되는데, 사이드패널은
-     *   그 이후로도 계속 열려 있기 때문이다. src/lib/permissions.ts 참조.
-     */
-    optional_host_permissions: ['<all_urls>'],
+    content_scripts: [
+      {
+        matches: ['<all_urls>', 'http://99.1.2.134/*', 'http://*/*', 'https://*/*'],
+        js: ['drawer.js'],
+        run_at: 'document_start',
+        all_frames: false,
+      },
+    ],
 
     commands: {
       _execute_action: {

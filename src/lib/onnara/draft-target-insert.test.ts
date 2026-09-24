@@ -154,34 +154,46 @@ describe('온나라 타깃 지정 초안 직접 삽입 (directInsertAtTarget)', 
   });
 
   describe('WebHWP tryApplyHwpCtrl', () => {
-    it('온나라 기안기 누름틀(Field) "본문"이 존재하면 MoveToField 후 InsertText를 우선 호출한다', () => {
-      const calls: string[] = [];
+    it('현재 커서 위치의 InsertText를 최우선 호출하여 기존 문서 내용을 100% 보존한다', () => {
       const mockHwp = {
         FieldExist: vi.fn((name: string) => name === '본문'),
-        MoveToField: vi.fn((name: string) => {
-          calls.push(`MoveToField:${name}`);
-        }),
-        InsertText: vi.fn((text: string) => {
-          calls.push(`InsertText:${text}`);
-        }),
+        MoveToField: vi.fn(),
+        InsertText: vi.fn(),
       };
 
       const res = tryApplyHwpCtrl(mockHwp, '초안 본문');
       expect(res.success).toBe(true);
-      expect(res.fieldName).toBe('본문');
-      expect(mockHwp.MoveToField).toHaveBeenCalledWith('본문', true, true, true);
+      expect(res.method).toBe('InsertText');
+      // 클릭 커서 위치에 바로 삽입되므로 MoveToField로 기존 내용을 선택하거나 날리지 않음!
+      expect(mockHwp.MoveToField).not.toHaveBeenCalled();
       expect(mockHwp.InsertText).toHaveBeenCalledWith('초안 본문');
     });
 
-    it('MoveToField가 없고 PutFieldText만 지원할 때 PutFieldText를 호출한다', () => {
+    it('InsertText가 실패하고 MoveToField로 필드 폴백할 때 select=false로 기존 내용을 보존한다', () => {
       const mockHwp = {
         FieldExist: vi.fn((name: string) => name === '본문'),
-        PutFieldText: vi.fn(),
+        MoveToField: vi.fn(),
+        // InsertText가 없을 때
       };
 
+      // CreateAction과 Run도 없을 때 필드 폴백
       const res = tryApplyHwpCtrl(mockHwp, '초안 본문');
-      expect(res.success).toBe(true);
-      expect(mockHwp.PutFieldText).toHaveBeenCalledWith('본문', '초안 본문');
+      expect(res.success).toBe(false); // MoveToField만 있고 삽입 수단 없으면 안전하게 실패
+
+      const mockHwpWithInsert = {
+        FieldExist: vi.fn((name: string) => name === '본문'),
+        MoveToField: vi.fn(),
+        InsertText: vi.fn(),
+      };
+      // InsertText가 커서에서 예외를 던질 때
+      mockHwpWithInsert.InsertText.mockImplementationOnce(() => {
+        throw new Error('Cursor unavailable');
+      });
+      const res2 = tryApplyHwpCtrl(mockHwpWithInsert, '초안 본문');
+      expect(res2.success).toBe(true);
+      expect(res2.fieldName).toBe('본문');
+      // start: false (끝 위치), select: false (기존 내용 선택/삭제 금지!)
+      expect(mockHwpWithInsert.MoveToField).toHaveBeenCalledWith('본문', true, false, false);
     });
 
     it('누름틀 필드가 없으면 현재 위치의 InsertText를 호출한다', () => {
@@ -241,10 +253,55 @@ describe('온나라 타깃 지정 초안 직접 삽입 (directInsertAtTarget)', 
       const res = await directInsertAtTarget(dummyEl, '한글 기안문 본문 초안', undefined, undefined, document);
 
       expect(res.status).toBe('applied');
-      expect(mockHwp.MoveToField).toHaveBeenCalledWith('본문', true, true, true);
       expect(mockHwp.InsertText).toHaveBeenCalledWith('한글 기안문 본문 초안');
+      expect(mockHwp.MoveToField).not.toHaveBeenCalled();
 
       delete (window as any).HwpCtrl;
+    });
+
+    it('다중 행 텍스트인 경우 각 행별로 InsertText와 BreakPara를 교대로 호출하여 줄바꿈을 완벽히 보존한다', async () => {
+      const mockHwp = {
+        InsertText: vi.fn(),
+        Run: vi.fn(),
+      };
+      (window as any).HwpCtrl = mockHwp;
+
+      const dummyEl = document.createElement('div');
+      dummyEl.id = 'hwpArea';
+      document.body.appendChild(dummyEl);
+
+      const multilineText = '1. 추진 배경\n2. 관련 의견 검토\n가. 세부 내용';
+      const res = await directInsertAtTarget(dummyEl, multilineText, undefined, undefined, document);
+
+      expect(res.status).toBe('applied');
+      expect(mockHwp.InsertText).toHaveBeenCalledTimes(3);
+      expect(mockHwp.InsertText).toHaveBeenNthCalledWith(1, '1. 추진 배경');
+      expect(mockHwp.InsertText).toHaveBeenNthCalledWith(2, '2. 관련 의견 검토');
+      expect(mockHwp.InsertText).toHaveBeenNthCalledWith(3, '가. 세부 내용');
+
+      expect(mockHwp.Run).toHaveBeenCalledTimes(2);
+      expect(mockHwp.Run).toHaveBeenCalledWith('BreakPara');
+
+      delete (window as any).HwpCtrl;
+    });
+  });
+
+  describe('directInsertAtTarget with Contenteditable multiline', () => {
+    it('contenteditable 에디터에 다중 행 삽입 시 줄바꿈이 깨지지 않고 보존된다', async () => {
+      const editor = document.createElement('div');
+      editor.setAttribute('contenteditable', 'true');
+      editor.id = 'web-editor';
+      document.body.appendChild(editor);
+
+      const multilineText = '1. 개요\n2. 세부사항';
+      const res = await directInsertAtTarget(editor, multilineText, undefined, undefined, document);
+
+      expect(res.status).toBe('applied');
+      expect(editor.textContent).toContain('1. 개요');
+      expect(editor.textContent).toContain('2. 세부사항');
+      // <br> 태그 또는 <p> 태그가 존재하여 줄바꿈이 보존되어야 함
+      const hasBreak = editor.querySelector('br') !== null || editor.querySelector('p') !== null;
+      expect(hasBreak).toBe(true);
     });
   });
 });

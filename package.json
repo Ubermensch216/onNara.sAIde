@@ -12,7 +12,7 @@
   "scripts": {
     "dev": "wxt -b edge",
     "prebuild": "node scripts/check-public-env.mjs",
-    "build": "wxt build -b edge",
+    "build": "wxt build -b edge && wxt build -b chrome",
     "prezip": "node scripts/check-public-env.mjs",
     "zip": "wxt zip -b edge",
     "verify": "node scripts/verify-build.mjs && node scripts/check-contrast.mjs",

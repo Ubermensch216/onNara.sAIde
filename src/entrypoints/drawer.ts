@@ -8,7 +8,9 @@
 import { captureDraftContext } from '@/lib/onnara/draft-context';
 import { resolveEditorAdapter, directInsertAtTarget, cleanupAccidentalContentEditable } from '@/lib/onnara/draft-editor';
 import { DraftTransactionController } from '@/lib/onnara/draft-controller';
-import { findWriteBodyButton } from '@/lib/onnara/draft-route';
+import { findWriteBodyButton, isExactDraftPath } from '@/lib/onnara/draft-route';
+import { DRAWER_GAP_PX, applyPageLayoutShift } from '@/lib/onnara/drawer-layout';
+import { createSelectionBubble } from '@/lib/onnara/selection-bubble';
 
 declare global {
   interface Window {
@@ -18,11 +20,35 @@ declare global {
 }
 
 export default defineUnlistedScript(() => {
-  if (window.__saideDrawerInjected?.()) return;
+  // 최상위 창(Top Frame)에서만 사이드카 슬라이딩 버튼 런처를 마운트한다
+  if (window.self !== window.top) {
+    return;
+  }
+
+  // 기안기 URL 검사 (기안기 화면이 아니면 즉각 종료)
+  if (!isExactDraftPath(window.location.href)) {
+    return;
+  }
+
+  console.info(
+    '%c[sAIde] 온나라 기안기 감지 완료! 슬라이딩 런처 버튼 마운트 시작 (URL: ' + window.location.href + ')',
+    'background: #2563eb; color: #fff; padding: 4px 8px; border-radius: 4px; font-weight: bold;'
+  );
+
+  const existingHost = document.querySelector('saide-drawer-host');
+  if (existingHost && window.__saideDrawerInjected?.()) {
+    return;
+  }
+  if (existingHost) {
+    try {
+      existingHost.remove();
+    } catch {}
+  }
+
   const runtime = chrome.runtime;
   window.__saideDrawerInjected = () => {
     try {
-      return Boolean(runtime?.id);
+      return Boolean(runtime?.id && document.querySelector('saide-drawer-host'));
     } catch {
       return false;
     }
@@ -32,10 +58,41 @@ export default defineUnlistedScript(() => {
   let drawerWidth = 440;
   const controller = new DraftTransactionController();
 
-  // 1. Shadow DOM 호스트 생성
+  // 1. Shadow DOM 호스트 생성 및 즉시 DOM 최상위 마운트 (슬라이딩 버튼 표시 100% 보장)
   const host = document.createElement('saide-drawer-host');
-  host.style.all = 'initial';
+  host.style.cssText =
+    'all: initial !important; display: block !important; position: fixed !important; inset: 0 !important; width: 100vw !important; height: 100vh !important; overflow: visible !important; pointer-events: none !important; z-index: 2147483647 !important;';
   const shadow = host.attachShadow({ mode: 'open' });
+
+  function attachHostToDOM() {
+    if (!document.contains(host)) {
+      // document.documentElement(<html>)에 직접 붙여서 body 리셋/CSS 간섭 완벽 격리
+      const root = document.documentElement || document.body;
+      if (root) {
+        root.appendChild(host);
+        console.info(
+          '%c[sAIde] 슬라이딩 버튼 호스트 부착 완료 (parent: ' + root.tagName + ')',
+          'color: #16a34a; font-weight: bold;'
+        );
+      }
+    }
+  }
+  attachHostToDOM();
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', attachHostToDOM);
+    window.addEventListener('load', attachHostToDOM);
+  }
+  setTimeout(attachHostToDOM, 50);
+  setTimeout(attachHostToDOM, 250);
+  setTimeout(attachHostToDOM, 800);
+  setTimeout(attachHostToDOM, 2000);
+
+  // Liveness 감시: 혹시 온나라 스크립트에 의해 호스트가 DOM에서 떨어져 나가면 즉각 재부착
+  setInterval(() => {
+    if (!document.contains(host)) {
+      attachHostToDOM();
+    }
+  }, 1500);
 
   // 2. 스타일 정의
   const style = document.createElement('style');
@@ -45,36 +102,77 @@ export default defineUnlistedScript(() => {
       font-family: -apple-system, BlinkMacSystemFont, "Pretendard", "Malgun Gothic", Dotum, sans-serif;
     }
 
-    /* 플로팅 런처 버튼 (제1 기본 조작 경로) */
+    /* 플로팅 런처 버튼 (제1 기본 조작 경로: 클릭 시 도우미 열기, 상하 드래그로 위치 이동) */
     .saide-launcher {
-      position: fixed;
-      right: 0;
+      position: fixed !important;
+      right: 0 !important;
       top: 180px;
-      z-index: 2147483647;
-      background: linear-gradient(135deg, #1d4ed8 0%, #2563eb 100%);
-      color: #ffffff;
-      padding: 10px 14px 10px 12px;
-      border-radius: 12px 0 0 12px;
-      box-shadow: -2px 4px 14px rgba(0, 0, 0, 0.22);
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      gap: 7px;
-      font-size: 13px;
-      font-weight: 700;
-      letter-spacing: -0.2px;
-      user-select: none;
-      transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s ease;
+      z-index: 2147483647 !important;
+      background: linear-gradient(135deg, #1d4ed8 0%, #2563eb 100%) !important;
+      color: #ffffff !important;
+      padding: 9px 13px 9px 9px !important;
+      border-radius: 12px 0 0 12px !important;
+      box-shadow: -2px 4px 14px rgba(0, 0, 0, 0.35) !important;
+      cursor: grab !important;
+      touch-action: none !important;
+      display: flex !important;
+      align-items: center !important;
+      gap: 6px !important;
+      font-size: 13px !important;
+      font-weight: 700 !important;
+      letter-spacing: -0.2px !important;
+      user-select: none !important;
+      visibility: visible !important;
+      opacity: 1 !important;
+      pointer-events: auto !important;
+      transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s ease !important;
+      white-space: nowrap !important;
+      box-sizing: border-box !important;
     }
     .saide-launcher:hover {
-      transform: translateX(-4px);
-      box-shadow: -4px 6px 18px rgba(30, 64, 175, 0.35);
-      background: linear-gradient(135deg, #1e40af 0%, #1d4ed8 100%);
+      transform: translateX(-4px) !important;
+      box-shadow: -4px 6px 18px rgba(30, 64, 175, 0.45) !important;
+      background: linear-gradient(135deg, #1e40af 0%, #1d4ed8 100%) !important;
     }
-    .saide-launcher svg {
-      width: 17px;
-      height: 17px;
-      fill: currentColor;
+    .saide-launcher:active,
+    .saide-launcher.dragging {
+      cursor: grabbing !important;
+    }
+    .saide-launcher.dragging {
+      transition: none !important;
+      transform: translateX(-2px) !important;
+      box-shadow: -4px 8px 22px rgba(30, 64, 175, 0.55) !important;
+      filter: brightness(1.06) !important;
+    }
+    .saide-launcher svg.saide-icon {
+      display: block !important;
+      width: 17px !important;
+      height: 17px !important;
+      min-width: 17px !important;
+      fill: #ffffff !important;
+      visibility: visible !important;
+      opacity: 1 !important;
+    }
+    .saide-launcher svg.saide-drag-gripper {
+      display: block !important;
+      width: 7px !important;
+      height: 13px !important;
+      min-width: 7px !important;
+      fill: #ffffff !important;
+      opacity: 0.65 !important;
+      flex-shrink: 0 !important;
+      pointer-events: none !important;
+      visibility: visible !important;
+    }
+    .saide-launcher span {
+      display: inline-block !important;
+      color: #ffffff !important;
+      font: 700 13px/18px -apple-system, BlinkMacSystemFont, "Pretendard", "Malgun Gothic", Dotum, sans-serif !important;
+      visibility: visible !important;
+      opacity: 1 !important;
+    }
+    .saide-launcher:hover svg.saide-drag-gripper {
+      opacity: 0.9;
     }
 
     /* 슬라이딩 드로어 컨테이너 */
@@ -87,13 +185,14 @@ export default defineUnlistedScript(() => {
       max-width: 90vw;
       min-width: 340px;
       background: #ffffff;
-      box-shadow: -8px 0 28px rgba(0, 0, 0, 0.2);
+      box-shadow: -4px 0 16px rgba(0, 0, 0, 0.12), -1px 0 4px rgba(0, 0, 0, 0.06);
       z-index: 2147483646;
       display: flex;
       flex-direction: column;
       transform: translateX(105%);
       transition: transform 0.24s cubic-bezier(0.16, 1, 0.3, 1);
-      border-left: 1px solid #e2e8f0;
+      border-left: 1px solid #cbd5e1;
+      pointer-events: auto;
     }
     .saide-drawer.open {
       transform: translateX(0);
@@ -182,6 +281,10 @@ export default defineUnlistedScript(() => {
       display: block;
     }
 
+    .saide-bubble-container {
+      pointer-events: auto !important;
+    }
+
     @keyframes saideSlideDown {
       from { transform: translate(-50%, -10px); opacity: 0; }
       to { transform: translate(-50%, 0); opacity: 1; }
@@ -193,19 +296,90 @@ export default defineUnlistedScript(() => {
   `;
   shadow.appendChild(style);
 
-  // 3. 플로팅 런처 버튼 렌더링
+  // 3. 플로팅 런처 버튼 렌더링 (사이드 탭 버튼)
   const launcher = document.createElement('div');
   launcher.className = 'saide-launcher';
   launcher.setAttribute('role', 'button');
-  launcher.setAttribute('aria-label', '온나라 sAIde 기안 도우미 열기');
-  launcher.title = '온나라 sAIde 공문서 기안 도우미 열기 (Ctrl+Alt+A)';
+  launcher.setAttribute('aria-label', '온나라 sAIde 기안 도우미 열기 (끌어서 상하 이동 가능)');
+  launcher.title = '온나라 sAIde 기안 도우미 열기 (클릭: 열기 / 드래그: 상하 이동, Ctrl+Alt+A)';
   launcher.innerHTML = `
-    <svg viewBox="0 0 24 24">
+    <svg class="saide-drag-gripper" viewBox="0 0 8 14" aria-hidden="true">
+      <circle cx="2" cy="2" r="1.2"/>
+      <circle cx="6" cy="2" r="1.2"/>
+      <circle cx="2" cy="7" r="1.2"/>
+      <circle cx="6" cy="7" r="1.2"/>
+      <circle cx="2" cy="12" r="1.2"/>
+      <circle cx="6" cy="12" r="1.2"/>
+    </svg>
+    <svg class="saide-icon" viewBox="0 0 24 24">
       <path d="M12 2a2 2 0 0 1 2 2c0 .74-.4 1.38-1 1.72V7h2a5 5 0 0 1 5 5v1.28c.6.34 1 .98 1 1.72a2 2 0 1 1-4 0V12a2 2 0 0 0-2-2H9a2 2 0 0 0-2 2v3a2 2 0 1 1-4 0c0-.74.4-1.38 1-1.72V12a5 5 0 0 1 5-5h2V5.72A2 2 0 0 1 10 4a2 2 0 0 1 2-2zm-3 10a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm6 0a1 1 0 1 0 0 2 1 1 0 0 0 0-2z"/>
     </svg>
     <span>sAIde</span>
   `;
   shadow.appendChild(launcher);
+  launcher.style.display = 'flex';
+  launcher.style.visibility = 'visible';
+  launcher.style.opacity = '1';
+
+  /* ── 플로팅 런처 상하 위치 관리 및 지속성 ── */
+  const STORAGE_KEY_LAUNCHER_TOP = 'saide_launcher_top';
+  const DEFAULT_LAUNCHER_TOP = 180;
+  let launcherTop = DEFAULT_LAUNCHER_TOP;
+
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY_LAUNCHER_TOP);
+    if (saved !== null) {
+      const parsed = parseInt(saved, 10);
+      if (!isNaN(parsed) && parsed >= 0) {
+        launcherTop = parsed;
+      }
+    }
+  } catch {
+    // localStorage 예외 대비
+  }
+
+  function clampLauncherTop(top: number): number {
+    const height = launcher.offsetHeight || 42;
+    const winHeight = window.innerHeight > 100 ? window.innerHeight : 800;
+    const maxTop = Math.max(10, winHeight - height - 10);
+    return Math.min(Math.max(10, top), maxTop);
+  }
+
+  function setLauncherPosition(top: number) {
+    const clamped = clampLauncherTop(top);
+    launcherTop = clamped;
+    launcher.style.top = `${clamped}px`;
+  }
+
+  function saveLauncherPosition(top: number) {
+    const clamped = clampLauncherTop(top);
+    try {
+      localStorage.setItem(STORAGE_KEY_LAUNCHER_TOP, String(Math.round(clamped)));
+    } catch {
+      // ignore
+    }
+    try {
+      chrome.storage?.local?.set({ [STORAGE_KEY_LAUNCHER_TOP]: Math.round(clamped) });
+    } catch {
+      // ignore
+    }
+  }
+
+  setLauncherPosition(launcherTop);
+
+  try {
+    chrome.storage?.local?.get([STORAGE_KEY_LAUNCHER_TOP], (res) => {
+      if (res && typeof res[STORAGE_KEY_LAUNCHER_TOP] === 'number') {
+        setLauncherPosition(res[STORAGE_KEY_LAUNCHER_TOP]);
+      }
+    });
+  } catch {
+    // ignore
+  }
+
+  window.addEventListener('resize', () => {
+    setLauncherPosition(launcherTop);
+  });
 
   // 4. 드로어 컨테이너 렌더링
   const drawer = document.createElement('div');
@@ -243,6 +417,65 @@ export default defineUnlistedScript(() => {
   const iframe = drawer.querySelector<HTMLIFrameElement>('.saide-iframe')!;
   const resizeHandle = drawer.querySelector<HTMLDivElement>('.saide-resize-handle')!;
 
+  // 7. 에디터 블록 지정 플로팅 버블 툴바 생성 및 Shadow DOM 등록 (오류 격리)
+  try {
+    const selectionBubble = createSelectionBubble({
+      showToast,
+      onSendToSidecar: (text) => {
+        setDrawerOpen(true);
+        setTimeout(() => {
+          iframe.contentWindow?.postMessage(
+            {
+              type: 'SAIDE_FILL_PROMPT',
+              text: `다음 문서 내용을 분석 또는 보완해줘:\n\n${text}`,
+            },
+            '*'
+          );
+        }, 350);
+      },
+    });
+    shadow.appendChild(selectionBubble.element);
+
+    // 접근 가능한 모든 문서에 선택 이벤트 바인딩
+    const unbindSelectionMap = new Map<Document, () => void>();
+
+    function updateSelectionBindings() {
+      try {
+        const docs = getAccessibleDocuments(document);
+        for (const doc of docs) {
+          if (!unbindSelectionMap.has(doc)) {
+            try {
+              const unbind = selectionBubble.bindEvents(doc);
+              unbindSelectionMap.set(doc, unbind);
+            } catch {
+              // 개별 frame 접근 불가 무시
+            }
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    updateSelectionBindings();
+
+    // 동적으로 iframe이 추가되거나 문서 내용이 바뀔 때 자동 감지 (디바운스 적용)
+    let mutationTimer: any = null;
+    const docObserver = new MutationObserver(() => {
+      if (mutationTimer) clearTimeout(mutationTimer);
+      mutationTimer = setTimeout(updateSelectionBindings, 300);
+    });
+    const rootToObserve = document.body || document.documentElement;
+    if (rootToObserve) {
+      docObserver.observe(rootToObserve, {
+        childList: true,
+        subtree: true,
+      });
+    }
+  } catch (err) {
+    console.warn('[sAIde] selectionBubble initialization failed:', err);
+  }
+
   function setDrawerOpen(nextOpen: boolean) {
     isOpen = nextOpen;
     if (isOpen) {
@@ -251,21 +484,136 @@ export default defineUnlistedScript(() => {
       }
       drawer.classList.add('open');
       launcher.style.display = 'none';
+
+      // 1. 본 화면 레이아웃 우측 여백 확보 (36px 안전 Gap 포함으로 본 화면 가림 100% 방지)
+      applyPageLayoutShift(true, drawerWidth, DRAWER_GAP_PX);
+
+      // 2. 브라우저 창 자체를 우측으로 확장 요청 (사이드카 폭 + 36px 여유 공간)
+      if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+        chrome.runtime.sendMessage({
+          type: 'EXPAND_WINDOW_FOR_DRAWER',
+          drawerWidth,
+          drawerGap: DRAWER_GAP_PX,
+          screenAvailWidth: window.screen.availWidth,
+          screenAvailLeft: (window.screen as any).availLeft ?? 0,
+        });
+      }
+
       setTimeout(syncContextToIframe, 350);
     } else {
       drawer.classList.remove('open');
       launcher.style.display = 'flex';
+      setLauncherPosition(launcherTop);
+
+      // 1. 본 화면 레이아웃 복원
+      applyPageLayoutShift(false, drawerWidth);
+
+      // 2. 브라우저 창 크기 원상복구 요청
+      if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+        chrome.runtime.sendMessage({
+          type: 'RESTORE_WINDOW_FOR_DRAWER',
+        });
+      }
+
       controller.invalidateAll();
       stopTargetPicker();
     }
   }
+
+  window.addEventListener('beforeunload', () => {
+    if (isOpen) {
+      applyPageLayoutShift(false, drawerWidth);
+      if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+        chrome.runtime.sendMessage({ type: 'RESTORE_WINDOW_FOR_DRAWER' });
+      }
+    }
+  });
 
   function toggleDrawer() {
     setDrawerOpen(!isOpen);
   }
 
   window.__saideToggleDrawer = toggleDrawer;
-  launcher.addEventListener('click', toggleDrawer);
+
+  /* ── 플로팅 런처 상하 드래그 이벤트 ── */
+  let isDraggingLauncher = false;
+  let hasMovedLauncher = false;
+  let activeLauncherPointerId = -1;
+  let startLauncherPointerY = 0;
+  let startLauncherTop = 0;
+  let justFinishedDrag = false;
+
+  const stopLauncherDrag = () => {
+    if (!isDraggingLauncher) return;
+    isDraggingLauncher = false;
+    launcher.classList.remove('dragging');
+    document.body.style.userSelect = '';
+
+    try {
+      if (
+        activeLauncherPointerId >= 0 &&
+        launcher.hasPointerCapture &&
+        launcher.hasPointerCapture(activeLauncherPointerId)
+      ) {
+        launcher.releasePointerCapture(activeLauncherPointerId);
+      }
+    } catch {
+      // ignore
+    }
+    activeLauncherPointerId = -1;
+
+    if (hasMovedLauncher) {
+      saveLauncherPosition(launcherTop);
+      justFinishedDrag = true;
+      setTimeout(() => {
+        justFinishedDrag = false;
+      }, 120);
+    }
+  };
+
+  launcher.addEventListener('pointerdown', (e: PointerEvent) => {
+    if (e.button !== 0) return; // 좌클릭만 반응
+    isDraggingLauncher = true;
+    hasMovedLauncher = false;
+    activeLauncherPointerId = e.pointerId;
+    startLauncherPointerY = e.clientY;
+    startLauncherTop = launcherTop;
+
+    try {
+      launcher.setPointerCapture(e.pointerId);
+    } catch {
+      // ignore
+    }
+  });
+
+  launcher.addEventListener('pointermove', (e: PointerEvent) => {
+    if (!isDraggingLauncher) return;
+    const deltaY = e.clientY - startLauncherPointerY;
+
+    if (!hasMovedLauncher && Math.abs(deltaY) > 4) {
+      hasMovedLauncher = true;
+      launcher.classList.add('dragging');
+      document.body.style.userSelect = 'none';
+    }
+
+    if (hasMovedLauncher) {
+      setLauncherPosition(startLauncherTop + deltaY);
+    }
+  });
+
+  launcher.addEventListener('pointerup', stopLauncherDrag);
+  launcher.addEventListener('pointercancel', stopLauncherDrag);
+
+  launcher.addEventListener('click', (e: MouseEvent) => {
+    if (hasMovedLauncher || justFinishedDrag) {
+      e.preventDefault();
+      e.stopPropagation();
+      hasMovedLauncher = false;
+      justFinishedDrag = false;
+      return;
+    }
+    toggleDrawer();
+  });
 
   /* ── 방탄 포인터 리사이즈 ── */
   let isResizing = false;
@@ -306,6 +654,7 @@ export default defineUnlistedScript(() => {
     const newWidth = Math.max(340, Math.min(window.innerWidth - 60, window.innerWidth - e.clientX));
     drawerWidth = newWidth;
     drawer.style.width = `${newWidth}px`;
+    applyPageLayoutShift(true, newWidth);
   });
 
   resizeHandle.addEventListener('pointerup', stopResize);
@@ -386,33 +735,36 @@ export default defineUnlistedScript(() => {
       const res = await directInsertAtTarget(targetEl, textToInsert, clickX, clickY, targetEl.ownerDocument || document);
 
       // 2. 포커스된 요소에 클립보드 붙여넣기(Paste) 이벤트 자동 트리거
-      try {
-        const ownerDoc = targetEl.ownerDocument || document;
-        const active = ownerDoc.activeElement as HTMLElement | null;
-        const pasteTarget = active || targetEl;
-
-        // ClipboardEvent ('paste') 발송 (DataTransfer 포함)
+      // ★ 중요: directInsertAtTarget에서 이미 'applied'로 직접 삽입된 경우 중복 붙여넣기를 절대 수행하지 않는다!
+      if (res.status !== 'applied') {
         try {
-          const dt = new DataTransfer();
-          dt.setData('text/plain', textToInsert);
-          const pasteEvt = new ClipboardEvent('paste', {
-            bubbles: true,
-            cancelable: true,
-            clipboardData: dt,
-          });
-          pasteTarget.dispatchEvent(pasteEvt);
+          const ownerDoc = targetEl.ownerDocument || document;
+          const active = ownerDoc.activeElement as HTMLElement | null;
+          const pasteTarget = active || targetEl;
+
+          // ClipboardEvent ('paste') 발송 (DataTransfer 포함)
+          try {
+            const dt = new DataTransfer();
+            dt.setData('text/plain', textToInsert);
+            const pasteEvt = new ClipboardEvent('paste', {
+              bubbles: true,
+              cancelable: true,
+              clipboardData: dt,
+            });
+            pasteTarget.dispatchEvent(pasteEvt);
+          } catch {
+            // ignore
+          }
+
+          // document.execCommand('paste')
+          try {
+            ownerDoc.execCommand('paste');
+          } catch {
+            // ignore
+          }
         } catch {
           // ignore
         }
-
-        // document.execCommand('paste')
-        try {
-          ownerDoc.execCommand('paste');
-        } catch {
-          // ignore
-        }
-      } catch {
-        // ignore
       }
 
       // 성공 메시지 안내
@@ -532,6 +884,7 @@ export default defineUnlistedScript(() => {
           needsOpenBody: Boolean(needsOpenBody),
           hasWriteBodyBtn,
           reason,
+          relatedDocs: ctx.relatedDocs || [],
         },
         '*'
       );
@@ -563,6 +916,86 @@ export default defineUnlistedScript(() => {
       startTargetPicker(msg.text);
     } else if (msg.type === 'SAIDE_CANCEL_CLICK_TARGET') {
       stopTargetPicker();
+    } else if (msg.type === 'DRAFT_FETCH_RELATED_DOC' && msg.doc) {
+      // 1. 문서요지(summary) 등 DOM에 존재하는 본문/요약 텍스트 우선 탐색
+      let foundContent = '';
+      try {
+        const summaryEl = document.querySelector<HTMLTextAreaElement | HTMLElement>(
+          'textarea[name*="summary"], textarea[name*="docSummary"], textarea#summary, textarea#docSummary, #txtSummary'
+        );
+        if (summaryEl && (summaryEl as HTMLTextAreaElement).value?.trim()) {
+          foundContent = (summaryEl as HTMLTextAreaElement).value.trim();
+        }
+      } catch {
+        // ignore
+      }
+
+      // 2. background script에 열린 탭 또는 문서 조회 요청
+      if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+        chrome.runtime.sendMessage(
+          {
+            type: 'DRAFT_FETCH_RELATED_DOC',
+            doc: msg.doc,
+          },
+          (response) => {
+            const content = response?.content || foundContent;
+
+            // 탭에서 못 찾았으나 현재 화면 DOM에 이 문서를 여는 링크/버튼이 있는 경우, 클릭 후 재조회 시도
+            if (!content && typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+              const docTitle = msg.doc.title?.trim();
+              if (docTitle) {
+                const clickable = Array.from(document.querySelectorAll<HTMLElement>('a, button, span, tr'))
+                  .find(el => (el.textContent || '').includes(docTitle) && (el.tagName === 'A' || el.tagName === 'BUTTON' || el.onclick || el.getAttribute('onclick')));
+                if (clickable) {
+                  try {
+                    clickable.click();
+                    setTimeout(() => {
+                      chrome.runtime.sendMessage(
+                        { type: 'DRAFT_FETCH_RELATED_DOC', doc: msg.doc },
+                        (retryRes) => {
+                          const retryContent = retryRes?.content || foundContent;
+                          iframe.contentWindow?.postMessage(
+                            {
+                              type: 'DRAFT_RELATED_DOC_CONTENT',
+                              title: msg.doc.title,
+                              docId: msg.doc.id,
+                              content: retryContent,
+                              error: retryContent ? undefined : retryRes?.error,
+                            },
+                            '*'
+                          );
+                        }
+                      );
+                    }, 1500);
+                    return;
+                  } catch {}
+                }
+              }
+            }
+
+            iframe.contentWindow?.postMessage(
+              {
+                type: 'DRAFT_RELATED_DOC_CONTENT',
+                title: msg.doc.title,
+                docId: msg.doc.id,
+                content,
+                error: content ? undefined : response?.error,
+              },
+              '*'
+            );
+          }
+        );
+      } else {
+        iframe.contentWindow?.postMessage(
+          {
+            type: 'DRAFT_RELATED_DOC_CONTENT',
+            title: msg.doc.title,
+            docId: msg.doc.id,
+            content: foundContent,
+          },
+          '*'
+        );
+      }
     } else if (msg.type === 'DRAFT_PREPARE_INSERT' && msg.payload?.text) {
       // 1단계: PREPARE
       const plan = await controller.prepare(ctx, msg.payload.text, msg.payload.mode || 'cursor', document);
@@ -600,12 +1033,15 @@ export default defineUnlistedScript(() => {
       return true;
     }
     if (msg?.type === 'GET_DRAWER_STATUS') {
-      sendResponse({ injected: true, isOpen });
+      const isHostInDOM = Boolean(document.contains(host));
+      if (!isHostInDOM) {
+        attachHostToDOM();
+      }
+      sendResponse({ injected: true, isOpen, inDOM: Boolean(document.contains(host)) });
       return true;
     }
     return false;
   });
 
-  document.documentElement.appendChild(host);
+  attachHostToDOM();
 });
-

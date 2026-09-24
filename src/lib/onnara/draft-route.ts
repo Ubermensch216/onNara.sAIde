@@ -15,12 +15,29 @@ const EXACT_DRAFT_PATHS = [
   '/bms/dct/addoreportbodyview.do',
   '/bms/dct/addoreportbody.do',
   '/bms/dct/modifyoreportbodyview.do',
+  '/bms/dct/modifyoreportbody.do',
+  '/bms/dct/insertoreportbodyview.do',
+  '/bms/dct/insertoreportbody.do',
+  '/bms/dct/vieworeportbodyview.do',
+  '/bms/dct/addreportbodyview.do',
+  '/bms/dct/addreportbody.do',
+  '/bms/dct/modifyreportbodyview.do',
+  '/bms/dct/modifyreportbody.do',
+  '/bms/dct/insertreportbodyview.do',
+  '/bms/dct/insertreportbody.do',
+  '/bms/dct/viewreportbodyview.do',
   '/bms/dct/addhwpbody.do',
   '/bms/dct/modifyhwpbody.do',
   '/bms/dct/addhwpbodyview.do',
   '/bms/dct/hwpctrl.do',
   '/bms/dct/webhwp.do',
   '/bms/dct/viewbody.do',
+  '/bms/dct/adddraftbody.do',
+  '/bms/dct/modifydraftbody.do',
+  '/bms/com/addreportbodyview.do',
+  '/bms/com/addoreportbodyview.do',
+  '/bms/sanctn/addreportbodyview.do',
+  '/bms/sanctn/addoreportbodyview.do',
 ];
 
 /** URL의 origin이 허용된 온나라 origin 목록에 포함되는지 검사 */
@@ -51,12 +68,27 @@ export function isAllowedOrigin(url: string, allowedOrigins?: string[]): boolean
 
 /** URL 경로가 공식 온나라 기안기 또는 본문작성 경로인지 검사 */
 export function isExactDraftPath(url: string): boolean {
+  if (!url) return false;
   try {
-    const parsed = new URL(url);
+    const parsed = new URL(url, 'http://localhost');
     const path = parsed.pathname.toLowerCase();
-    return EXACT_DRAFT_PATHS.some(exact => path === exact || path.endsWith(exact));
-  } catch {
+    if (!path.endsWith('.do')) {
+      return false;
+    }
+    if (EXACT_DRAFT_PATHS.some(exact => path === exact || path.endsWith(exact))) {
+      return true;
+    }
+    // 추가 일반 패턴: /bms/ 또는 /dct/ 또는 /sanctn/ 하위에서 기안문/보고서 본문 작성 경로 (.do 확장자 완결)
+    if (
+      (path.includes('/bms/') || path.includes('/dct/') || path.includes('/sanctn/')) &&
+      /(?:reportbody|oreportbody|hwpbody|viewbody|draftbody)(?:view)?\.do$/i.test(path)
+    ) {
+      return true;
+    }
     return false;
+  } catch {
+    const lower = String(url).toLowerCase();
+    return lower.includes('addoreportbodyview.do') || lower.includes('addreportbodyview.do');
   }
 }
 

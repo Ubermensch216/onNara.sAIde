@@ -48,8 +48,17 @@ const attachedDrawers = new Map<number, string>();
 async function maybeAttachDraftDrawer(tabId: number, frameId: number, url?: string, documentId?: string): Promise<boolean> {
   if (frameId !== 0 || !url || !isExactDraftPath(url)) return false;
   const key = documentId || url;
-  if (attachedDrawers.get(tabId) === key) return true; // 이미 주입됨
 
+  // 1. 이미 실제로 주입되어 정상 동작 중인지 핑 확인
+  try {
+    const status = await chrome.tabs.sendMessage(tabId, { type: 'GET_DRAWER_STATUS' }, { frameId: 0 }).catch(() => null);
+    if (status?.injected) {
+      attachedDrawers.set(tabId, key);
+      return true;
+    }
+  } catch {}
+
+  // 2. 미주입 상태이거나 응답이 없으면 주입 실행
   try {
     await chrome.scripting.executeScript({
       target: { tabId, frameIds: [0] },
@@ -57,7 +66,8 @@ async function maybeAttachDraftDrawer(tabId: number, frameId: number, url?: stri
     });
     attachedDrawers.set(tabId, key);
     return true;
-  } catch {
+  } catch (err) {
+    console.warn('[sAIde] maybeAttachDraftDrawer 주입 실패:', tabId, url, err);
     return false;
   }
 }
@@ -78,53 +88,34 @@ async function handleMainWorldHwpInsert(
       func: (draftText: string) => {
         try {
           function findHwp() {
-            var wins: any[] = [window as any];
-            try {
-              if (window.top && window.top !== window) wins.push(window.top as any);
-              if (window.parent && window.parent !== window) wins.push(window.parent as any);
-            } catch (e) {}
-
-            try {
-              var ifrs = document.querySelectorAll('iframe');
-              for (var i = 0; i < ifrs.length; i++) {
-                try {
-                  var ifr = ifrs[i] as HTMLIFrameElement;
-                  if (ifr && ifr.contentWindow) wins.push(ifr.contentWindow as any);
-                } catch (e) {}
+            var w = window as any;
+            if (!w) return null;
+            // 1. 현재 프레임의 window 및 document 객체 우선 탐색 (allFrames: true이므로 로컬 우선)
+            var localCandidates = [
+              w.HwpCtrl,
+              w.pHwpCtrl,
+              w.tbContentElement,
+              w.vHwpCtrl,
+              w.hwpCtrl,
+              w.hwp_ctrl,
+              w.hwpDoc,
+              w.WebHwpCtrl,
+              w.HwpObject,
+              w.document && w.document.getElementById('HwpCtrl'),
+              w.document && w.document.getElementById('hwpCtrl'),
+              w.document && w.document.getElementById('tbContentElement'),
+            ];
+            for (var i = 0; i < localCandidates.length; i++) {
+              var c = localCandidates[i];
+              if (
+                c &&
+                (typeof c.PutFieldText === 'function' ||
+                  typeof c.InsertText === 'function' ||
+                  typeof c.Run === 'function' ||
+                  typeof c.CreateAction === 'function')
+              ) {
+                return c;
               }
-            } catch (e) {}
-
-            for (var j = 0; j < wins.length; j++) {
-              var w: any = wins[j];
-              if (!w) continue;
-              try {
-                var list = [
-                  w.HwpCtrl,
-                  w.pHwpCtrl,
-                  w.tbContentElement,
-                  w.vHwpCtrl,
-                  w.hwpCtrl,
-                  w.hwp_ctrl,
-                  w.hwpDoc,
-                  w.WebHwpCtrl,
-                  w.HwpObject,
-                  w.document && w.document.getElementById('HwpCtrl'),
-                  w.document && w.document.getElementById('hwpCtrl'),
-                  w.document && w.document.getElementById('tbContentElement'),
-                ];
-                for (var k = 0; k < list.length; k++) {
-                  var c = list[k];
-                  if (
-                    c &&
-                    (typeof c.PutFieldText === 'function' ||
-                      typeof c.InsertText === 'function' ||
-                      typeof c.Run === 'function' ||
-                      typeof c.CreateAction === 'function')
-                  ) {
-                    return c;
-                  }
-                }
-              } catch (e) {}
             }
             return null;
           }
@@ -132,62 +123,100 @@ async function handleMainWorldHwpInsert(
           var h = findHwp();
           if (!h) return { success: false, error: 'NO_HWP' };
 
-          // 1. 온나라 공문서 누름틀(Field) 방식 시도 (본문 필드 최우선)
+          // 동일 컨트롤에 대한 1.5초 내 중복 실행 차단 (allFrames 다중 실행 방탄 가드)
+          var now = Date.now();
+          if (h.__saide_last_inserted && now - h.__saide_last_inserted < 1500) {
+            return { success: true, method: 'Deduplicated' };
+          }
+          h.__saide_last_inserted = now;
+
+          function insertLines(hwp: any, str: string) {
+            var lines = str.split(/\r?\n/);
+            if (lines.length <= 1) {
+              if (typeof hwp.InsertText === 'function') {
+                hwp.InsertText(str);
+                return true;
+              }
+              if (typeof hwp.CreateAction === 'function') {
+                var act = hwp.CreateAction('InsertText');
+                if (act && typeof act.CreateSet === 'function') {
+                  var st = act.CreateSet();
+                  if (st && typeof st.SetItem === 'function') {
+                    st.SetItem('Text', str);
+                    act.Execute(st);
+                    return true;
+                  }
+                }
+              }
+              return false;
+            }
+
+            var any = false;
+            for (var j = 0; j < lines.length; j++) {
+              var l = lines[j] || '';
+              if (l.length > 0) {
+                if (typeof hwp.InsertText === 'function') {
+                  hwp.InsertText(l);
+                  any = true;
+                } else if (typeof hwp.CreateAction === 'function') {
+                  var a = hwp.CreateAction('InsertText');
+                  if (a && typeof a.CreateSet === 'function') {
+                    var s = a.CreateSet();
+                    if (s && typeof s.SetItem === 'function') {
+                      s.SetItem('Text', l);
+                      a.Execute(s);
+                      any = true;
+                    }
+                  }
+                }
+              }
+              if (j < lines.length - 1) {
+                if (typeof hwp.Run === 'function') {
+                  hwp.Run('BreakPara');
+                  any = true;
+                } else if (hwp.HAction && typeof hwp.HAction.Run === 'function') {
+                  hwp.HAction.Run('BreakPara');
+                  any = true;
+                }
+              }
+            }
+            return any;
+          }
+
+          // 1. 현재 커서 위치 직접 입력 (줄바꿈 보존 BreakPara 적용)
+          if (typeof h.InsertText === 'function' || typeof h.CreateAction === 'function') {
+            try {
+              if (insertLines(h, draftText)) {
+                return { success: true, method: 'InsertLinesWithBreakPara' };
+              }
+            } catch (e) {}
+          }
+
+          // 2. 누름틀(Field) 방식 시도: 기존 내용을 덮어쓰지 않고 필드 끝으로 이동(select=false)하여 삽입
           var fields = ['본문', 'body', 'BODY', 'content', '기안문본문', '기안문_본문', '내용', '본문내용'];
           for (var f = 0; f < fields.length; f++) {
             var fn = fields[f];
             try {
-              var exist = false;
-              if (typeof h.FieldExist === 'function') {
-                exist = Boolean(h.FieldExist(fn));
-              } else {
-                exist = true;
-              }
-              if (exist) {
-                if (typeof h.MoveToField === 'function') {
-                  h.MoveToField(fn, true, true, true);
-                  if (typeof h.InsertText === 'function') {
-                    h.InsertText(draftText);
-                    return { success: true, method: 'MoveToField+InsertText', fieldName: fn };
-                  }
-                  if (typeof h.Run === 'function') {
-                    h.Run('Paste');
-                    return { success: true, method: 'MoveToField+RunPaste', fieldName: fn };
-                  }
+              var exist = typeof h.FieldExist === 'function' ? Boolean(h.FieldExist(fn)) : false;
+              if (exist && typeof h.MoveToField === 'function') {
+                h.MoveToField(fn, true, false, false);
+                if (insertLines(h, draftText)) {
+                  return { success: true, method: 'MoveToFieldEnd+InsertLines', fieldName: fn };
                 }
-                if (typeof h.PutFieldText === 'function') {
-                  h.PutFieldText(fn, draftText);
-                  return { success: true, method: 'PutFieldText', fieldName: fn };
+                if (typeof h.Run === 'function') {
+                  h.Run('Paste');
+                  return { success: true, method: 'MoveToFieldEnd+RunPaste', fieldName: fn };
                 }
               }
             } catch (e) {}
           }
 
-          // 2. 현재 커서 위치 직접 입력
-          if (typeof h.InsertText === 'function') {
-            h.InsertText(draftText);
-            return { success: true, method: 'InsertText' };
-          }
-
-          // 3. CreateAction 방식
-          if (typeof h.CreateAction === 'function') {
-            try {
-              var act = h.CreateAction('InsertText');
-              if (act && typeof act.CreateSet === 'function') {
-                var st = act.CreateSet();
-                if (st && typeof st.SetItem === 'function') {
-                  st.SetItem('Text', draftText);
-                  act.Execute(st);
-                  return { success: true, method: 'CreateAction' };
-                }
-              }
-            } catch (e) {}
-          }
-
-          // 4. Run('Paste') 방식
+          // 3. Run('Paste') 방식 (현재 커서 위치)
           if (typeof h.Run === 'function') {
-            h.Run('Paste');
-            return { success: true, method: 'RunPaste' };
+            try {
+              h.Run('Paste');
+              return { success: true, method: 'RunPaste' };
+            } catch (e) {}
           }
 
           return { success: false, error: 'NO_VALID_HWP_METHOD' };
@@ -206,6 +235,245 @@ async function handleMainWorldHwpInsert(
     return { success: false, error: 'NO_FRAME_SUCCESS' };
   } catch (err) {
     return { success: false, error: String(err) };
+  }
+}
+
+/**
+ * 기안기에서 참고 문서로 지정된 '관련정보' 문서의 본문 텍스트를 열린 탭이나 백그라운드에서 조회
+ */
+export async function handleFetchRelatedDocContent(
+  docInfo: any,
+  callerTabId?: number
+): Promise<{ content: string; error?: string }> {
+  if (!docInfo || !docInfo.title) {
+    return { content: '', error: '문서 정보가 없습니다.' };
+  }
+
+  const rawTitle = String(docInfo.title || '').trim();
+  const titleNorm = rawTitle.toLowerCase();
+
+  // 검색용 키워드 분리 (대괄호/소괄호/기호 제거 및 주요 단어 추출)
+  const cleanedTitle = rawTitle
+    .replace(/\[[^\]]+\]/g, ' ')
+    .replace(/\([^\)]+\)/g, ' ')
+    .replace(/[^\w\s가-힣]/g, ' ')
+    .trim();
+  const stopWords = new Set(['문서', '보고', '계획', '결과', '안내', '요청', '수립', '관련', '대한', '위한', '따른', '시행', '개최', '알림']);
+  const keywords = cleanedTitle
+    .split(/\s+/)
+    .map(w => w.trim())
+    .filter(w => w.length >= 2 && !stopWords.has(w));
+
+  let callerOrigin = '';
+  if (callerTabId && typeof chrome !== 'undefined' && chrome.tabs?.get) {
+    try {
+      const callerTab = await chrome.tabs.get(callerTabId);
+      if (callerTab?.url) {
+        try { callerOrigin = new URL(callerTab.url).origin; } catch {}
+      }
+    } catch {}
+  }
+
+  // 1. 이미 열려 있는 탭 목록 조회 및 후보 탭 스코어링
+  const allTabs = await chrome.tabs.query({}).catch(() => []);
+  const scoredCandidates: Array<{ tab: chrome.tabs.Tab; score: number }> = [];
+
+  for (const tab of allTabs) {
+    if (!tab.id || tab.id === callerTabId) continue;
+    const tabUrl = (tab.url || '').toLowerCase();
+    const tabTitle = (tab.title || '').toLowerCase();
+
+    if (isRestrictedUrl(tabUrl) || tabUrl.startsWith('chrome:') || tabUrl.startsWith('edge:') || tabUrl.startsWith('about:')) {
+      continue;
+    }
+
+    let score = 0;
+    if (callerOrigin && tabUrl.startsWith(callerOrigin.toLowerCase())) {
+      score += 60;
+    }
+    if (tabUrl.includes('bms') || tabUrl.includes('onnara') || tabUrl.includes('sanctn') || tabUrl.includes('doc')) {
+      score += 40;
+    }
+    if (titleNorm.length >= 4 && tabTitle.includes(titleNorm)) {
+      score += 100;
+    }
+    for (const kw of keywords) {
+      if (tabTitle.includes(kw.toLowerCase())) score += 25;
+      if (tabUrl.includes(kw.toLowerCase())) score += 15;
+    }
+    if (docInfo.id && (tabUrl.includes(String(docInfo.id).toLowerCase()) || tabTitle.includes(String(docInfo.id).toLowerCase()))) {
+      score += 80;
+    }
+
+    scoredCandidates.push({ tab, score });
+  }
+
+  scoredCandidates.sort((a, b) => b.score - a.score);
+
+  // 2. 상위 후보 탭들에 대해 심층 본문 추출 시도
+  for (const { tab } of scoredCandidates) {
+    if (!tab.id) continue;
+    try {
+      const control: RequestControl = {
+        id: crypto.randomUUID(),
+        deadline: Date.now() + 8000,
+        expectedUrl: tab.url,
+      };
+      const extracted = await withContentScript(tab.id, {
+        type: 'EXTRACT',
+        purpose: 'document-detail',
+        budgetTokens: 4000,
+        targetTitle: rawTitle,
+        control,
+      }).catch(() => null);
+
+      let hwpText = '';
+      if (typeof chrome !== 'undefined' && chrome.scripting?.executeScript) {
+        try {
+          const hwpResults = await chrome.scripting.executeScript({
+            target: { tabId: tab.id, allFrames: true },
+            world: 'MAIN',
+            func: () => {
+              try {
+                const w = window as any;
+                const h = w.HwpCtrl || w.pHwpCtrl || w.vHwpCtrl || w.hwpCtrl || w.WebHwpCtrl ||
+                          document.getElementById('HwpCtrl') || document.getElementById('hwpCtrl');
+                if (h) {
+                  if (typeof h.GetFieldText === 'function') {
+                    const f = h.GetFieldText('본문');
+                    if (f && f.trim().length > 10) return f.trim();
+                  }
+                  if (typeof h.GetTextFile === 'function') {
+                    try {
+                      const t = h.GetTextFile('TEXT', '');
+                      if (typeof t === 'string' && t.trim().length > 10) return t.trim();
+                    } catch {}
+                  }
+                }
+              } catch {}
+              return null;
+            },
+          }).catch(() => []);
+          for (const r of hwpResults ?? []) {
+            if (r?.result && typeof r.result === 'string') {
+              hwpText = r.result;
+              break;
+            }
+          }
+        } catch {}
+      }
+
+      const text = (hwpText || (extracted?.type === 'EXTRACTED' ? extracted.payload.text : '') || '').trim();
+      const pageTitle = ((extracted?.type === 'EXTRACTED' ? extracted.payload.title : '') || tab.title || '').trim();
+
+      if (text.length >= 20) {
+        const textNorm = text.toLowerCase();
+        const pageTitleNorm = pageTitle.toLowerCase();
+
+        // 1) 제목 직접 매칭
+        const titleDirectMatched = (titleNorm.length >= 4 && (pageTitleNorm.includes(titleNorm) || textNorm.includes(titleNorm)));
+
+        // 2) 키워드 2개 이상 또는 전체 키워드의 50% 이상 매칭
+        const matchedKw = keywords.filter(kw => textNorm.includes(kw.toLowerCase()) || pageTitleNorm.includes(kw.toLowerCase()));
+        const keywordMatched = keywords.length > 0 && (matchedKw.length >= Math.min(2, Math.ceil(keywords.length * 0.5)));
+
+        // 3) 같은 도메인/온나라에서 열려 있는 유일한 다른 탭인 경우
+        const isOnlyOnnaraTab = scoredCandidates.length === 1 || (scoredCandidates.filter(c => c.score >= 30).length === 1 && scoredCandidates[0]?.tab.id === tab.id);
+
+        if (titleDirectMatched || keywordMatched || isOnlyOnnaraTab) {
+          return { content: text };
+        }
+      }
+    } catch {
+      // 계속 다음 탭 탐색
+    }
+  }
+
+  return {
+    content: '',
+    error: '열린 탭에서 참고 문서를 찾지 못했습니다. 온나라 화면의 [관련정보]에서 문서를 클릭하여 창을 띄워두신 후 [본문읽기]를 누르시거나, 아래 메모장에 핵심 내용을 직접 입력해 주세요.',
+  };
+}
+
+// 탭별로 사이드카가 확장되기 전의 원래 창 크기 및 위치 저장
+const originalWindowBounds = new Map<number, { width: number; left?: number }>();
+
+async function expandWindowForDrawer(
+  tabId: number,
+  drawerWidth: number,
+  drawerGap: number = 0,
+  screenAvailWidth?: number,
+  screenAvailLeft?: number
+): Promise<{ success: boolean; expanded: boolean }> {
+  try {
+    const tab = await chrome.tabs.get(tabId).catch(() => null);
+    if (!tab?.windowId) return { success: false, expanded: false };
+
+    const win = await chrome.windows.get(tab.windowId).catch(() => null);
+    if (!win || !win.id) return { success: false, expanded: false };
+
+    // 최대화 또는 전체화면 상태면 창 크기 자체는 강제 변경하지 않음 (페이지 레이아웃 마진으로 분할)
+    if (win.state === 'maximized' || win.state === 'fullscreen') {
+      return { success: true, expanded: false };
+    }
+
+    const currentWidth = win.width ?? 1024;
+    const currentLeft = win.left ?? 0;
+
+    // 이미 확장된 상태가 아닐 때만 원래 크기 보존
+    if (!originalWindowBounds.has(tab.windowId)) {
+      originalWindowBounds.set(tab.windowId, { width: currentWidth, left: currentLeft });
+    }
+
+    const totalExpansion = drawerWidth + drawerGap;
+    let newWidth = currentWidth + totalExpansion;
+    let newLeft = currentLeft;
+
+    // 모니터 오른쪽 바깥으로 창이 삐져나갈 경우 왼쪽으로 당김
+    const availWidth = typeof screenAvailWidth === 'number' && screenAvailWidth > 0 ? screenAvailWidth : 1920;
+    const availLeft = typeof screenAvailLeft === 'number' ? screenAvailLeft : 0;
+    const maxRight = availLeft + availWidth;
+
+    if (currentLeft + newWidth > maxRight) {
+      const overflow = (currentLeft + newWidth) - maxRight;
+      newLeft = Math.max(availLeft, currentLeft - overflow);
+      if (newWidth > availWidth) {
+        newWidth = availWidth;
+        newLeft = availLeft;
+      }
+    }
+
+    await chrome.windows.update(win.id, {
+      width: Math.round(newWidth),
+      left: Math.round(newLeft),
+    });
+
+    return { success: true, expanded: true };
+  } catch {
+    return { success: false, expanded: false };
+  }
+}
+
+async function restoreWindowForDrawer(tabId: number): Promise<{ success: boolean }> {
+  try {
+    const tab = await chrome.tabs.get(tabId).catch(() => null);
+    const windowId = tab?.windowId;
+    if (!windowId) return { success: false };
+
+    const saved = originalWindowBounds.get(windowId);
+    if (saved) {
+      originalWindowBounds.delete(windowId);
+      const win = await chrome.windows.get(windowId).catch(() => null);
+      if (win && win.state !== 'maximized' && win.state !== 'fullscreen') {
+        await chrome.windows.update(windowId, {
+          width: Math.round(saved.width),
+          left: saved.left !== undefined ? Math.round(saved.left) : undefined,
+        });
+      }
+    }
+    return { success: true };
+  } catch {
+    return { success: false };
   }
 }
 
@@ -239,6 +507,10 @@ export default defineBackground(() => {
   // 첨부 파일명 정규화(B5). 브라우저가 이름을 정하기 직전에 한 번 끼어든다.
   registerDownloadNaming();
 
+  chrome.tabs.onRemoved.addListener((tabId) => {
+    void restoreWindowForDrawer(tabId);
+  });
+
   chrome.runtime.onMessage.addListener((msg: unknown, sender, sendResponse) => {
     if (msg && typeof msg === 'object' && (msg as any).type === 'DRAFT_MAIN_WORLD_HWP_INSERT') {
       const tabId = sender.tab?.id;
@@ -246,6 +518,37 @@ export default defineBackground(() => {
         handleMainWorldHwpInsert(tabId, String((msg as any).text || ''))
           .then(res => sendResponse(res))
           .catch(err => sendResponse({ success: false, error: String(err) }));
+        return true;
+      }
+    }
+    if (msg && typeof msg === 'object' && (msg as any).type === 'DRAFT_FETCH_RELATED_DOC') {
+      const docInfo = (msg as any).doc;
+      handleFetchRelatedDocContent(docInfo, sender.tab?.id)
+        .then(res => sendResponse(res))
+        .catch(err => sendResponse({ content: '', error: String(err) }));
+      return true;
+    }
+    if (msg && typeof msg === 'object' && (msg as any).type === 'EXPAND_WINDOW_FOR_DRAWER') {
+      const tabId = sender.tab?.id;
+      if (tabId) {
+        expandWindowForDrawer(
+          tabId,
+          Number((msg as any).drawerWidth || 440),
+          Number((msg as any).drawerGap || 0),
+          (msg as any).screenAvailWidth,
+          (msg as any).screenAvailLeft
+        )
+          .then(res => sendResponse(res))
+          .catch(() => sendResponse({ success: false, expanded: false }));
+        return true;
+      }
+    }
+    if (msg && typeof msg === 'object' && (msg as any).type === 'RESTORE_WINDOW_FOR_DRAWER') {
+      const tabId = sender.tab?.id;
+      if (tabId) {
+        restoreWindowForDrawer(tabId)
+          .then(res => sendResponse(res))
+          .catch(() => sendResponse({ success: false }));
         return true;
       }
     }
@@ -267,6 +570,10 @@ export default defineBackground(() => {
 
   // 탭 전환 → 패널이 세션을 갈아끼울 수 있도록 알린다 (계획서 Phase 2-5)
   chrome.tabs.onActivated.addListener(async ({ tabId }) => {
+    const rawTab = await chrome.tabs.get(tabId).catch(() => null);
+    if (rawTab?.url && isExactDraftPath(rawTab.url)) {
+      void maybeAttachDraftDrawer(tabId, 0, rawTab.url);
+    }
     const tab = await panelTab(tabId);
     if (tab) pushToPanel({ type: 'TAB_CHANGED', tab: toSummary(tab) });
   });
@@ -301,8 +608,11 @@ export default defineBackground(() => {
    *   프레임 단위 이동을 그대로 알려, 붙어 있던 본문을 떼어낼 수 있게 한다.
    */
   chrome.webNavigation.onCommitted.addListener(details => {
-    if (details.frameId === 0 && details.url && isExactDraftPath(details.url)) {
-      void maybeAttachDraftDrawer(details.tabId, details.frameId, details.url, (details as any).documentId);
+    if (details.frameId === 0) {
+      attachedDrawers.delete(details.tabId);
+      if (details.url && isExactDraftPath(details.url)) {
+        void maybeAttachDraftDrawer(details.tabId, details.frameId, details.url, (details as any).documentId);
+      }
     }
     notifyScreenChange(details);
   });

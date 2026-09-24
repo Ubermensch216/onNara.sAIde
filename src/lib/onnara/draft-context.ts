@@ -5,6 +5,8 @@
  * 문서 전환이나 비정상 상태에서의 오삽입을 방지한다.
  */
 
+import { extractRelatedDocuments, type RelatedDocInfo } from './related-info';
+
 export type DraftCoverage = 'full' | 'partial' | 'none';
 
 export interface DraftTitleInfo {
@@ -29,6 +31,7 @@ export interface DraftContext {
   editorRevision: string;
   title: DraftTitleInfo;
   body: DraftBodyInfo;
+  relatedDocs: RelatedDocInfo[];
   capturedAt: number;
 }
 
@@ -90,6 +93,7 @@ export function captureDraftContext(
 
   const rawBody = bodyText || '';
   const bodyRev = computeRevisionHash(rawBody);
+  const relatedDocs = extractRelatedDocuments(doc);
 
   return {
     tabId: tabInfo.tabId,
@@ -106,6 +110,7 @@ export function captureDraftContext(
       coverage,
       source: ta ? 'textarea' : bodyText ? 'contenteditable' : 'none',
     },
+    relatedDocs,
     capturedAt: Date.now(),
   };
 }

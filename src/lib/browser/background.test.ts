@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { chooseBestExtraction, handlePanelMessage, mergeDetailFrames, notifyScreenChange, readDocumentInBackground, releaseKeptWorkTab, toSummary } from '@/entrypoints/background';
+import { chooseBestExtraction, handleFetchRelatedDocContent, handlePanelMessage, mergeDetailFrames, notifyScreenChange, readDocumentInBackground, releaseKeptWorkTab, toSummary } from '@/entrypoints/background';
 import { forgetPanelSpawn, notePanelSpawn, rememberPanelTab, resetPanelSpawns } from '@/lib/browser/panel-sync';
 import { noteNavigationTarget, noteTopCommit, workTabs } from '@/lib/browser/work-tabs';
 
@@ -964,4 +964,66 @@ it('메인 화면에서 이미 열람되어 저장된 미열람 목록에서 문
     control: { id: crypto.randomUUID(), deadline: Date.now() + 30_000 },
   });
   expect(response).toMatchObject({ type: 'DOCUMENTS_MARKED_READ', marked: ['이미 읽은 문서'], unconfirmed: [] });
+});
+
+it('탭 제목이 일반적인 온나라시스템이어도 본문 추출 내용에서 관련문서를 식별하여 회수한다', async () => {
+  const common = { truncated: false, keptRatio: 1, estimatedTokens: 80, extractedAt: Date.now() };
+  const sendMessage = vi.fn(async (_tabId: number, msg: any) => {
+    if (msg.type === 'EXTRACT') {
+      return {
+        type: 'EXTRACTED',
+        payload: {
+          ...common,
+          url: 'https://onnara.test/bms/dct/selectDocView.do',
+          title: '2026년도 공공 AI 지원사업 추진계획 안내',
+          text: '2026년도 공공 AI 지원사업 추진계획 안내\n추진배경: 공공부문 행정업무 혁신\n제출기한: 10월 20일',
+          charCount: 80,
+          method: 'innerText',
+        },
+      };
+    }
+    return { type: 'FAILED' };
+  });
+
+  vi.stubGlobal('chrome', {
+    tabs: {
+      get: vi.fn(async (id: number) =>
+        id === 1
+          ? { id: 1, url: 'https://onnara.test/bms/dct/draft.do', title: '기안기' }
+          : { id: 2, url: 'https://onnara.test/bms/dct/selectDocView.do', title: '온나라시스템' }
+      ),
+      query: vi.fn(async () => [
+        { id: 1, url: 'https://onnara.test/bms/dct/draft.do', title: '기안기' },
+        { id: 2, url: 'https://onnara.test/bms/dct/selectDocView.do', title: '온나라시스템' },
+      ]),
+      sendMessage,
+    },
+    scripting: { executeScript: vi.fn(async () => []) },
+  });
+
+  const res = await handleFetchRelatedDocContent(
+    { title: '2026년도 공공 AI 지원사업 추진계획 안내' },
+    1
+  );
+
+  expect(res.content).toContain('공공부문 행정업무 혁신');
+  expect(res.error).toBeUndefined();
+});
+
+it('관련 문서 탭을 찾지 못하면 친절한 안내 메시지를 반환한다', async () => {
+  vi.stubGlobal('chrome', {
+    tabs: {
+      get: vi.fn(async (id: number) => ({ id, url: 'https://onnara.test/bms/dct/draft.do' })),
+      query: vi.fn(async () => [{ id: 1, url: 'https://onnara.test/bms/dct/draft.do', title: '기안기' }]),
+    },
+    scripting: { executeScript: vi.fn(async () => []) },
+  });
+
+  const res = await handleFetchRelatedDocContent(
+    { title: '존재하지 않는 공문' },
+    1
+  );
+
+  expect(res.content).toBe('');
+  expect(res.error).toContain('온나라 화면의 [관련정보]에서 문서를 클릭하여 창을 띄워두신 후');
 });

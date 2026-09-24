@@ -5,6 +5,8 @@
  * 문서 바인딩, 승인 토큰, 출처(origin) 위조 방지 검증을 담당한다.
  */
 
+import type { RelatedDocInfo } from '../onnara/related-info';
+
 export interface TargetRef {
   tabId: number;
   frameId: number;
@@ -17,26 +19,28 @@ export interface TargetRef {
 export type InsertMode = 'cursor' | 'replace-selection' | 'append';
 
 export type DraftRequest =
-  | { type: 'DRAFT_GET_CONTEXT'; requestId: string; target: TargetRef }
+  | { type: 'DRAFT_GET_CONTEXT'; requestId: string; target?: TargetRef }
   | {
       type: 'DRAFT_PREPARE_INSERT';
       requestId: string;
-      target: TargetRef;
-      payload: { text: string; mode: InsertMode; expectedEditorRevision: string };
+      target?: TargetRef;
+      payload: { text: string; mode: InsertMode; expectedEditorRevision?: string };
     }
   | {
       type: 'DRAFT_APPLY_INSERT';
       requestId: string;
-      target: TargetRef;
+      target?: TargetRef;
       approvalToken: string;
+      text?: string;
     }
   | {
       type: 'DRAFT_VERIFY_INSERT';
       requestId: string;
-      target: TargetRef;
+      target?: TargetRef;
       operationId: string;
     }
-  | { type: 'DRAFT_CANCEL'; requestId: string; target: TargetRef }
+  | { type: 'DRAFT_CANCEL'; requestId: string; target?: TargetRef }
+  | { type: 'DRAFT_FETCH_RELATED_DOC'; doc: RelatedDocInfo }
   | { type: 'SAIDE_START_CLICK_TARGET'; text: string }
   | { type: 'SAIDE_CANCEL_CLICK_TARGET' }
   | { type: 'SAIDE_INSERT_LAST_FOCUSED'; text: string };
@@ -44,12 +48,23 @@ export type DraftRequest =
 export type DraftResponse =
   | {
       type: 'DRAFT_CONTEXT_RESPONSE';
-      requestId: string;
+      requestId?: string;
       title: string;
       documentKey: string;
       editorRevision: string;
       capability: 'read-only' | 'copy-only' | 'cursor' | 'selection' | 'append';
       bodySnippet?: string;
+      needsOpenBody?: boolean;
+      hasWriteBodyBtn?: boolean;
+      reason?: string;
+      relatedDocs?: RelatedDocInfo[];
+    }
+  | {
+      type: 'DRAFT_RELATED_DOC_CONTENT';
+      title: string;
+      content: string;
+      docId?: string;
+      error?: string;
     }
   | {
       type: 'DRAFT_PREPARED_RESPONSE';

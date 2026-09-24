@@ -9,6 +9,7 @@ import type { DraftContext } from './draft-context';
 import { computeRevisionHash } from './draft-context';
 import type { InsertMode } from '../messaging/draft-protocol';
 import { findWriteBodyButton } from './draft-route';
+import { draftToHtml, createDomFragmentFromText, insertMultilineIntoHwp } from './draft-format';
 
 export type EditorCapability = 'read-only' | 'copy-only' | 'cursor' | 'selection' | 'append';
 
@@ -177,10 +178,25 @@ export class ContenteditableEditorAdapter implements DraftEditorAdapter {
 
     el.focus();
     const ownerDoc = el.ownerDocument;
-    if (ownerDoc.queryCommandSupported && ownerDoc.queryCommandSupported('insertText')) {
-      ownerDoc.execCommand('insertText', false, op.text);
-    } else {
-      el.appendChild(ownerDoc.createTextNode(op.text));
+    let applied = false;
+    const html = draftToHtml(op.text);
+
+    try {
+      if (ownerDoc.queryCommandSupported && ownerDoc.queryCommandSupported('insertHTML')) {
+        applied = ownerDoc.execCommand('insertHTML', false, html);
+      }
+    } catch {}
+
+    if (!applied) {
+      try {
+        if (ownerDoc.queryCommandSupported && ownerDoc.queryCommandSupported('insertText')) {
+          applied = ownerDoc.execCommand('insertText', false, op.text);
+        }
+      } catch {}
+    }
+
+    if (!applied) {
+      el.appendChild(createDomFragmentFromText(ownerDoc, op.text));
     }
 
     return {
@@ -434,26 +450,31 @@ export function tryApplyHwpCtrl(
 ): { success: boolean; method?: string; fieldName?: string } {
   if (!hwp) return { success: false };
 
-  // 1. 누름틀(Field) 방식 시도 (온나라 기안기 본문 누름틀 '본문' 최우선)
+  // 1. 현재 커서(클릭 위치) 직접 입력 (최우선: 줄바꿈/문단 보존 BreakPara 적용)
+  if (typeof hwp.InsertText === 'function' || typeof hwp.CreateAction === 'function') {
+    try {
+      const ok = insertMultilineIntoHwp(hwp, text);
+      if (ok) return { success: true, method: 'InsertText' };
+    } catch {
+      // 다음 방식 시도
+    }
+  }
+
+  // 2. 누름틀(Field) 방식 시도: 기존 내용을 절대 대체하지 않고 필드 끝으로 이동(select=false)하여 추가 삽입
   const fieldCandidates = ['본문', 'body', 'BODY', 'content', '기안문본문', '기안문_본문', '내용', '본문내용'];
   for (const fn of fieldCandidates) {
     try {
-      const exists = typeof hwp.FieldExist === 'function' ? Boolean(hwp.FieldExist(fn)) : true;
-      if (exists) {
-        if (typeof hwp.MoveToField === 'function') {
-          hwp.MoveToField(fn, true, true, true);
-          if (typeof hwp.InsertText === 'function') {
-            hwp.InsertText(text);
-            return { success: true, method: 'MoveToField+InsertText', fieldName: fn };
-          }
-          if (typeof hwp.Run === 'function') {
-            hwp.Run('Paste');
-            return { success: true, method: 'MoveToField+RunPaste', fieldName: fn };
-          }
+      const exists = typeof hwp.FieldExist === 'function' ? Boolean(hwp.FieldExist(fn)) : false;
+      if (exists && typeof hwp.MoveToField === 'function') {
+        // start: false (끝 위치), select: false (기존 내용 선택/삭제 금지)
+        hwp.MoveToField(fn, true, false, false);
+        const ok = insertMultilineIntoHwp(hwp, text);
+        if (ok) {
+          return { success: true, method: 'MoveToFieldEnd+InsertText', fieldName: fn };
         }
-        if (typeof hwp.PutFieldText === 'function') {
-          hwp.PutFieldText(fn, text);
-          return { success: true, method: 'PutFieldText', fieldName: fn };
+        if (typeof hwp.Run === 'function') {
+          hwp.Run('Paste');
+          return { success: true, method: 'MoveToFieldEnd+RunPaste', fieldName: fn };
         }
       }
     } catch {
@@ -461,33 +482,14 @@ export function tryApplyHwpCtrl(
     }
   }
 
-  // 2. 현재 커서 위치 InsertText
-  if (typeof hwp.InsertText === 'function') {
-    hwp.InsertText(text);
-    return { success: true, method: 'InsertText' };
-  }
-
-  // 3. CreateAction 방식
-  if (typeof hwp.CreateAction === 'function') {
+  // 3. Run("Paste") 방식 (현재 커서 위치)
+  if (typeof hwp.Run === 'function') {
     try {
-      const act = hwp.CreateAction('InsertText');
-      if (act && typeof act.CreateSet === 'function') {
-        const set = act.CreateSet();
-        if (set && typeof set.SetItem === 'function') {
-          set.SetItem('Text', text);
-          act.Execute(set);
-          return { success: true, method: 'CreateAction' };
-        }
-      }
+      hwp.Run('Paste');
+      return { success: true, method: 'RunPaste' };
     } catch {
       // ignore
     }
-  }
-
-  // 4. Run("Paste")
-  if (typeof hwp.Run === 'function') {
-    hwp.Run('Paste');
-    return { success: true, method: 'RunPaste' };
   }
 
   return { success: false };
@@ -628,67 +630,105 @@ export async function insertViaMainWorldHwp(
               return;
             }
 
-            // A. 누름틀(Field) 방식 시도
+            // 동일 컨트롤에 대한 1.5초 내 중복 실행 차단
+            var now = Date.now();
+            if (h.__saide_last_inserted && now - h.__saide_last_inserted < 1500) {
+              send({ success: true, method: 'Deduplicated' });
+              return;
+            }
+            h.__saide_last_inserted = now;
+
+            function insertLines(hwp, str) {
+              var lines = str.split(/\r?\n/);
+              if (lines.length <= 1) {
+                if (typeof hwp.InsertText === 'function') {
+                  hwp.InsertText(str);
+                  return true;
+                }
+                if (typeof hwp.CreateAction === 'function') {
+                  var act = hwp.CreateAction('InsertText');
+                  if (act && typeof act.CreateSet === 'function') {
+                    var st = act.CreateSet();
+                    if (st && typeof st.SetItem === 'function') {
+                      st.SetItem('Text', str);
+                      act.Execute(st);
+                      return true;
+                    }
+                  }
+                }
+                return false;
+              }
+
+              var any = false;
+              for (var j = 0; j < lines.length; j++) {
+                var l = lines[j];
+                if (l.length > 0) {
+                  if (typeof hwp.InsertText === 'function') {
+                    hwp.InsertText(l);
+                    any = true;
+                  } else if (typeof hwp.CreateAction === 'function') {
+                    var a = hwp.CreateAction('InsertText');
+                    if (a && typeof a.CreateSet === 'function') {
+                      var s = a.CreateSet();
+                      if (s && typeof s.SetItem === 'function') {
+                        s.SetItem('Text', l);
+                        a.Execute(s);
+                        any = true;
+                      }
+                    }
+                  }
+                }
+                if (j < lines.length - 1) {
+                  if (typeof hwp.Run === 'function') {
+                    hwp.Run('BreakPara');
+                    any = true;
+                  } else if (hwp.HAction && typeof hwp.HAction.Run === 'function') {
+                    hwp.HAction.Run('BreakPara');
+                    any = true;
+                  }
+                }
+              }
+              return any;
+            }
+
+            // A. 현재 커서(클릭 위치) 직접 입력 (최우선: 문단 줄바꿈 보존 BreakPara 적용)
+            if (typeof h.InsertText === 'function' || typeof h.CreateAction === 'function') {
+              try {
+                if (insertLines(h, draft)) {
+                  send({ success: true, method: 'InsertLinesWithBreakPara' });
+                  return;
+                }
+              } catch (e) {}
+            }
+
+            // B. 누름틀(Field) 방식 시도: 기존 내용을 절대 대체하지 않고 필드 끝으로 이동(select=false)하여 추가 삽입
             var fields = ['본문', 'body', 'BODY', 'content', '기안문본문', '기안문_본문', '내용', '본문내용'];
             for (var f = 0; f < fields.length; f++) {
               var fn = fields[f];
               try {
-                var exist = false;
-                if (typeof h.FieldExist === 'function') {
-                  exist = Boolean(h.FieldExist(fn));
-                } else {
-                  exist = true;
-                }
-                if (exist) {
-                  if (typeof h.MoveToField === 'function') {
-                    h.MoveToField(fn, true, true, true);
-                    if (typeof h.InsertText === 'function') {
-                      h.InsertText(draft);
-                      send({ success: true, method: 'MoveToField+InsertText', fieldName: fn });
-                      return;
-                    } else if (typeof h.Run === 'function') {
-                      h.Run('Paste');
-                      send({ success: true, method: 'MoveToField+RunPaste', fieldName: fn });
-                      return;
-                    }
+                var exist = typeof h.FieldExist === 'function' ? Boolean(h.FieldExist(fn)) : false;
+                if (exist && typeof h.MoveToField === 'function') {
+                  h.MoveToField(fn, true, false, false);
+                  if (insertLines(h, draft)) {
+                    send({ success: true, method: 'MoveToFieldEnd+InsertLines', fieldName: fn });
+                    return;
                   }
-                  if (typeof h.PutFieldText === 'function') {
-                    h.PutFieldText(fn, draft);
-                    send({ success: true, method: 'PutFieldText', fieldName: fn });
+                  if (typeof h.Run === 'function') {
+                    h.Run('Paste');
+                    send({ success: true, method: 'MoveToFieldEnd+RunPaste', fieldName: fn });
                     return;
                   }
                 }
               } catch (e) {}
             }
 
-            // B. 커서 위치 직접 입력
-            if (typeof h.InsertText === 'function') {
-              h.InsertText(draft);
-              send({ success: true, method: 'InsertText' });
-              return;
-            }
-
-            // C. CreateAction('InsertText')
-            if (typeof h.CreateAction === 'function') {
-              try {
-                var act = h.CreateAction('InsertText');
-                if (act && typeof act.CreateSet === 'function') {
-                  var st = act.CreateSet();
-                  if (st && typeof st.SetItem === 'function') {
-                    st.SetItem('Text', draft);
-                    act.Execute(st);
-                    send({ success: true, method: 'CreateAction' });
-                    return;
-                  }
-                }
-              } catch (e) {}
-            }
-
-            // D. Run('Paste')
+            // C. Run('Paste') 방식 (현재 커서 위치)
             if (typeof h.Run === 'function') {
-              h.Run('Paste');
-              send({ success: true, method: 'RunPaste' });
-              return;
+              try {
+                h.Run('Paste');
+                send({ success: true, method: 'RunPaste' });
+                return;
+              } catch (e) {}
             }
 
             send({ success: false, error: 'NO_VALID_HWP_METHOD' });
@@ -840,9 +880,10 @@ export async function directInsertAtTarget(
       }
     }
 
+    const html = draftToHtml(text);
     try {
-      if (ownerDoc.queryCommandSupported && ownerDoc.queryCommandSupported('insertText')) {
-        applied = ownerDoc.execCommand('insertText', false, text);
+      if (ownerDoc.queryCommandSupported && ownerDoc.queryCommandSupported('insertHTML')) {
+        applied = ownerDoc.execCommand('insertHTML', false, html);
       }
     } catch {
       applied = false;
@@ -850,19 +891,30 @@ export async function directInsertAtTarget(
 
     if (!applied) {
       try {
+        if (ownerDoc.queryCommandSupported && ownerDoc.queryCommandSupported('insertText')) {
+          applied = ownerDoc.execCommand('insertText', false, text);
+        }
+      } catch {
+        applied = false;
+      }
+    }
+
+    if (!applied) {
+      try {
         const sel = ownerDoc.getSelection();
         if (sel && sel.rangeCount > 0 && insertEl.contains(sel.anchorNode)) {
           const range = sel.getRangeAt(0);
-          range.deleteContents();
-          const textNode = ownerDoc.createTextNode(text);
-          range.insertNode(textNode);
-          range.setStartAfter(textNode);
-          range.setEndAfter(textNode);
+          if (!range.collapsed) {
+            range.collapse(false);
+          }
+          const frag = createDomFragmentFromText(ownerDoc, text);
+          range.insertNode(frag);
+          range.collapse(false);
           sel.removeAllRanges();
           sel.addRange(range);
           applied = true;
         } else {
-          insertEl.appendChild(ownerDoc.createTextNode(text));
+          insertEl.appendChild(createDomFragmentFromText(ownerDoc, text));
           applied = true;
         }
       } catch (e) {
