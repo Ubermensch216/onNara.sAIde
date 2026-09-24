@@ -38,6 +38,25 @@ describe('selection-manager', () => {
       expect(sel).toBeNull();
       ta.remove();
     });
+
+    it('iframe 안 textarea의 선택도 해당 프레임의 DOM 생성자로 캡처한다', () => {
+      const iframe = document.createElement('iframe');
+      document.body.appendChild(iframe);
+      const frameDoc = iframe.contentDocument!;
+      const ta = frameDoc.createElement('textarea');
+      ta.value = '본문 편집기 선택 테스트';
+      frameDoc.body.appendChild(ta);
+
+      ta.focus();
+      ta.selectionStart = 0;
+      ta.selectionEnd = ta.value.length;
+
+      const selection = captureActiveSelection(frameDoc);
+      expect(selection?.text).toBe('본문 편집기 선택 테스트');
+      expect(selection?.ownerDoc).toBe(frameDoc);
+
+      iframe.remove();
+    });
   });
 
   describe('replaceSelectedText', () => {

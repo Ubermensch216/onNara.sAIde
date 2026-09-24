@@ -53,6 +53,12 @@ function toTopLevelClientRect(doc: Document, rect: DOMRect): DOMRect {
   } as DOMRect;
 }
 
+function rectForBubble(doc: Document, rect: DOMRect): DOMRect {
+  // 같은 프레임 안에 오버레이를 그리면 로컬 좌표를 유지하고, 최상위 오버레이가
+  // 다른 프레임의 선택을 표시할 때만 좌표를 최상위 뷰포트로 변환한다.
+  return doc.defaultView === window ? rect : toTopLevelClientRect(doc, rect);
+}
+
 /** 현재 문서(또는 하위 iframe)의 텍스트 선택 정보 캡처 */
 export function captureActiveSelection(doc: Document = document): SelectionInfo | null {
   const win = doc.defaultView || window;
@@ -75,7 +81,7 @@ export function captureActiveSelection(doc: Document = document): SelectionInfo 
         // 텍스트 필드 상단 중앙 근처로 툴바 위치 지정
         return {
           text: selectedText,
-          clientRect: toTopLevelClientRect(doc, rect),
+          clientRect: rectForBubble(doc, rect),
           targetElement: input,
           ownerDoc: doc,
           isEditable: !input.disabled && !input.readOnly,
@@ -105,7 +111,7 @@ export function captureActiveSelection(doc: Document = document): SelectionInfo 
 
         return {
           text,
-          clientRect: toTopLevelClientRect(doc, rect),
+          clientRect: rectForBubble(doc, rect),
           targetElement: el,
           ownerDoc: doc,
           isEditable,

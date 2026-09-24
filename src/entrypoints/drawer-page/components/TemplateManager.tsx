@@ -27,6 +27,16 @@ export function TemplateManager({
   const [filterType, setFilterType] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [statusMessage, setStatusMessage] = useState<string>('');
+  const [expandedDetails, setExpandedDetails] = useState<Set<string>>(() => new Set());
+
+  const toggleDetail = (key: string) => {
+    setExpandedDetails(current => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
 
   // 편집/등록 모달 상태
   const [isEditorOpen, setIsEditorOpen] = useState(false);
@@ -390,16 +400,29 @@ export function TemplateManager({
                 </div>
               </div>
 
-              {/* 주요 항목 목록 배지 */}
-              <div className="bg-slate-50 border border-slate-200 rounded p-2 space-y-1">
-                <div className="text-[10px] font-bold text-slate-600 flex items-center justify-between">
+              {/* 필수 주요 항목: 카드별로 접고 펼칠 수 있음 */}
+              <div className="bg-slate-50 border border-slate-200 rounded px-2">
+                <button
+                  type="button"
+                  onClick={() => toggleDetail(`${t.id}:sections`)}
+                  aria-expanded={expandedDetails.has(`${t.id}:sections`)}
+                  aria-controls={`template-${t.id}-sections`}
+                  className="w-full min-h-8 text-[10px] font-bold text-slate-600 flex items-center justify-between gap-2 text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 rounded"
+                >
                   <span className="inline-flex items-center gap-1">
                     <MaterialIcon name="listAlt" size={14} />
                     필수 주요 항목 ({t.sections.length}개)
                   </span>
-                  <span className="text-[9px] text-slate-400">순서대로 대항목 구성</span>
-                </div>
-                <div className="flex flex-wrap gap-1 pt-0.5">
+                  <span className="inline-flex items-center gap-1 text-[9px] text-slate-400">
+                    순서대로 대항목 구성
+                    <MaterialIcon name={expandedDetails.has(`${t.id}:sections`) ? 'arrowUp' : 'arrowDown'} size={14} />
+                  </span>
+                </button>
+                <div
+                  id={`template-${t.id}-sections`}
+                  hidden={!expandedDetails.has(`${t.id}:sections`)}
+                  className="flex flex-wrap gap-1 pb-2"
+                >
                   {t.sections.map((sec, idx) => (
                     <span
                       key={idx}
@@ -413,11 +436,26 @@ export function TemplateManager({
 
               {/* 작성 지침 */}
               {t.guidance && (
-                <div className="text-[10px] text-slate-500 bg-blue-50/50 p-1.5 rounded border border-blue-100 flex items-start gap-1">
-                  <span className="text-blue-600 font-bold shrink-0 inline-flex items-center gap-0.5">
-                    <MaterialIcon name="lightbulb" size={14} /> 지침:
-                  </span>
-                  <span className="leading-tight">{t.guidance}</span>
+                <div className="text-[10px] text-slate-500 bg-blue-50/50 px-1.5 rounded border border-blue-100">
+                  <button
+                    type="button"
+                    onClick={() => toggleDetail(`${t.id}:guidance`)}
+                    aria-expanded={expandedDetails.has(`${t.id}:guidance`)}
+                    aria-controls={`template-${t.id}-guidance`}
+                    className="w-full min-h-8 text-left flex items-center justify-between gap-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 rounded"
+                  >
+                    <span className="text-blue-600 font-bold shrink-0 inline-flex items-center gap-0.5">
+                      <MaterialIcon name="lightbulb" size={14} /> 지침
+                    </span>
+                    <MaterialIcon name={expandedDetails.has(`${t.id}:guidance`) ? 'arrowUp' : 'arrowDown'} size={14} className="text-blue-400" />
+                  </button>
+                  <p
+                    id={`template-${t.id}-guidance`}
+                    hidden={!expandedDetails.has(`${t.id}:guidance`)}
+                    className="leading-tight pb-1.5"
+                  >
+                    {t.guidance}
+                  </p>
                 </div>
               )}
             </div>

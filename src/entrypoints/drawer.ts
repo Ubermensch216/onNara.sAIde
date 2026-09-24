@@ -12,6 +12,52 @@ import { findWriteBodyButton, isExactDraftPath } from '@/lib/onnara/draft-route'
 import { DRAWER_GAP_PX, applyPageLayoutShift } from '@/lib/onnara/drawer-layout';
 import { createSelectionBubble } from '@/lib/onnara/selection-bubble';
 
+const SELECTION_BRIDGE_REQUEST = 'SAIDE_SELECTION_BUBBLE_REQUEST';
+const SELECTION_BRIDGE_READY = 'SAIDE_SELECTION_BUBBLE_READY';
+const SELECTION_BRIDGE_SEND = 'SAIDE_SELECTION_BUBBLE_SEND';
+
+function mountFrameSelectionBubble(doc: Document) {
+  const host = doc.createElement('saide-selection-bubble-host');
+  host.style.cssText =
+    'all:initial!important;display:block!important;position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;overflow:visible!important;pointer-events:none!important;z-index:2147483647!important;';
+  const shadow = host.attachShadow({ mode: 'open' });
+  const bubble = createSelectionBubble({
+    showToast: (message) => {
+      let toast = shadow.querySelector<HTMLElement>('.saide-frame-bubble-toast');
+      if (!toast) {
+        toast = doc.createElement('div');
+        toast.className = 'saide-frame-bubble-toast';
+        toast.style.cssText = 'position:fixed;right:20px;bottom:20px;padding:10px 14px;background:#1e293b;color:#fff;border-radius:8px;font:13px sans-serif;z-index:2147483647;';
+        shadow.appendChild(toast);
+      }
+      toast.textContent = message;
+      toast.style.display = 'block';
+      setTimeout(() => { if (toast) toast.style.display = 'none'; }, 3000);
+    },
+    onSendToSidecar: (text) => {
+      try {
+        window.top?.postMessage({ type: SELECTION_BRIDGE_SEND, text }, '*');
+      } catch {
+        // top-level sidecar may have navigated away
+      }
+    },
+  });
+  shadow.appendChild(bubble.element);
+
+  const attach = () => {
+    const root = doc.documentElement || doc.body;
+    if (root && !host.isConnected) root.appendChild(host);
+  };
+  attach();
+  doc.addEventListener('DOMContentLoaded', attach, { once: true });
+  const unbind = bubble.bindEvents(doc);
+  window.addEventListener('pagehide', () => {
+    unbind();
+    bubble.destroy();
+    host.remove();
+  }, { once: true });
+}
+
 declare global {
   interface Window {
     __saideDrawerInjected?: () => boolean;
@@ -20,8 +66,29 @@ declare global {
 }
 
 export default defineUnlistedScript(() => {
-  // 최상위 창(Top Frame)에서만 사이드카 슬라이딩 버튼 런처를 마운트한다
+  // 하위 프레임에서도 선택 툴바를 쓸 수 있도록 최상위 프레임의 허가 응답을 기다린다.
+  // 편집기가 교차 출처 iframe이어도 해당 프레임 자체에서 Selection을 읽고 표시한다.
   if (window.self !== window.top) {
+    let attempts = 0;
+    let initialized = false;
+    const requestTimer = window.setInterval(() => {
+      if (initialized || ++attempts > 60) {
+        window.clearInterval(requestTimer);
+        return;
+      }
+      try {
+        window.top?.postMessage({ type: SELECTION_BRIDGE_REQUEST }, '*');
+      } catch {
+        // ignore
+      }
+    }, 400);
+
+    window.addEventListener('message', (event: MessageEvent) => {
+      if (initialized || event.source !== window.top || event.data?.type !== SELECTION_BRIDGE_READY) return;
+      initialized = true;
+      window.clearInterval(requestTimer);
+      mountFrameSelectionBubble(document);
+    });
     return;
   }
 
@@ -29,6 +96,23 @@ export default defineUnlistedScript(() => {
   if (!isExactDraftPath(window.location.href)) {
     return;
   }
+
+  // 하위 프레임의 선택 버블 초기화 요청을 승인하고, 질의 텍스트를 사이드카로 전달한다.
+  window.addEventListener('message', (event: MessageEvent) => {
+    if (!event.data || typeof event.data !== 'object' || !event.source) return;
+    const msg = event.data;
+    if (msg.type === SELECTION_BRIDGE_REQUEST) {
+      (event.source as Window).postMessage({ type: SELECTION_BRIDGE_READY }, '*');
+    } else if (msg.type === SELECTION_BRIDGE_SEND && typeof msg.text === 'string') {
+      setDrawerOpen(true);
+      setTimeout(() => {
+        iframe.contentWindow?.postMessage({
+          type: 'SAIDE_FILL_PROMPT',
+          text: `다음 문서 내용을 분석 또는 보완해줘:\n\n${msg.text}`,
+        }, '*');
+      }, 350);
+    }
+  });
 
   console.info(
     '%c[sAIde] 온나라 기안기 감지 완료! 슬라이딩 런처 버튼 마운트 시작 (URL: ' + window.location.href + ')',
@@ -436,42 +520,9 @@ export default defineUnlistedScript(() => {
     });
     shadow.appendChild(selectionBubble.element);
 
-    // 접근 가능한 모든 문서에 선택 이벤트 바인딩
-    const unbindSelectionMap = new Map<Document, () => void>();
-
-    function updateSelectionBindings() {
-      try {
-        const docs = getAccessibleDocuments(document);
-        for (const doc of docs) {
-          if (!unbindSelectionMap.has(doc)) {
-            try {
-              const unbind = selectionBubble.bindEvents(doc);
-              unbindSelectionMap.set(doc, unbind);
-            } catch {
-              // 개별 frame 접근 불가 무시
-            }
-          }
-        }
-      } catch {
-        // ignore
-      }
-    }
-
-    updateSelectionBindings();
-
-    // 동적으로 iframe이 추가되거나 문서 내용이 바뀔 때 자동 감지 (디바운스 적용)
-    let mutationTimer: any = null;
-    const docObserver = new MutationObserver(() => {
-      if (mutationTimer) clearTimeout(mutationTimer);
-      mutationTimer = setTimeout(updateSelectionBindings, 300);
-    });
-    const rootToObserve = document.body || document.documentElement;
-    if (rootToObserve) {
-      docObserver.observe(rootToObserve, {
-        childList: true,
-        subtree: true,
-      });
-    }
+    // 최상위 문서는 최상위 오버레이가 처리한다. 각 하위 프레임은 자체 콘텐츠 스크립트가
+    // 선택을 읽고 프레임 좌표계에 맞춰 오버레이를 표시한다.
+    selectionBubble.bindEvents(document);
   } catch (err) {
     console.warn('[sAIde] selectionBubble initialization failed:', err);
   }

@@ -118,7 +118,8 @@ export default defineConfig({
         matches: ['<all_urls>', 'http://99.1.2.134/*', 'http://*/*', 'https://*/*'],
         js: ['drawer.js'],
         run_at: 'document_start',
-        all_frames: false,
+        all_frames: true,
+        match_about_blank: true,
       },
     ],
 
