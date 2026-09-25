@@ -80,6 +80,39 @@ describe('selection-manager', () => {
       btn.remove();
       titleInput.remove();
     });
+
+    it('본문작성 화면(두 번째/세 번째 첨부 이미지)의 본문 문단/테이블 텍스트 선택 시 정상적으로 캡처된다 (블럭 메뉴 호출 허용)', () => {
+      const btn1 = document.createElement('button');
+      btn1.textContent = '문서카드';
+      const btn2 = document.createElement('button');
+      btn2.textContent = '본문저장';
+      document.body.appendChild(btn1);
+      document.body.appendChild(btn2);
+
+      const p = document.createElement('p');
+      p.textContent = '1. 추진 배경 및 필요성 - 가. 2026년 부산 웰니스관광지 및 테마 육성';
+      document.body.appendChild(p);
+
+      const textNode = p.firstChild!;
+      const range = document.createRange();
+      range.setStart(textNode, 3);
+      range.setEnd(textNode, 14); // '추진 배경 및 필요성'
+      const selObj = window.getSelection();
+      selObj?.removeAllRanges();
+      selObj?.addRange(range);
+
+      range.getBoundingClientRect = () => ({ width: 120, height: 20, top: 150, left: 100, right: 220, bottom: 170, x: 100, y: 150, toJSON: () => ({}) });
+
+      const sel = captureActiveSelection(document);
+      expect(sel).not.toBeNull();
+      expect(sel?.text).toBe('추진 배경 및 필요성');
+      expect(sel?.targetElement).toBe(p);
+
+      btn1.remove();
+      btn2.remove();
+      p.remove();
+      selObj?.removeAllRanges();
+    });
   });
 
   describe('replaceSelectedText', () => {

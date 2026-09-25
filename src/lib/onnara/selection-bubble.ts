@@ -597,7 +597,12 @@ export function createSelectionBubble(
         const shadowRoot = wrapper.getRootNode() as ShadowRoot;
         if (wrapper.contains(doc.activeElement) || shadowRoot.activeElement === wrapper || (shadowRoot.activeElement && wrapper.contains(shadowRoot.activeElement))) return;
 
-        const targetEl = (e?.target as HTMLElement) || (doc.activeElement as HTMLElement | null);
+        let targetEl: HTMLElement | null = null;
+        if (e?.target && (e.target as any).nodeType === 1) {
+          targetEl = e.target as HTMLElement;
+        } else if (doc.activeElement && (doc.activeElement as any).nodeType === 1) {
+          targetEl = doc.activeElement as HTMLElement;
+        }
         let sel = captureActiveSelection(doc, targetEl);
 
         // DOM 선택이 없고 본문작성 에디터(WebHWP) 환경이면 WebHWP 비동기 선택 조회

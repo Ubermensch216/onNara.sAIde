@@ -93,4 +93,57 @@ describe('selection-bubble', () => {
     writeBtn.remove();
     titleInput.remove();
   });
+
+  it('본문작성 화면에서 텍스트를 선택했을 때 블럭 메뉴가 정상적으로 열린다', async () => {
+    const bubble = createSelectionBubble();
+    document.body.appendChild(bubble.element);
+
+    // 본문작성 화면 환경: [문서카드], [본문저장] 버튼과 본문 문단
+    const cardBtn = document.createElement('button');
+    cardBtn.textContent = '문서카드';
+    const saveBtn = document.createElement('button');
+    saveBtn.textContent = '본문저장';
+    document.body.appendChild(cardBtn);
+    document.body.appendChild(saveBtn);
+
+    const para = document.createElement('p');
+    para.textContent = '1. 추진 배경 및 필요성 - 가. 2026년 부산 웰니스관광지 및 테마 육성';
+    document.body.appendChild(para);
+
+    const textNode = para.firstChild!;
+    const range = document.createRange();
+    range.setStart(textNode, 3);
+    range.setEnd(textNode, 14); // '추진 배경 및 필요성'
+    const selObj = window.getSelection();
+    selObj?.removeAllRanges();
+    selObj?.addRange(range);
+
+    range.getBoundingClientRect = () => ({
+      width: 120,
+      height: 20,
+      top: 150,
+      left: 100,
+      right: 220,
+      bottom: 170,
+      x: 100,
+      y: 150,
+      toJSON: () => ({}),
+    });
+
+    const unbind = bubble.bindEvents(document);
+    document.dispatchEvent(new Event('selectionchange'));
+
+    // 타이머 150ms 대기
+    await new Promise(r => setTimeout(r, 220));
+
+    // 본문작성 화면이므로 블럭 메뉴가 정상 노출되어야 함!
+    expect(bubble.element.style.display).toBe('block');
+
+    unbind();
+    bubble.destroy();
+    cardBtn.remove();
+    saveBtn.remove();
+    para.remove();
+    selObj?.removeAllRanges();
+  });
 });

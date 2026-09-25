@@ -129,6 +129,35 @@ describe('draft-route', () => {
       const inp = doc.querySelector<HTMLElement>('input[name="customField"]');
       expect(isMetadataField(inp)).toBe(true);
     });
+
+    it('본문 영역의 div, p, td, span 등 텍스트 컨테이너는 reportForm 내부라도 메타데이터 필드가 아니다', () => {
+      const doc = document.implementation.createHTMLDocument();
+      doc.body.innerHTML = `
+        <form id="reportForm">
+          <table class="report_body">
+            <tr>
+              <td>
+                <p id="para1">1. 추진 배경 및 필요성</p>
+                <div id="div1">가. 2026년 부산 웰니스관광지</div>
+              </td>
+            </tr>
+          </table>
+        </form>
+      `;
+      const para = doc.querySelector<HTMLElement>('#para1');
+      const div = doc.querySelector<HTMLElement>('#div1');
+      const td = doc.querySelector<HTMLElement>('td');
+
+      expect(isMetadataField(para)).toBe(false);
+      expect(isMetadataField(div)).toBe(false);
+      expect(isMetadataField(td)).toBe(false);
+    });
+
+    it('document, null, undefined 등 비 HTMLElement 객체에 대해 예외 없이 false를 반환한다', () => {
+      expect(isMetadataField(null)).toBe(false);
+      expect(isMetadataField(undefined as any)).toBe(false);
+      expect(isMetadataField(document as any)).toBe(false);
+    });
   });
 
   describe('isDraftCardScreen vs isBodyWritingScreen', () => {
@@ -146,7 +175,7 @@ describe('draft-route', () => {
       expect(isBodyWritingScreen(doc)).toBe(false);
     });
 
-    it('본문작성 화면(두 번째 화면)에서는 isDraftCardScreen=false, isBodyWritingScreen=true', () => {
+    it('본문작성 화면(두 번째 화면)에서는 isDraftCardScreen=false, isBodyWritingScreen=true (WebHWP 컨트롤 존재 시)', () => {
       const doc = document.implementation.createHTMLDocument();
       doc.body.innerHTML = `
         <button type="button">문서카드</button>
@@ -155,6 +184,32 @@ describe('draft-route', () => {
         <div id="hwpCtrl" class="webhwp-container">
           <canvas class="webhwp_canvas"></canvas>
         </div>
+      `;
+
+      expect(isDraftCardScreen(doc)).toBe(false);
+      expect(isBodyWritingScreen(doc)).toBe(true);
+    });
+
+    it('HTML 테이블/문단 본문 화면에서도 reportForm이 존재하더라도 isDraftCardScreen=false, isBodyWritingScreen=true', () => {
+      const doc = document.implementation.createHTMLDocument();
+      doc.body.innerHTML = `
+        <form id="reportForm">
+          <div class="top_actions">
+            <button type="button">문서카드</button>
+            <button type="button">본문저장</button>
+            <button type="button">본문(검정변환)</button>
+            <button type="button">표준기안문</button>
+            <button type="button">서식참조</button>
+          </div>
+          <table class="report_body">
+            <tr>
+              <td>
+                <p>1. 추진 배경 및 필요성</p>
+                <p>가. 2026년 부산 웰니스관광지 및 테마 육성</p>
+              </td>
+            </tr>
+          </table>
+        </form>
       `;
 
       expect(isDraftCardScreen(doc)).toBe(false);

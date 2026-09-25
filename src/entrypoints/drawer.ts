@@ -18,6 +18,9 @@ const SELECTION_BRIDGE_READY = 'SAIDE_SELECTION_BUBBLE_READY';
 const SELECTION_BRIDGE_SEND = 'SAIDE_SELECTION_BUBBLE_SEND';
 
 function mountFrameSelectionBubble(doc: Document) {
+  if ((doc as any).__saideBubbleMounted) return;
+  (doc as any).__saideBubbleMounted = true;
+
   const host = doc.createElement('saide-selection-bubble-host');
   host.style.cssText =
     'all:initial!important;display:block!important;position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;overflow:visible!important;pointer-events:none!important;z-index:2147483647!important;';
@@ -68,19 +71,9 @@ declare global {
 
 export default defineUnlistedScript(() => {
   if (window.self !== window.top) {
-    let topAccessible = false;
-    try {
-      topAccessible = Boolean(window.top && window.top.document);
-    } catch {
-      topAccessible = false;
-    }
-
-    // 동일 출처의 상위 프레임이 존재하는 경우 최상위 오버레이가 iframes를 직접 감시하여
-    // 잘림 없는 전체 뷰포트에 버블을 플로팅하므로 중복 마운트를 방지한다.
-    // 교차 출처(Cross-origin)이거나 독립 프레임인 경우에만 자체 버블을 마운트한다.
-    if (!topAccessible) {
-      mountFrameSelectionBubble(document);
-    }
+    // 하위 프레임(본문 에디터 iframe 등)에서는 독립 버블 메뉴를 항상 마운트하여
+    // 상위 프레임의 경로 일치 여부나 프레임 중첩 구조에 구애받지 않고 블럭 메뉴가 즉각 작동하도록 보장한다.
+    mountFrameSelectionBubble(document);
     return;
   }
 
@@ -519,11 +512,12 @@ export default defineUnlistedScript(() => {
     // iframe 잘림(overflow: hidden 등) 없이 최상위 뷰포트에 완벽하게 플로팅 표시
     const boundChildFrames = new WeakSet<Document>();
     function observeAndBindFrames() {
-      const iframes = Array.from(document.querySelectorAll('iframe'));
+      const iframes = Array.from(document.querySelectorAll('iframe, frame'));
       for (const ifr of iframes) {
         try {
-          const fDoc = ifr.contentDocument;
+          const fDoc = (ifr as HTMLIFrameElement).contentDocument;
           if (fDoc && !boundChildFrames.has(fDoc)) {
+            if ((fDoc as any).__saideBubbleMounted) continue;
             boundChildFrames.add(fDoc);
             selectionBubble.bindEvents(fDoc);
           }

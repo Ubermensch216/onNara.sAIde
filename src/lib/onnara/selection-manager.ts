@@ -85,11 +85,6 @@ export function captureActiveSelection(
   const win = doc.defaultView || window;
   const activeEl = preferredTarget || (doc.activeElement as HTMLElement | null);
 
-  // 2. 선택된 요소가 문서카드 메타데이터 필드(단위관리, 제목, 키워드, 요약 등)이면 노출 금지
-  if (isMetadataField(activeEl)) {
-    return null;
-  }
-
   // 1. Textarea 또는 Input 내부 블록 지정 감지
   if (
     activeEl &&

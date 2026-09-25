@@ -169,13 +169,28 @@ export function classifyDraftRoute(
  * 블럭 메뉴(Bubble Menu)는 본문작성 영역에만 적용되어야 하므로, 메타데이터 필드 선택 시에는 절대 노출되지 않아야 한다.
  */
 export function isMetadataField(el: HTMLElement | null): boolean {
-  if (!el) return false;
+  if (!el || typeof (el as any).closest !== 'function' || !el.tagName) return false;
 
   const tag = el.tagName.toLowerCase();
+  // 메타데이터 입력란은 반드시 input, textarea, select 중 하나여야 함.
+  // 본문 텍스트가 위치하는 div, p, td, span, table 등은 절대 메타데이터 필드가 아님.
+  if (tag !== 'input' && tag !== 'textarea' && tag !== 'select') {
+    return false;
+  }
+
   const name = (el.getAttribute('name') || '').toLowerCase();
   const id = (el.id || '').toLowerCase();
   const cls = (typeof el.className === 'string' ? el.className : '').toLowerCase();
   const placeholder = ((el as HTMLInputElement).placeholder || '').toLowerCase();
+
+  // 본문/에디터 관련 입력 요소인 경우 절대 메타데이터가 아님
+  if (
+    name.includes('content') || id.includes('content') ||
+    name.includes('body') || id.includes('body') ||
+    cls.includes('editor') || id.includes('editor')
+  ) {
+    return false;
+  }
 
   // 1. 온나라 문서카드 주요 필드명 및 ID 패턴
   const metadataPatterns = [
@@ -202,9 +217,7 @@ export function isMetadataField(el: HTMLElement | null): boolean {
     '#reportForm, #docCard, #divDocCard, .docCard, #formDocCard, form[name="reportForm"], table.tbl_doc_card, .tb_docinfo, #div_doccard, #cardForm, #docInfoArea'
   );
   if (cardContainer) {
-    if (tag === 'input' || tag === 'textarea' || tag === 'select' || (tag === 'div' && !cls.includes('editor') && !id.includes('editor'))) {
-      return true;
-    }
+    return true;
   }
 
   return false;
@@ -212,11 +225,36 @@ export function isMetadataField(el: HTMLElement | null): boolean {
 
 /**
  * 현재 기안기 화면이 '문서카드' 화면(메타데이터 입력 화면)인지 판별.
- * - [본문작성] 버튼이 존재하고 눈에 보이거나
- * - 문서카드 폼(#reportForm 등)이 활성화되어 있고 본문 에디터가 없는 상태
+ * - 본문작성 버튼이 존재하고 눈에 보이거나
+ * - 메타데이터 전용 테이블/영역이 활성화되어 있고 본문 신호가 없는 상태
  */
 export function isDraftCardScreen(doc: Document = document): boolean {
-  // 1. [본문작성] 버튼이 존재하고 눈에 보이는 상태면 무조건 문서카드 화면이다.
+  // 1. 본문작성 화면 전용 신호가 있으면 절대 문서카드 화면이 아님
+  // - 상단 본문작성 액션 버튼들: [문서카드] (본문작성에서 카드로 복귀), [본문저장], [본문(검정변환)], [표준기안문], [서식참조]
+  const allButtons = Array.from(doc.querySelectorAll<HTMLElement>('button, a, input[type="button"], .btn'));
+  const bodyActionKeywords = ['문서카드', '본문저장', '본문(검정변환)', '표준기안문', '서식참조'];
+  const hasBodyActionButtons = allButtons.some(b => {
+    const text = (b.textContent || (b as HTMLInputElement).value || '').replace(/\s+/g, '');
+    return bodyActionKeywords.some(kw => text.includes(kw));
+  });
+  if (hasBodyActionButtons) {
+    return false;
+  }
+
+  // - 한글 기안기 또는 본문 에디터 컨트롤
+  const hwpCtrl = doc.querySelector(
+    '#hwpCtrl, #HwpCtrl, #tbContentElement, canvas.webhwp_canvas, object[type*="hwp"], embed[type*="hwp"], .webhwp-container, .hwp-menubar, .hwp_toolbar'
+  );
+  if (hwpCtrl) {
+    return false;
+  }
+
+  // - 하위 프레임인 경우 (에디터 iframe 등)
+  if (doc.defaultView && doc.defaultView !== doc.defaultView.top) {
+    return false;
+  }
+
+  // 2. [본문작성] 버튼이 존재하고 눈에 보이는 상태면 확실한 문서카드 화면
   const writeBodyBtn = findWriteBodyButton(doc);
   if (writeBodyBtn) {
     try {
@@ -229,10 +267,12 @@ export function isDraftCardScreen(doc: Document = document): boolean {
     }
   }
 
-  // 2. 문서카드 폼이 화면에 표시되어 있고 본문 에디터가 없는 상태
-  const cardForm = doc.querySelector('#reportForm, #docCard, #divDocCard, form[name="reportForm"], table.tbl_doc_card');
-  const hwpCtrl = doc.querySelector('#hwpCtrl, #HwpCtrl, #tbContentElement, canvas.webhwp_canvas');
-  if (cardForm && !hwpCtrl) {
+  // 3. 문서카드 전용 상세 영역(단위관리/키워드/요약 전용 테이블 등)이 활성화되어 있고 본문 신호가 전혀 없는 경우
+  // 주의: #reportForm은 온나라 기안기 전체 폼이므로 제외하고, 문서카드 상세 영역만 지정
+  const specificCardArea = doc.querySelector(
+    '#docCard, #divDocCard, .docCard, #formDocCard, table.tbl_doc_card, .tb_docinfo, #div_doccard, #cardForm, #docInfoArea'
+  );
+  if (specificCardArea) {
     return true;
   }
 
@@ -279,7 +319,14 @@ export function isBodyWritingScreen(doc: Document = document): boolean {
   // 하위 프레임인 경우
   if (doc.defaultView && doc.defaultView !== doc.defaultView.top) {
     if (isBodyUrl || hasHwp) return true;
+    const bodyContent = doc.querySelector('table, p, div, #hwpCtrl, .webhwp-container');
+    if (bodyContent) return true;
   }
 
-  return hasBodyActionButtons || hasHwp || hasHwpToolbarMenu || isBodyUrl;
+  // 6. 본문 내용 요소(공식 문서 표, 문단 등)가 존재하는 경우
+  const hasBodyDocContent = Boolean(
+    doc.querySelector('table.report_body, table.doc_body, .reportBody, #div_report_body, #divBodyContent')
+  );
+
+  return hasBodyActionButtons || hasHwp || hasHwpToolbarMenu || isBodyUrl || hasBodyDocContent;
 }
