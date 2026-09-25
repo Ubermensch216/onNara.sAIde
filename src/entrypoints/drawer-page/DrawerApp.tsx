@@ -397,21 +397,14 @@ export function DrawerApp() {
                   <span className="text-blue-600">📑</span>
                   <span>적용할 공문서 서식 선택</span>
                 </label>
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('templates')}
-                  className="text-[10px] text-blue-600 hover:underline font-semibold"
-                >
-                  서식 관리 / 추가 ⚙️
-                </button>
               </div>
 
               {/* 서식 선택 드롭다운 */}
-              <div className="flex items-center gap-1.5">
+              <div>
                 <select
                   value={selectedTemplateId}
                   onChange={(e) => setSelectedTemplateId(e.target.value)}
-                  className="flex-1 px-2 py-1.5 bg-slate-50 border border-slate-300 rounded text-xs text-slate-800 font-medium focus:outline-none focus:ring-1 focus:ring-blue-500 focus:bg-white"
+                  className="w-full px-2 py-1.5 bg-slate-50 border border-slate-300 rounded text-xs text-slate-800 font-medium focus:outline-none focus:ring-1 focus:ring-blue-500 focus:bg-white"
                 >
                   <option value="">-- 서식 미선택 (자유 형식 기안문) --</option>
                   {templates.map((tpl) => (
@@ -420,16 +413,6 @@ export function DrawerApp() {
                     </option>
                   ))}
                 </select>
-                {selectedTemplateId && (
-                  <button
-                    type="button"
-                    onClick={() => setSelectedTemplateId('')}
-                    className="px-2 py-1.5 text-slate-400 hover:text-slate-600 border border-slate-200 rounded text-[11px] bg-slate-50"
-                    title="서식 선택 해제"
-                  >
-                    해제
-                  </button>
-                )}
               </div>
 
               {/* 선택된 서식의 간단한 정보 표시 */}
@@ -652,7 +635,7 @@ export function DrawerApp() {
                     ? `예: 위 참고 문서 [${selectedRelatedDoc.title}]의 지침에 따라 우리 과 사업 안건 제출 공문 초안 작성해줘.`
                     : '예: 2026년 공공 AI 업무혁신 추진계획. 추진배경과 3대 전략을 개조식으로 작성해줘.'
                 }
-                className="w-full h-24 p-2 border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500 text-xs resize-none bg-white leading-relaxed"
+                className="w-full h-24 min-h-[6rem] p-2 border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500 text-xs resize-y bg-white leading-relaxed"
               />
               <button
                 onClick={handleGenerate}
