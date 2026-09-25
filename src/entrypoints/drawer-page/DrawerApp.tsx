@@ -366,16 +366,42 @@ export function DrawerApp() {
     );
   };
 
+  // Enter로 초안 생성 시작, Shift + Enter는 줄바꿈 (한글 조합 중 실행 방지)
+  const handlePromptKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+      e.preventDefault();
+      if (!loading && prompt.trim()) {
+        void handleGenerate();
+      }
+    }
+  };
+
   return (
     <div className="flex flex-col h-full bg-slate-50 text-slate-800 text-xs">
-      {/* 상단 헤더 */}
-      <header className="flex items-center justify-between px-3 py-2 bg-white border-b border-slate-200">
-        <div className="flex items-center gap-1.5 font-bold text-slate-900 text-sm">
-          <span className="w-2.5 h-2.5 rounded-full bg-blue-600 inline-block"></span>
-          <span>온나라 sAIde</span>
-          <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 font-semibold border border-blue-200">
-            기안 코파일럿
-          </span>
+      {/* 상단 헤더: 온나라 sAIde | 기안 코파일럿 동일 레벨 시스템 명칭 레이블 */}
+      <header className="flex items-center justify-between px-3 py-2 bg-white border-b border-slate-200 shrink-0">
+        <div className="flex items-center gap-2 select-none">
+          {/* 플랫폼 브랜드 */}
+          <div className="flex items-center gap-1.5">
+            <span className="w-2.5 h-2.5 rounded-full bg-blue-600 inline-block shadow-xs"></span>
+            <span className="font-bold text-slate-900 text-[13.5px] tracking-tight">
+              온나라 s<span className="text-blue-600 font-extrabold">AI</span>de
+            </span>
+          </div>
+
+          {/* 시스템 레벨 구분 디바이더 */}
+          <span className="h-3 w-px bg-slate-300" aria-hidden="true"></span>
+
+          {/* 시스템 명칭 레이블 (동일 레벨의 세련된 타이포그래피 + 스마트 코파일럿 액센트) */}
+          <div className="flex items-center gap-1 font-semibold text-[13.5px] tracking-tight">
+            <span className="text-slate-800 font-bold">기안</span>
+            <span className="font-extrabold text-blue-600 flex items-center gap-0.5">
+              <span>코파일럿</span>
+              <svg className="w-3 h-3 text-blue-500 fill-current ml-0.5" viewBox="0 0 24 24">
+                <path d="M19 9l1.25-2.75L23 5l-2.75-1.25L19 1l-1.25 2.75L15 5l2.75 1.25L19 9zm-7.5.5L9 4 6.5 9.5 1 12l5.5 2.5L9 20l2.5-5.5L17 12l-5.5-2.5zM19 15l-1.25 2.75L15 19l2.75 1.25L19 23l1.25-2.75L23 19l-2.75-1.25L19 15z" />
+              </svg>
+            </span>
+          </div>
         </div>
         <button
           onClick={closeDrawer}
@@ -665,7 +691,7 @@ export function DrawerApp() {
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">
                 <label className="font-semibold text-slate-700 block">
-                  작성할 공문서 개요 또는 핵심 메모
+                  공문서 개요 또는 핵심 내용
                 </label>
                 {selectedTemplate && (
                   <span
@@ -680,6 +706,7 @@ export function DrawerApp() {
               <textarea
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
+                onKeyDown={handlePromptKeyDown}
                 placeholder={
                   selectedTemplate
                     ? `[${selectedTemplate.title}] 서식에 맞추어 작성할 내용을 입력하세요.\n(상단의 '골격 넣기'를 눌러 목차별 내용을 직접 채우거나 핵심 메모만 적어도 AI가 서식에 맞춰 완성합니다.)`
@@ -689,6 +716,9 @@ export function DrawerApp() {
                 }
                 className="w-full h-24 min-h-[6rem] p-2 border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500 text-xs resize-y bg-white leading-relaxed"
               />
+              <div className="flex items-center justify-between text-[10.5px] text-slate-400 px-0.5">
+                <span>Enter: 초안 생성 / Shift + Enter: 줄바꿈</span>
+              </div>
               <button
                 onClick={handleGenerate}
                 disabled={loading || !prompt.trim()}

@@ -9,7 +9,12 @@ import {
 describe('selection-manager', () => {
   describe('captureActiveSelection', () => {
     it('textarea의 텍스트가 블록 지정되었을 때 정상 캡처한다', () => {
+      const btn = document.createElement('button');
+      btn.textContent = '본문저장';
+      document.body.appendChild(btn);
+
       const ta = document.createElement('textarea');
+      ta.className = 'editor';
       ta.value = '2026년 공공 업무 혁신 추진 계획서';
       document.body.appendChild(ta);
 
@@ -23,10 +28,16 @@ describe('selection-manager', () => {
       expect(sel?.inputRange).toEqual({ start: 6, end: 15 });
       expect(sel?.isEditable).toBe(true);
       ta.remove();
+      btn.remove();
     });
 
     it('선택된 텍스트가 2자 미만이면 null을 반환한다', () => {
+      const btn = document.createElement('button');
+      btn.textContent = '본문저장';
+      document.body.appendChild(btn);
+
       const ta = document.createElement('textarea');
+      ta.className = 'editor';
       ta.value = '가나다';
       document.body.appendChild(ta);
 
@@ -37,13 +48,20 @@ describe('selection-manager', () => {
       const sel = captureActiveSelection(document);
       expect(sel).toBeNull();
       ta.remove();
+      btn.remove();
     });
 
     it('iframe 안 textarea의 선택도 해당 프레임의 DOM 생성자로 캡처한다', () => {
       const iframe = document.createElement('iframe');
       document.body.appendChild(iframe);
       const frameDoc = iframe.contentDocument!;
+
+      const btn = frameDoc.createElement('button');
+      btn.textContent = '본문저장';
+      frameDoc.body.appendChild(btn);
+
       const ta = frameDoc.createElement('textarea');
+      ta.className = 'editor';
       ta.value = '본문 편집기 선택 테스트';
       frameDoc.body.appendChild(ta);
 
@@ -79,6 +97,42 @@ describe('selection-manager', () => {
 
       btn.remove();
       titleInput.remove();
+    });
+
+    it('문서관리카드 화면에서 보고경로 테이블(기안 주무관 김명진)의 이름을 선택해도 블럭 메뉴가 노출되지 않는다', () => {
+      const headerDiv = document.createElement('div');
+      headerDiv.textContent = '문서관리카드';
+      document.body.appendChild(headerDiv);
+
+      const writeBtn = document.createElement('button');
+      writeBtn.textContent = '본문작성';
+      document.body.appendChild(writeBtn);
+
+      const table = document.createElement('table');
+      table.innerHTML = `
+        <tr><th>구분</th><th>직위</th><th>이름</th><th>본문</th></tr>
+        <tr><td>기안</td><td>주무관</td><td id="drafterName">김명진</td><td></td></tr>
+      `;
+      document.body.appendChild(table);
+
+      const drafterTd = table.querySelector('#drafterName')!;
+      const textNode = drafterTd.firstChild!;
+      const range = document.createRange();
+      range.setStart(textNode, 0);
+      range.setEnd(textNode, 3); // '김명진'
+      const selObj = window.getSelection();
+      selObj?.removeAllRanges();
+      selObj?.addRange(range);
+
+      range.getBoundingClientRect = () => ({ width: 40, height: 20, top: 200, left: 100, right: 140, bottom: 220, x: 100, y: 200, toJSON: () => ({}) });
+
+      const sel = captureActiveSelection(document);
+      expect(sel).toBeNull(); // 문서관리카드 화면이므로 반드시 null!
+
+      headerDiv.remove();
+      writeBtn.remove();
+      table.remove();
+      selObj?.removeAllRanges();
     });
 
     it('본문작성 화면(두 번째/세 번째 첨부 이미지)의 본문 문단/테이블 텍스트 선택 시 정상적으로 캡처된다 (블럭 메뉴 호출 허용)', () => {

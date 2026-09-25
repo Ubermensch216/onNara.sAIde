@@ -82,6 +82,11 @@ export function captureActiveSelection(
     return null;
   }
 
+  // 2. 블럭 메뉴는 오직 '본문작성' 화면(공문서 본문 에디터)에서만 동작해야 한다.
+  if (!isBodyWritingScreen(doc)) {
+    return null;
+  }
+
   const win = doc.defaultView || window;
   const activeEl = preferredTarget || (doc.activeElement as HTMLElement | null);
 
