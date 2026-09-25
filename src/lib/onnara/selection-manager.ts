@@ -185,7 +185,11 @@ export async function captureWebHwpSelection(
   }
 
   try {
-    const text = await getViaMainWorldHwpSelection(doc);
+    let text = await getViaMainWorldHwpSelection(doc);
+    if (!text || text.trim().length < 2) {
+      await new Promise(r => setTimeout(r, 80));
+      text = await getViaMainWorldHwpSelection(doc);
+    }
     if (text && text.trim().length >= 2) {
       const x = mousePos?.clientX ?? (window.innerWidth / 2);
       const y = mousePos?.clientY ?? (window.innerHeight / 2);

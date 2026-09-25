@@ -606,7 +606,7 @@ export function createSelectionBubble(
         let sel = captureActiveSelection(doc, targetEl);
 
         // DOM 선택이 없고 본문작성 에디터(WebHWP) 환경이면 WebHWP 비동기 선택 조회
-        if (!sel && e && (e.type === 'mouseup' || e.type === 'selectionchange')) {
+        if (!sel && e && (e.type === 'mouseup' || e.type === 'pointerup' || e.type === 'selectionchange' || e.type === 'keyup')) {
           const mouseEvent = (e instanceof MouseEvent) ? e : undefined;
           sel = await captureWebHwpSelection(
             doc,
@@ -626,7 +626,7 @@ export function createSelectionBubble(
       }, 150);
     };
 
-    const handlePointerDown = (e: MouseEvent) => {
+    const handlePointerDown = (e: MouseEvent | PointerEvent) => {
       const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
       const target = e.target as Node;
       if (wrapper.contains(target) || path.includes(wrapper) || path.some((item) => Boolean((item as Node)?.nodeType && wrapper.contains(item as Node)))) return;
@@ -649,18 +649,35 @@ export function createSelectionBubble(
       }
     };
 
-    doc.addEventListener('selectionchange', handleSelectionChange);
-    doc.addEventListener('mouseup', handleSelectionChange);
-    doc.addEventListener('keyup', handleSelectionChange);
-    doc.addEventListener('mousedown', handlePointerDown);
-    doc.addEventListener('keydown', handleKeydown);
+    const win = doc.defaultView || (typeof window !== 'undefined' ? window : null);
+
+    // 한컴 웹기안기(Canvas)의 stopPropagation에 가로채이지 않도록 capture 단계에서 감지
+    doc.addEventListener('selectionchange', handleSelectionChange, true);
+    doc.addEventListener('mouseup', handleSelectionChange, true);
+    doc.addEventListener('pointerup', handleSelectionChange, true);
+    doc.addEventListener('keyup', handleSelectionChange, true);
+    doc.addEventListener('mousedown', handlePointerDown, true);
+    doc.addEventListener('pointerdown', handlePointerDown, true);
+    doc.addEventListener('keydown', handleKeydown, true);
+
+    if (win && (win as any) !== doc) {
+      win.addEventListener('mouseup', handleSelectionChange, true);
+      win.addEventListener('pointerup', handleSelectionChange, true);
+    }
 
     return () => {
-      doc.removeEventListener('selectionchange', handleSelectionChange);
-      doc.removeEventListener('mouseup', handleSelectionChange);
-      doc.removeEventListener('keyup', handleSelectionChange);
-      doc.removeEventListener('mousedown', handlePointerDown);
-      doc.removeEventListener('keydown', handleKeydown);
+      doc.removeEventListener('selectionchange', handleSelectionChange, true);
+      doc.removeEventListener('mouseup', handleSelectionChange, true);
+      doc.removeEventListener('pointerup', handleSelectionChange, true);
+      doc.removeEventListener('keyup', handleSelectionChange, true);
+      doc.removeEventListener('mousedown', handlePointerDown, true);
+      doc.removeEventListener('pointerdown', handlePointerDown, true);
+      doc.removeEventListener('keydown', handleKeydown, true);
+
+      if (win && (win as any) !== doc) {
+        win.removeEventListener('mouseup', handleSelectionChange, true);
+        win.removeEventListener('pointerup', handleSelectionChange, true);
+      }
     };
   }
 

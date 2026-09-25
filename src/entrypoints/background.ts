@@ -459,62 +459,166 @@ async function handleMainWorldHwpGetSelection(tabId: number): Promise<{ text: st
     const results = await chrome.scripting.executeScript({
       target: { tabId, allFrames: true },
       world: 'MAIN',
-      func: () => {
-        try {
-          function findHwp() {
-            var w = window as any;
-            if (!w) return null;
-            var localCandidates = [
-              w.HwpCtrl,
-              w.pHwpCtrl,
-              w.tbContentElement,
-              w.vHwpCtrl,
-              w.hwpCtrl,
-              w.hwp_ctrl,
-              w.hwpDoc,
-              w.WebHwpCtrl,
-              w.HwpObject,
-              w.document && w.document.getElementById('HwpCtrl'),
-              w.document && w.document.getElementById('hwpCtrl'),
-              w.document && w.document.getElementById('tbContentElement'),
-            ];
-            for (var i = 0; i < localCandidates.length; i++) {
-              var c = localCandidates[i];
-              if (
-                c &&
-                (typeof c.GetTextFile === 'function' ||
-                  typeof c.GetSelectedText === 'function' ||
-                  typeof c.Run === 'function' ||
-                  typeof c.CreateAction === 'function')
-              ) {
-                return c;
+      func: async () => {
+        return new Promise<string>((resolve) => {
+          try {
+            function findHwpInWindow(w: any) {
+              if (!w) return null;
+              try {
+                var candidates = [
+                  w.HwpCtrl,
+                  w.pHwpCtrl,
+                  w.vHwpCtrl,
+                  w.hwpCtrl,
+                  w.hwp_ctrl,
+                  w.hwpDoc,
+                  w.WebHwpCtrl,
+                  w.HwpObject,
+                ];
+                for (var i = 0; i < candidates.length; i++) {
+                  var c = candidates[i];
+                  if (c && (typeof c.GetTextFile === 'function' || typeof c.GetSelectedText === 'function' || typeof c.Run === 'function' || typeof c.PutFieldText === 'function' || typeof c.InsertText === 'function')) {
+                    return c;
+                  }
+                }
+                var doc = w.document;
+                if (doc) {
+                  var elIds = ['HwpCtrl', 'hwpCtrl', 'tbContentElement', 'hwp_ctrl'];
+                  for (var j = 0; j < elIds.length; j++) {
+                    var el = doc.getElementById(elIds[j]);
+                    if (el) {
+                      if (typeof el.GetTextFile === 'function' || typeof el.GetSelectedText === 'function' || typeof el.Run === 'function' || typeof el.PutFieldText === 'function') {
+                        return el;
+                      }
+                      if (el.contentWindow) {
+                        try {
+                          var cwHwp = findHwpInWindow(el.contentWindow);
+                          if (cwHwp) return cwHwp;
+                        } catch (e) {}
+                      }
+                      if (el.HwpCtrl && (typeof el.HwpCtrl.GetTextFile === 'function' || typeof el.HwpCtrl.GetSelectedText === 'function')) {
+                        return el.HwpCtrl;
+                      }
+                    }
+                  }
+                  var plugins = doc.querySelectorAll('object, embed');
+                  for (var p = 0; p < plugins.length; p++) {
+                    var plug = plugins[p];
+                    if (plug && (typeof plug.GetTextFile === 'function' || typeof plug.GetSelectedText === 'function' || typeof plug.Run === 'function')) {
+                      return plug;
+                    }
+                  }
+                }
+              } catch (err) {}
+              return null;
+            }
+
+            function findHwp() {
+              var w = window as any;
+              if (!w) return null;
+              var direct = findHwpInWindow(w);
+              if (direct) return direct;
+              if (w.frames) {
+                for (var f = 0; f < w.frames.length; f++) {
+                  try {
+                    var fw = w.frames[f];
+                    var fHwp = findHwpInWindow(fw);
+                    if (fHwp) return fHwp;
+                  } catch (e) {}
+                }
+              }
+              try {
+                if (w.parent && w.parent !== w) {
+                  var pHwp = findHwpInWindow(w.parent);
+                  if (pHwp) return pHwp;
+                }
+              } catch (e) {}
+              return null;
+            }
+
+            var h = findHwp();
+            if (h) {
+              // 1. 한컴 웹기안기 표준 선택 텍스트 추출: GetTextFile("TEXT", "saveblock")
+              if (typeof h.GetTextFile === 'function') {
+                var isDone = false;
+                var timer = setTimeout(function() {
+                  if (!isDone) {
+                    isDone = true;
+                    checkGetSelectedText();
+                  }
+                }, 800);
+
+                function finish(val: any) {
+                  if (!isDone) {
+                    isDone = true;
+                    clearTimeout(timer);
+                    var s = (typeof val === 'string' ? val : (val?.data || val?.result || val?.text || '')).trim();
+                    if (s) {
+                      resolve(s);
+                    } else {
+                      checkGetSelectedText();
+                    }
+                  }
+                }
+
+                function checkGetSelectedText() {
+                  if (typeof h.GetSelectedText === 'function') {
+                    try {
+                      var s = h.GetSelectedText();
+                      if (typeof s === 'string' && s.trim()) {
+                        resolve(s.trim());
+                        return;
+                      }
+                    } catch (e) {}
+                  }
+                  resolve('');
+                }
+
+                try {
+                  var r = h.GetTextFile('TEXT', 'saveblock', function(textResult: any) {
+                    finish(textResult);
+                  });
+                  if (typeof r === 'string' && r.trim()) {
+                    finish(r);
+                    return;
+                  }
+                  if (r && typeof r.then === 'function') {
+                    r.then(function(val: any) { finish(val); }).catch(function() { finish(''); });
+                    return;
+                  }
+                } catch (err) {
+                  finish('');
+                }
+                return;
+              }
+
+              // 2. GetSelectedText 레거시 메서드 대응
+              if (typeof h.GetSelectedText === 'function') {
+                try {
+                  var s = h.GetSelectedText();
+                  if (typeof s === 'string' && s.trim()) {
+                    resolve(s.trim());
+                    return;
+                  }
+                } catch (e) {}
               }
             }
-            return null;
-          }
 
-          var h = findHwp();
-          if (h) {
-            // 1. GetSelectedText 메서드 시도
-            if (typeof h.GetSelectedText === 'function') {
-              try {
-                var s = h.GetSelectedText();
-                if (typeof s === 'string' && s.trim()) return s.trim();
-              } catch (e) {}
+            // 3. 메인 월드의 window.getSelection() 탐색
+            var sel = window.getSelection();
+            if (sel && !sel.isCollapsed) {
+              var t = sel.toString().trim();
+              if (t.length >= 2) {
+                resolve(t);
+                return;
+              }
             }
-          }
 
-          // 2. 메인 월드의 window.getSelection() 탐색
-          var sel = window.getSelection();
-          if (sel && !sel.isCollapsed) {
-            var t = sel.toString().trim();
-            if (t.length >= 2) return t;
+            resolve('');
+          } catch {
+            resolve('');
           }
-
-          return '';
-        } catch {
-          return '';
-        }
+        });
       },
     });
 
@@ -543,34 +647,67 @@ async function handleMainWorldHwpReplaceSelection(
       world: 'MAIN',
       func: (replaceText: string) => {
         try {
+          function findHwpInWindow(w: any) {
+            if (!w) return null;
+            try {
+              var candidates = [
+                w.HwpCtrl,
+                w.pHwpCtrl,
+                w.vHwpCtrl,
+                w.hwpCtrl,
+                w.hwp_ctrl,
+                w.hwpDoc,
+                w.WebHwpCtrl,
+                w.HwpObject,
+              ];
+              for (var i = 0; i < candidates.length; i++) {
+                var c = candidates[i];
+                if (c && (typeof c.InsertText === 'function' || typeof c.Run === 'function' || typeof c.CreateAction === 'function')) {
+                  return c;
+                }
+              }
+              var doc = w.document;
+              if (doc) {
+                var elIds = ['HwpCtrl', 'hwpCtrl', 'tbContentElement', 'hwp_ctrl'];
+                for (var j = 0; j < elIds.length; j++) {
+                  var el = doc.getElementById(elIds[j]);
+                  if (el) {
+                    if (typeof el.InsertText === 'function' || typeof el.Run === 'function' || typeof el.CreateAction === 'function') {
+                      return el;
+                    }
+                    if (el.contentWindow) {
+                      try {
+                        var cwHwp = findHwpInWindow(el.contentWindow);
+                        if (cwHwp) return cwHwp;
+                      } catch (e) {}
+                    }
+                  }
+                }
+              }
+            } catch (err) {}
+            return null;
+          }
+
           function findHwp() {
             var w = window as any;
             if (!w) return null;
-            var localCandidates = [
-              w.HwpCtrl,
-              w.pHwpCtrl,
-              w.tbContentElement,
-              w.vHwpCtrl,
-              w.hwpCtrl,
-              w.hwp_ctrl,
-              w.hwpDoc,
-              w.WebHwpCtrl,
-              w.HwpObject,
-              w.document && w.document.getElementById('HwpCtrl'),
-              w.document && w.document.getElementById('hwpCtrl'),
-              w.document && w.document.getElementById('tbContentElement'),
-            ];
-            for (var i = 0; i < localCandidates.length; i++) {
-              var c = localCandidates[i];
-              if (
-                c &&
-                (typeof c.InsertText === 'function' ||
-                  typeof c.Run === 'function' ||
-                  typeof c.CreateAction === 'function')
-              ) {
-                return c;
+            var direct = findHwpInWindow(w);
+            if (direct) return direct;
+            if (w.frames) {
+              for (var f = 0; f < w.frames.length; f++) {
+                try {
+                  var fw = w.frames[f];
+                  var fHwp = findHwpInWindow(fw);
+                  if (fHwp) return fHwp;
+                } catch (e) {}
               }
             }
+            try {
+              if (w.parent && w.parent !== w) {
+                var pHwp = findHwpInWindow(w.parent);
+                if (pHwp) return pHwp;
+              }
+            } catch (e) {}
             return null;
           }
 

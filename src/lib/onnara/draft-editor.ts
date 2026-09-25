@@ -321,6 +321,12 @@ export function isHwpElementOrContainer(el: HTMLElement | null): boolean {
   if (!el) return false;
   const tag = el.tagName.toUpperCase();
   if (tag === 'OBJECT' || tag === 'EMBED' || tag === 'CANVAS') return true;
+
+  const hwpAncestor = el.closest?.(
+    'canvas, object[type*="hwp"], embed[type*="hwp"], #hwpCtrl, #HwpCtrl, #tbContentElement, .webhwp-container, [class*="webhwp" i], [class*="hwp" i], [id*="hwp" i], [id*="tbContent" i]'
+  );
+  if (hwpAncestor) return true;
+
   const id = (el.id || '').toLowerCase();
   const cls = (typeof el.className === 'string' ? el.className : '').toLowerCase();
   if (
@@ -419,6 +425,8 @@ export function findHwpCtrlInAllWindows(startWin: Window): any {
           h &&
           (typeof h.PutFieldText === 'function' ||
             typeof h.InsertText === 'function' ||
+            typeof h.GetTextFile === 'function' ||
+            typeof h.GetSelectedText === 'function' ||
             typeof h.Run === 'function' ||
             typeof h.CreateAction === 'function')
         ) {
@@ -778,6 +786,36 @@ export async function getViaMainWorldHwpSelection(
     try {
       const directHwp = findHwpCtrlInAllWindows(win);
       if (directHwp) {
+        if (typeof directHwp.GetTextFile === 'function') {
+          try {
+            const res = await new Promise<string>((resolve) => {
+              const timer = setTimeout(() => resolve(''), 500);
+              try {
+                const r = directHwp.GetTextFile('TEXT', 'saveblock', (cbRes: any) => {
+                  clearTimeout(timer);
+                  const str = (typeof cbRes === 'string' ? cbRes : (cbRes?.data || '')).trim();
+                  resolve(str);
+                });
+                if (typeof r === 'string' && r.trim()) {
+                  clearTimeout(timer);
+                  resolve(r.trim());
+                } else if (r && typeof r.then === 'function') {
+                  r.then((val: any) => {
+                    clearTimeout(timer);
+                    resolve((typeof val === 'string' ? val : (val?.data || '')).trim());
+                  }).catch(() => {
+                    clearTimeout(timer);
+                    resolve('');
+                  });
+                }
+              } catch {
+                clearTimeout(timer);
+                resolve('');
+              }
+            });
+            if (res) return res;
+          } catch {}
+        }
         if (typeof directHwp.GetSelectedText === 'function') {
           const s = directHwp.GetSelectedText();
           if (typeof s === 'string' && s.trim()) return s.trim();
