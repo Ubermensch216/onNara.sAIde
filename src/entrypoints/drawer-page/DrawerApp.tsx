@@ -131,6 +131,11 @@ export function DrawerApp() {
         setPrompt(data.text);
         setStatusMsg('선택한 본문 내용이 질의 프롬프트로 입력되었습니다.');
         setTimeout(() => setStatusMsg(''), 3000);
+      } else if (data.type === 'SAIDE_SET_DRAFT_PREVIEW') {
+        if (data.prompt !== undefined) setPrompt(data.prompt);
+        if (data.draft !== undefined) setGeneratedDraft(data.draft);
+        if (data.templateId !== undefined) setSelectedTemplateId(data.templateId);
+        if (data.activeTab !== undefined) setActiveTab(data.activeTab);
       }
     };
 
@@ -419,12 +424,7 @@ export function DrawerApp() {
               {selectedTemplate && (
                 <div className="p-2 bg-blue-50/70 border border-blue-200 rounded space-y-1.5 text-[11px]">
                   <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-1.5">
-                      <span className="px-1.5 py-0.2 bg-blue-600 text-white rounded text-[10px] font-bold">
-                        {selectedTemplate.documentType}
-                      </span>
-                      <span className="font-bold text-blue-900">{selectedTemplate.title}</span>
-                    </div>
+                    <span className="font-bold text-blue-900">{selectedTemplate.title}</span>
                     <button
                       type="button"
                       onClick={handleInsertTemplateOutline}

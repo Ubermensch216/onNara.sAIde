@@ -274,6 +274,72 @@ if (mode.startsWith('options') || OPTION_VIEWS.includes(mode)) {
     createRoot(document.getElementById('root')!).render(<OptionsApp />);
   }
 
+} else if (['drafter', 'drawer', 'templates'].includes(mode)) {
+  await import('@/entrypoints/drawer-page/style.css');
+  const { DrawerApp } = await import('@/entrypoints/drawer-page/DrawerApp');
+
+  window.addEventListener('message', (event) => {
+    if (event.data?.type === 'DRAFT_GET_CONTEXT') {
+      window.postMessage({
+        type: 'DRAFT_CONTEXT_RESPONSE',
+        title: '2026년도 인공지능 행정업무 시범사업 추진계획 수립의 건',
+        documentKey: 'mock_doc_2026_00123',
+        needsOpenBody: false,
+        hasWriteBodyBtn: true,
+        relatedDocs: [
+          {
+            title: '2026년도 인공지능 행정업무 시범사업 추진계획 알림 (행정안전부)',
+            author: '디지털정부혁신과',
+            docType: '수신문서',
+            hasBody: true,
+            status: 'loaded',
+            content: '행정안전부 디지털정부혁신과 주관 2026년도 인공지능 행정업무 시범사업 추진 계획. 각 지자체 및 공공기관은 2026년 9월 22일(화) 18:00까지 수요조사서 및 보안서약서를 제출하시기 바랍니다.',
+          },
+          {
+            title: '2026년도 지자체 정보화예산 편성 및 집행지침 알림',
+            author: '지역정보화지원과',
+            docType: '참고문서',
+            hasBody: true,
+            status: 'unloaded',
+          },
+        ],
+      }, '*');
+
+      setTimeout(() => {
+        if (mode === 'templates') {
+          window.postMessage({
+            type: 'SAIDE_SET_DRAFT_PREVIEW',
+            activeTab: 'templates',
+          }, '*');
+        } else {
+          window.postMessage({
+            type: 'SAIDE_SET_DRAFT_PREVIEW',
+            templateId: 'builtin-work-report',
+            prompt: '수신 공문 지침에 따라 2026년도 인공지능 행정업무 시범사업 추진계획 업무보고 초안을 작성해줘.',
+            draft: `1. 추진 목적
+  가. 인공지능 행정업무 시범사업 추진계획에 따른 지자체 행정 효율성 제고
+  나. 온나라 전자문서 시스템과 연계한 맞춤형 AI 사이드패널 도입 추진
+
+2. 주요 추진 내용
+  가. 부서별 공문서 검토 및 핵심 조치사항 도출 자동화 환경 구축
+  나. 대용량 첨부파일 및 공문 본문의 스마트 일괄 수신 체계 마련
+  다. 안전한 로컬 LLM 기반 정보보안 가이드라인 준수
+
+3. 세부 일정 및 조치계획
+  가. 시범사업 수요조사서 및 보안서약서 제출: 2026. 9. 22.(화)한
+  나. 부서 의견 수렴 및 시스템 연계 테스트: 2026. 10. 15.까지
+
+4. 행정 사항
+  가. 본 사업 추진을 위한 정보화 예산 집행 협의 완료
+  나. 관련 서식: 붙임 시범사업 수요조사서 1부.  끝.`,
+          }, '*');
+        }
+      }, 80);
+    }
+  });
+
+  createRoot(document.getElementById('root')!).render(<DrawerApp />);
+
 } else {
   await import('@/entrypoints/sidepanel/style.css');
 

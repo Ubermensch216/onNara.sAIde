@@ -1,6 +1,6 @@
 # 웹스토어 및 마켓플레이스 등록 준비 자산
 
-기준일: **2026-09-22**. 이 디렉터리는 Microsoft Edge Add-ons 및 Chrome 웹스토어 등록을 위해 준비된 홍보 및 메타데이터 자산이며, 확장 프로그램 빌드 번들(`.output/edge-mv3`)에는 포함되지 않습니다.
+기준일: **2026-09-26**. 이 디렉터리는 Microsoft Edge Add-ons 및 Chrome 웹스토어 등록을 위해 준비된 홍보 및 메타데이터 자산이며, 확장 프로그램 빌드 번들(`.output/edge-mv3`)에는 포함되지 않습니다.
 
 ---
 
@@ -18,13 +18,14 @@
 
 ## 2. 매뉴얼 캡처와 스토어 등록 스크린샷
 
-[`docs/screenshots/`](../../docs/screenshots/README.md)에 위치한 9장의 스크린샷은 **사용자 매뉴얼용 캡처**입니다.  
+[`docs/screenshots/`](../../docs/screenshots/README.md)에 위치한 11장의 스크린샷은 **사용자 매뉴얼용 캡처**입니다.  
 스토어 공식 제출용 스크린샷은 [스토어 이미지 가이드](https://developer.chrome.com/docs/webstore/images)에 따라 **1280 × 800 px** 또는 **640 × 400 px** 규격을 충족해야 합니다.
 
 ### 스토어 제출 전 필수 점검 목록 (Checklist):
 - [ ] 깨끗한 테스트 프로필에서 최신 프로덕션 빌드(`.output/edge-mv3`) 로드 검증
 - [ ] 가명/샘플 공문 화면에서의 요약, 조치사항 카드, 슬래시 명령 실행 화면 캡처
 - [ ] 공유/공람 브리핑 화면 캡처 및 "문서를 열지 않아 미열람이 유지된다"는 설명 문구 검토
+- [ ] 온나라 공문서 기안기 인페이지 드로어 화면 및 표준 서식 관리자 화면 캡처
 - [ ] 에이전트 승인 카드(`ApprovalCard`) 및 설정 화면 캡처 (개인정보 미포함)
 - [ ] 제품 설명의 동작·권한·데이터 처리 범위를 실제 코드와 대조
 - [ ] 기관 및 서비스에 맞는 개인정보 처리방침(Privacy Policy) URL 및 지원 연락처 준비
@@ -48,11 +49,12 @@
   * **원문 대조 검증**: AI의 환각을 방지하기 위해 추출된 기한과 근거 문장을 원문과 실시간 대조하여 표시합니다.
   * **아침 공유/공람 브리핑 (미열람 유지)**: 받은문서 목록을 훑어 기한 임박, 내 업무, 단순 공람으로 자동 분류합니다 (본문을 열지 않아 미열람 유지).
   * **공문 본문 및 첨부파일 일괄 다운로드**: 체크한 공문의 본문(HTML/PDF)과 첨부파일을 백그라운드에서 안전하게 일괄 내려받습니다.
+  * **공문서 기안기 연동 (사이드카 드로어)**: 온나라 기안기 화면 진입 시 인페이지 드로어가 구동되어 4대 표준 서식 기반 초안 작성, 참고문서 자동 연동 요약, 클릭 타깃 직접 삽입을 지원합니다.
   * **일정 및 기한 관리**: 공문에서 도출된 조치사항과 마감 기한을 개인 D-day 보드로 관리하고 데스크톱 알림을 수신합니다.
   * **공문 비교 및 교정**: 여러 공문의 변경 사항과 연관성을 한 화면에서 비교 분석합니다.
-  * **로컬 데이터 백업 및 복원**: 일정, 대화, 브리핑 기록, 프리셋을 JSON 파일로 안전하게 보관하고 복원합니다.
+  * **로컬 데이터 백업 및 복원**: 일정, 대화, 브리핑 기록, 서식/프리셋을 JSON 파일로 안전하게 보관하고 복원합니다.
   * **철저한 로컬 보안**: 내 PC의 Ollama 모델(Gemma 4 등)을 기본 활용하여 공문 본문이 외부로 유출되지 않습니다.
-  * **안전한 조작 승인**: 브라우저 조작이 필요한 경우 사전에 사용자 승인을 받습니다.
+  * **안전한 조작 승인**: 브라우저 조작 및 본문 삽입 시 사전에 사용자 승인을 받습니다.
 
 * **요구사항:** PC에 Ollama가 설치되어 있어야 하며, 기본 모델(`gemma4:e2b`, `bge-m3:latest`) 다운로드가 필요합니다.
 
@@ -67,11 +69,12 @@ onNara.sAIde is a Microsoft Edge extension designed to help administrative perso
   * **Source Verification**: Verifies extracted deadlines and sentences against the original document text to prevent hallucinations.
   * **Inbox Briefing (Unread Preservation)**: Automatically categorizes incoming documents without opening them, preserving unread status.
   * **Batch Body & Attachment Downloads**: Safely downloads document bodies (HTML/PDF) and attachments in the background.
+  * **Document Drafter Sidecar**: Provides an in-page drawer inside OnNara drafter to generate administrative drafts based on standard templates and insert them directly into the editor with explicit approval.
   * **Schedule & Deadline Tracking**: Converts actions and deadlines into D-day boards with desktop notifications.
   * **Document Comparison**: Compares multiple notices or guidelines side-by-side.
-  * **Local Data Backup & Restore**: Exports and imports sessions, tasks, and inbox records locally.
+  * **Local Data Backup & Restore**: Exports and imports sessions, tasks, templates, and inbox records locally.
   * **Local-First Privacy**: Runs inference locally via Ollama (e.g., Gemma 4), keeping sensitive document content on your PC.
-  * **Approval-Gated Safety**: Every browser interaction requires explicit user confirmation.
+  * **Approval-Gated Safety**: Every browser interaction and document insertion requires explicit user confirmation.
 
 ---
 

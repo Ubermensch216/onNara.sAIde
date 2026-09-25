@@ -225,102 +225,73 @@ export function TemplateManager({
     return true;
   });
 
-  const getTypeBadgeStyle = (docType: string) => {
-    switch (docType) {
-      case '업무보고':
-        return 'bg-blue-100 text-blue-800 border-blue-200';
-      case '기본 계획서':
-        return 'bg-emerald-100 text-emerald-800 border-emerald-200';
-      case '구축 계획서':
-        return 'bg-purple-100 text-purple-800 border-purple-200';
-      case '언론 보도':
-        return 'bg-amber-100 text-amber-800 border-amber-200';
-      default:
-        return 'bg-slate-100 text-slate-800 border-slate-200';
-    }
-  };
-
   return (
     <div className="flex flex-col h-full bg-slate-50 text-slate-800 text-xs">
       {/* 서식관리 상단 툴바 */}
-      <div className="p-3 bg-white border-b border-slate-200 space-y-2">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="font-bold text-slate-900 text-sm flex items-center gap-1.5">
-              <MaterialIcon name="description" size={17} className="text-blue-600 shrink-0" />
-              <span>공문서 서식 관리</span>
-              <span className="text-[11px] font-normal text-slate-500">
-                ({templates.length}종 등록됨)
-              </span>
-            </h2>
-            <p className="text-[11px] text-slate-500 mt-0.5">
-              자주 쓰는 공문서 유형별 주요 필수 항목을 미리 정의하고 초안 작성 시 즉시 적용합니다.
-            </p>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={handleOpenCreate}
-              className="w-8 h-8 bg-blue-600 hover:bg-blue-700 text-white rounded inline-flex items-center justify-center shadow-xs transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
-              title="새 서식 등록"
-              aria-label="새 서식 등록"
-            >
-              <MaterialIcon name="add" size={20} />
-            </button>
-            <button
-              type="button"
-              onClick={handleResetDefaults}
-              className="px-2 py-1 bg-white border border-slate-300 hover:bg-slate-100 text-slate-600 rounded font-medium text-[11px] transition inline-flex items-center gap-1"
-              title="초기 4대 표준 서식(업무보고, 기본 계획서, 구축 계획서, 언론 보도)으로 복원"
-            >
-              <MaterialIcon name="refresh" size={15} />
-              <span>초기화</span>
-            </button>
-          </div>
-        </div>
-
-        {/* 유형 필터 탭 & 검색창 */}
-        <div className="flex items-center justify-between gap-2 pt-1">
-          <div className="flex items-center gap-1 overflow-x-auto pb-0.5 scrollbar-none">
-            <button
-              type="button"
-              onClick={() => setFilterType('all')}
-              className={`px-2 py-0.8 rounded text-[11px] font-semibold whitespace-nowrap transition ${
-                filterType === 'all'
-                  ? 'bg-slate-800 text-white'
-                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-              }`}
-            >
-              전체 ({templates.length})
-            </button>
-            {DOCUMENT_TYPES.filter(t => t !== '기타').map(type => {
-              const count = templates.filter(t => t.documentType === type).length;
-              return (
-                <button
-                  key={type}
-                  type="button"
-                  onClick={() => setFilterType(type)}
-                  className={`px-2 py-0.8 rounded text-[11px] font-semibold whitespace-nowrap transition ${
-                    filterType === type
-                      ? 'bg-blue-700 text-white'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                  }`}
-                >
-                  {type} {count > 0 && `(${count})`}
-                </button>
-              );
-            })}
-          </div>
-
-          <div className="w-36 shrink-0">
+      <div className="p-2.5 bg-white border-b border-slate-200 space-y-2">
+        {/* 상단 검색 및 서식 등록/초기화 액션 */}
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex-1">
             <input
               type="text"
               placeholder="서식 검색..."
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
-              className="w-full px-2 py-1 border border-slate-300 rounded text-[11px] bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className="w-full px-2.5 py-1 border border-slate-300 rounded text-[11px] bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
             />
           </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              type="button"
+              onClick={handleOpenCreate}
+              className="w-7 h-7 bg-blue-600 hover:bg-blue-700 text-white rounded inline-flex items-center justify-center shadow-xs transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+              title="새 서식 등록"
+              aria-label="새 서식 등록"
+            >
+              <MaterialIcon name="add" size={18} />
+            </button>
+            <button
+              type="button"
+              onClick={handleResetDefaults}
+              className="h-7 px-2 bg-white border border-slate-300 hover:bg-slate-100 text-slate-600 rounded font-medium text-[11px] transition inline-flex items-center gap-1"
+              title="초기 4대 표준 서식(업무보고, 기본 계획서, 구축 계획서, 언론 보도)으로 복원"
+            >
+              <MaterialIcon name="refresh" size={14} />
+              <span>초기화</span>
+            </button>
+          </div>
+        </div>
+
+        {/* 유형 필터 탭 */}
+        <div className="flex items-center gap-1 overflow-x-auto pb-0.5 scrollbar-none">
+          <button
+            type="button"
+            onClick={() => setFilterType('all')}
+            className={`px-2 py-0.8 rounded text-[11px] font-semibold whitespace-nowrap transition ${
+              filterType === 'all'
+                ? 'bg-slate-800 text-white'
+                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+            }`}
+          >
+            전체 ({templates.length})
+          </button>
+          {DOCUMENT_TYPES.filter(t => t !== '기타').map(type => {
+            const count = templates.filter(t => t.documentType === type).length;
+            return (
+              <button
+                key={type}
+                type="button"
+                onClick={() => setFilterType(type)}
+                className={`px-2 py-0.8 rounded text-[11px] font-semibold whitespace-nowrap transition ${
+                  filterType === type
+                    ? 'bg-blue-700 text-white'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                {type} {count > 0 && `(${count})`}
+              </button>
+            );
+          })}
         </div>
 
         {statusMessage && (
@@ -350,13 +321,6 @@ export function TemplateManager({
               <div className="flex items-start justify-between gap-2">
                 <div className="space-y-0.5">
                   <div className="flex items-center gap-1.5 flex-wrap">
-                    <span
-                      className={`px-1.5 py-0.2 rounded text-[10px] font-bold border ${getTypeBadgeStyle(
-                        t.documentType
-                      )}`}
-                    >
-                      {t.documentType}
-                    </span>
                     <h3 className="font-bold text-slate-900 text-sm">{t.title}</h3>
                     {t.isBuiltin && (
                       <span className="text-[9px] bg-slate-100 text-slate-500 px-1 py-0.2 rounded font-medium">

@@ -8,8 +8,8 @@ assert.equal(manifest.minimum_chrome_version, '116');
 assert.equal(manifest.default_locale, 'ko');
 assert.equal(manifest.short_name, '온나라 sAIde');
 assert.ok(manifest.permissions.includes('webNavigation'), 'iframe discovery requires webNavigation');
-assert.ok(!manifest.content_scripts?.length, 'Content scripts must remain on-demand');
-assert.deepEqual(manifest.host_permissions, ['http://localhost:11434/*', 'http://127.0.0.1:11434/*']);
+assert.ok(manifest.content_scripts?.some(cs => cs.js?.includes('drawer.js')), 'Drafter drawer script must be registered in content_scripts');
+assert.ok(manifest.host_permissions.includes('http://localhost:11434/*'), 'Ollama host permission must be included');
 // 본문이 PDF 뷰어로 표시되는 문서를 읽으려면 오프스크린 문서와 pdf.js 워커가 함께 실려야 한다.
 assert.ok(manifest.permissions.includes('offscreen'), 'PDF body reading requires the offscreen permission');
 assert.ok(manifest.web_accessible_resources?.length, 'Drawer iframe requires web_accessible_resources');

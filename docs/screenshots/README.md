@@ -1,6 +1,6 @@
 # 사용자 매뉴얼 화면 캡처 자산 가이드
 
-기준일: **2026-09-22**. 이 디렉터리의 9개 스크린샷은 온나라 sAIde 사용자 매뉴얼([`README.md`](../../README.md))에 싣는 공식 문서용 UI 캡처입니다.
+기준일: **2026-09-26**. 이 디렉터리의 11개 스크린샷은 온나라 sAIde 사용자 매뉴얼([`README.md`](../../README.md))에 싣는 공식 문서용 UI 캡처입니다.
 
 실제 소스 코드의 React 컴포넌트와 행정 블루 디자인 토큰을 독립된 미리보기 환경(`docs/preview/`)에서 렌더링하고 Headless Edge/Chromium으로 캡처했습니다. **AI 생성 이미지나 외부 목업이 아니라 실제 프런트엔드 컴포넌트의 렌더링 결과**이며, 담긴 공문 자료만 샘플입니다.
 
@@ -19,6 +19,8 @@
 | [**09-briefing-settings.png**](09-briefing-settings.png) | 1120 × 1000 | 공유/공람 브리핑 설정 | `InboxSettings` — 아침 브리핑·브리핑 시각, 대상 화면, 대상 범위와 포함·제외 키워드, 열람 처리(미열람 유지), 보관 기간 |
 | [**04-memory.png**](04-memory.png) | 1120 × 1000 | 로컬 기억 및 지식 저장소 | `MemoryPanel` — IndexedDB 벡터 저장소 목록과 보관 기간 |
 | [**05-presets.png**](05-presets.png) | 1120 × 1000 | 프롬프트 프리셋 편집기 | `PresetEditor` — 공문요약/조치사항/회신초안/공문교정 프리셋 |
+| [**10-drafter.png**](10-drafter.png) | 520 × 940 | 공문서 기안기 (인페이지 드로어 초안 작성) | `DrawerApp` — 공문서 서식 선택, 참고문서(관련정보) 자동 연동 및 요약, 표준 공문서 서식 초안 생성, 원클릭 복사 및 클릭 타깃 삽입 |
+| [**11-template-manager.png**](11-template-manager.png) | 520 × 940 | 공문서 서식 관리자 (Template Manager) | `TemplateManager` — 4대 표준 서식(업무보고, 기본 계획서, 구축 계획서, 언론 보도) 및 사용자 정의 서식 등록·검색·복원 |
 
 README 상단의 [**infographic.png**](../infographic.png)(1200 × 1360)은 위의 `01-chat.png`·`06-automation.png`를 품은 소개용 포스터이며, 생성 원본은 [`scripts/generate-infographic.html`](../../scripts/generate-infographic.html)입니다.
 
@@ -28,7 +30,7 @@ README 상단의 [**infographic.png**](../infographic.png)(1200 × 1360)은 위�
 
 ## 2. 화면 캡처 재생성 절차
 
-UI를 고친 뒤에는 아래 순서대로 9장을 다시 만듭니다.
+UI를 고친 뒤에는 아래 순서대로 11장을 다시 만듭니다.
 
 ### 1단계: 미리보기 서버 실행 (첫 번째 터미널)
 ```powershell
@@ -36,14 +38,14 @@ node scripts/docs-preview.mjs
 ```
 * `http://127.0.0.1:4175/`에 바인딩됩니다.
 * 이 서버는 문서용 정적 하네스(`docs/preview/`)만 로드하며 확장 빌드 번들에는 포함되지 않습니다.
-* 표본 데이터(공문 목록, 일정, 브리핑 원장, 설정)는 모두 [`docs/preview/main.tsx`](../preview/main.tsx)에 있습니다. 화면을 새로 추가할 때는 이 파일에 `?view=` 갈래를 더하세요.
+* 표본 데이터(공문 목록, 일정, 브리핑 원장, 기안 서식, 설정)는 모두 [`docs/preview/main.tsx`](../preview/main.tsx)에 있습니다. 화면을 새로 추가할 때는 이 파일에 `?view=` 갈래를 더하세요.
 
 ### 2단계: 캡처 스크립트 실행 (두 번째 터미널)
 ```powershell
 ./scripts/capture-docs.ps1
 ```
 * 시스템의 Chrome 또는 Edge를 자동 탐지합니다(`-ChromePath`로 지정 가능).
-* 각 뷰(`panel`, `inbox`, `approval`, `schedule`, `automation`, `options`, `memory`, `presets`, `briefing`)를 헤드리스로 렌더링해 `docs/screenshots/`의 PNG 9장을 덮어씁니다.
+* 각 뷰(`panel`, `inbox`, `approval`, `schedule`, `automation`, `options`, `memory`, `presets`, `briefing`, `drafter`, `templates`)를 헤드리스로 렌더링해 `docs/screenshots/`의 PNG 11장을 덮어씁니다.
 * 캡처가 끝나면 첫 번째 터미널에서 `Ctrl + C`로 서버를 종료합니다.
 
 ### 3단계: 소개 인포그래픽 재생성 (UI가 크게 바뀐 경우)
