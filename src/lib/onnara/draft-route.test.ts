@@ -6,6 +6,9 @@ import {
   hasDraftEditorSignals,
   isAllowedOrigin,
   isExactDraftPath,
+  isMetadataField,
+  isDraftCardScreen,
+  isBodyWritingScreen,
 } from './draft-route';
 
 describe('draft-route', () => {
@@ -89,6 +92,73 @@ describe('draft-route', () => {
         allowed
       );
       expect(result.status).toBe('confirmed');
+    });
+  });
+
+  describe('isMetadataField', () => {
+    it('제목, 키워드, 요약, 단위관리 등 문서카드 필드를 정확히 메타데이터 필드로 판별한다', () => {
+      const doc = document.implementation.createHTMLDocument();
+      doc.body.innerHTML = `
+        <input name="docTitle" id="docTitle" value="부산 관광지 공고" />
+        <input name="keyword" value="#관광" />
+        <textarea name="summary">보고내용 요약</textarea>
+        <input name="unitTask" value="관광진흥" />
+        <div id="hwpArea" class="webhwp-editor">본문 영역</div>
+      `;
+
+      const titleInput = doc.querySelector<HTMLElement>('#docTitle');
+      const keywordInput = doc.querySelector<HTMLElement>('input[name="keyword"]');
+      const summaryTextarea = doc.querySelector<HTMLElement>('textarea[name="summary"]');
+      const unitTaskInput = doc.querySelector<HTMLElement>('input[name="unitTask"]');
+      const hwpArea = doc.querySelector<HTMLElement>('#hwpArea');
+
+      expect(isMetadataField(titleInput)).toBe(true);
+      expect(isMetadataField(keywordInput)).toBe(true);
+      expect(isMetadataField(summaryTextarea)).toBe(true);
+      expect(isMetadataField(unitTaskInput)).toBe(true);
+      expect(isMetadataField(hwpArea)).toBe(false);
+    });
+
+    it('문서카드 폼 내부의 입력 요소들을 메타데이터 필드로 인식한다', () => {
+      const doc = document.implementation.createHTMLDocument();
+      doc.body.innerHTML = `
+        <form id="reportForm">
+          <input type="text" name="customField" value="값" />
+        </form>
+      `;
+      const inp = doc.querySelector<HTMLElement>('input[name="customField"]');
+      expect(isMetadataField(inp)).toBe(true);
+    });
+  });
+
+  describe('isDraftCardScreen vs isBodyWritingScreen', () => {
+    it('본문작성 버튼이 보이는 첫 번째 화면(문서카드)에서는 isDraftCardScreen=true, isBodyWritingScreen=false', () => {
+      const doc = document.implementation.createHTMLDocument();
+      doc.body.innerHTML = `
+        <button type="button" class="btn_main" style="width:80px;height:30px;">본문작성</button>
+        <input name="docTitle" value="제목" />
+      `;
+      // jsdom getBoundingClientRect mock
+      const btn = doc.querySelector('button')!;
+      btn.getBoundingClientRect = () => ({ width: 80, height: 30, top: 0, left: 0, right: 80, bottom: 30, x: 0, y: 0, toJSON: () => ({}) });
+
+      expect(isDraftCardScreen(doc)).toBe(true);
+      expect(isBodyWritingScreen(doc)).toBe(false);
+    });
+
+    it('본문작성 화면(두 번째 화면)에서는 isDraftCardScreen=false, isBodyWritingScreen=true', () => {
+      const doc = document.implementation.createHTMLDocument();
+      doc.body.innerHTML = `
+        <button type="button">문서카드</button>
+        <button type="button">본문저장</button>
+        <button type="button">본문(검정변환)</button>
+        <div id="hwpCtrl" class="webhwp-container">
+          <canvas class="webhwp_canvas"></canvas>
+        </div>
+      `;
+
+      expect(isDraftCardScreen(doc)).toBe(false);
+      expect(isBodyWritingScreen(doc)).toBe(true);
     });
   });
 });

@@ -1,4 +1,6 @@
 @import "tailwindcss";
+@source "../..";
+@source "../../../src";
 
 :root {
   font-family: -apple-system, BlinkMacSystemFont, "Pretendard", "Malgun Gothic", Dotum, sans-serif;

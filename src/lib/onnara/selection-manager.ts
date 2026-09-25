@@ -2,8 +2,15 @@
  * 에디터 영역 텍스트 블록 선택(Selection) 감지 및 인라인 치환 매니저.
  */
 
-import { isEditableElement, insertViaMainWorldHwp } from './draft-editor';
+import {
+  isEditableElement,
+  insertViaMainWorldHwp,
+  getViaMainWorldHwpSelection,
+  replaceViaMainWorldHwp,
+  isHwpElementOrContainer,
+} from './draft-editor';
 import { draftToHtml, createDomFragmentFromText, copyDraftToClipboard } from './draft-format';
+import { isMetadataField, isDraftCardScreen, isBodyWritingScreen } from './draft-route';
 
 export interface SelectionInfo {
   text: string;
@@ -15,6 +22,8 @@ export interface SelectionInfo {
   inputRange?: { start: number; end: number };
   // DOM Range인 경우
   domRange?: Range;
+  // 한글 기안기(WebHWP) 영역인지 여부
+  isHwp?: boolean;
 }
 
 /** Convert a frame-local client rect to the top-level viewport used by the overlay. */
@@ -59,10 +68,27 @@ function rectForBubble(doc: Document, rect: DOMRect): DOMRect {
   return doc.defaultView === window ? rect : toTopLevelClientRect(doc, rect);
 }
 
-/** 현재 문서(또는 하위 iframe)의 텍스트 선택 정보 캡처 */
-export function captureActiveSelection(doc: Document = document): SelectionInfo | null {
+/**
+ * 현재 문서(또는 하위 iframe)의 텍스트 선택 정보 캡처.
+ * - 온나라 기안기의 '문서카드' 화면(제목, 키워드, 요약 등 메타데이터 필드) 선택 시에는 null 반환 (블럭 메뉴 미노출)
+ * - '본문작성' 화면(한글 기안기 등 본문 에디터)의 선택만 캡처
+ */
+export function captureActiveSelection(
+  doc: Document = document,
+  preferredTarget?: HTMLElement | null
+): SelectionInfo | null {
+  // 1. 현재 문서가 '문서카드'(메타데이터 입력 단계) 화면이면 블럭 메뉴 노출을 엄격히 차단한다.
+  if (isDraftCardScreen(doc)) {
+    return null;
+  }
+
   const win = doc.defaultView || window;
-  const activeEl = doc.activeElement as HTMLElement | null;
+  const activeEl = preferredTarget || (doc.activeElement as HTMLElement | null);
+
+  // 2. 선택된 요소가 문서카드 메타데이터 필드(단위관리, 제목, 키워드, 요약 등)이면 노출 금지
+  if (isMetadataField(activeEl)) {
+    return null;
+  }
 
   // 1. Textarea 또는 Input 내부 블록 지정 감지
   if (
@@ -70,6 +96,10 @@ export function captureActiveSelection(doc: Document = document): SelectionInfo 
     ((win.HTMLTextAreaElement && activeEl instanceof win.HTMLTextAreaElement) ||
       (win.HTMLInputElement && activeEl instanceof win.HTMLInputElement && ['text', 'search', 'url', 'tel', 'email'].includes((activeEl as HTMLInputElement).type)))
   ) {
+    if (isMetadataField(activeEl)) {
+      return null;
+    }
+
     const input = activeEl as HTMLTextAreaElement | HTMLInputElement;
     const start = input.selectionStart ?? 0;
     const end = input.selectionEnd ?? 0;
@@ -107,7 +137,13 @@ export function captureActiveSelection(doc: Document = document): SelectionInfo 
           el = el.parentElement as HTMLElement;
         }
 
+        // 선택 영역 조상이 메타데이터 필드인지 확인
+        if (isMetadataField(el)) {
+          return null;
+        }
+
         const isEditable = isEditableElement(el);
+        const isHwp = isHwpElementOrContainer(el);
 
         return {
           text,
@@ -116,6 +152,7 @@ export function captureActiveSelection(doc: Document = document): SelectionInfo 
           ownerDoc: doc,
           isEditable,
           domRange: range.cloneRange(),
+          isHwp,
         };
       }
     }
@@ -125,13 +162,68 @@ export function captureActiveSelection(doc: Document = document): SelectionInfo 
 }
 
 /**
+ * WebHWP(한글 기안기)의 캔버스/컨트롤 기반 선택 영역을 감지하여 SelectionInfo를 생성한다.
+ */
+export async function captureWebHwpSelection(
+  doc: Document = document,
+  mousePos?: { clientX: number; clientY: number },
+  targetEl?: HTMLElement | null
+): Promise<SelectionInfo | null> {
+  // 문서카드 화면이면 무시
+  if (isDraftCardScreen(doc)) {
+    return null;
+  }
+
+  // 메타데이터 필드면 무시
+  if (isMetadataField(targetEl || (doc.activeElement as HTMLElement | null))) {
+    return null;
+  }
+
+  // 본문작성 화면이 아니면 무시
+  if (!isBodyWritingScreen(doc) && !isHwpElementOrContainer(targetEl || null)) {
+    return null;
+  }
+
+  try {
+    const text = await getViaMainWorldHwpSelection(doc);
+    if (text && text.trim().length >= 2) {
+      const x = mousePos?.clientX ?? (window.innerWidth / 2);
+      const y = mousePos?.clientY ?? (window.innerHeight / 2);
+      const fakeRect = new DOMRect(x - 60, y - 20, 120, 24);
+
+      return {
+        text: text.trim(),
+        clientRect: rectForBubble(doc, fakeRect),
+        targetElement: targetEl || null,
+        ownerDoc: doc,
+        isEditable: true,
+        isHwp: true,
+      };
+    }
+  } catch {}
+
+  return null;
+}
+
+
+/**
  * 선택된 블록 영역의 텍스트를 새로운 텍스트로 안전하게 교체(치환)합니다.
  */
 export async function replaceSelectedText(
   selection: SelectionInfo,
   newText: string
 ): Promise<{ success: boolean; message?: string }> {
-  const { targetElement, ownerDoc, inputRange, domRange } = selection;
+  const { targetElement, ownerDoc, inputRange, domRange, isHwp } = selection;
+
+  // 0. WebHWP(한글 기안기)인 경우 우선적으로 선택 영역 교체 API 실행
+  if (isHwp) {
+    try {
+      const hwpRes = await replaceViaMainWorldHwp(newText, ownerDoc);
+      if (hwpRes.success) {
+        return { success: true, message: '한글 기안기 본문이 교체되었습니다.' };
+      }
+    } catch {}
+  }
 
   // 1. Textarea / Input 치환
   if (

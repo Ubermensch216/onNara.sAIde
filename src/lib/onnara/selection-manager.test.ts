@@ -57,6 +57,29 @@ describe('selection-manager', () => {
 
       iframe.remove();
     });
+
+    it('문서카드 화면(첫 번째 첨부 이미지)의 제목/키워드/요약 등 메타데이터 필드 선택 시 null을 반환한다 (블럭 메뉴 노출 차단)', () => {
+      // 1. [본문작성] 버튼이 있는 문서카드 화면 모의
+      const btn = document.createElement('button');
+      btn.textContent = '본문작성';
+      btn.getBoundingClientRect = () => ({ width: 80, height: 30, top: 0, left: 0, right: 80, bottom: 30, x: 0, y: 0, toJSON: () => ({}) });
+      document.body.appendChild(btn);
+
+      const titleInput = document.createElement('input');
+      titleInput.name = 'docTitle';
+      titleInput.value = '2026 부산 웰니스관광지 신규 발굴 선정 등 공고';
+      document.body.appendChild(titleInput);
+
+      titleInput.focus();
+      titleInput.selectionStart = 5;
+      titleInput.selectionEnd = 16; // '웰니스관광지 신규 발굴'
+
+      const sel = captureActiveSelection(document, titleInput);
+      expect(sel).toBeNull(); // 메타데이터 필드이므로 블럭 메뉴가 뜨지 않아야 함!
+
+      btn.remove();
+      titleInput.remove();
+    });
   });
 
   describe('replaceSelectedText', () => {

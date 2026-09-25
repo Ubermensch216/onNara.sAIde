@@ -239,6 +239,440 @@ async function handleMainWorldHwpInsert(
 }
 
 /**
+ * 온나라 기안기 탭의 모든 프레임(allFrames: true)에서 메인 월드(world: 'MAIN')로
+ * 한컴 웹기안기(HwpCtrl) 누름틀('제목') 또는 HTML DOM '제목' 필드를 찾아 추천 제목을 반영한다.
+ */
+async function handleMainWorldHwpTitle(
+  tabId: number,
+  title: string
+): Promise<{ success: boolean; method?: string; fieldName?: string; error?: string }> {
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId, allFrames: true },
+      world: 'MAIN',
+      func: (titleText: string) => {
+        try {
+          function findHwp() {
+            var w = window as any;
+            if (!w) return null;
+            var localCandidates = [
+              w.HwpCtrl,
+              w.pHwpCtrl,
+              w.tbContentElement,
+              w.vHwpCtrl,
+              w.hwpCtrl,
+              w.hwp_ctrl,
+              w.hwpDoc,
+              w.WebHwpCtrl,
+              w.HwpObject,
+              w.document && w.document.getElementById('HwpCtrl'),
+              w.document && w.document.getElementById('hwpCtrl'),
+              w.document && w.document.getElementById('tbContentElement'),
+            ];
+            for (var i = 0; i < localCandidates.length; i++) {
+              var c = localCandidates[i];
+              if (
+                c &&
+                (typeof c.PutFieldText === 'function' ||
+                  typeof c.SetFieldText === 'function' ||
+                  typeof c.MoveToField === 'function' ||
+                  typeof c.InsertText === 'function')
+              ) {
+                return c;
+              }
+            }
+            return null;
+          }
+
+          var h = findHwp();
+          if (h) {
+            var titleFields = [
+              '제목',
+              'title',
+              'TITLE',
+              '기안제목',
+              'docTitle',
+              '기안문_제목',
+              '기안문제목',
+              '문서제목',
+              'SUBJECT',
+              'subject',
+              'titleText',
+            ];
+
+            // 1. PutFieldText (한컴 웹기안기 표준)
+            if (typeof h.PutFieldText === 'function') {
+              for (var f = 0; f < titleFields.length; f++) {
+                var fn = titleFields[f];
+                try {
+                  var exist = typeof h.FieldExist === 'function' ? Boolean(h.FieldExist(fn)) : true;
+                  if (exist) {
+                    h.PutFieldText(fn, titleText);
+                    return { success: true, method: 'HwpCtrl_PutFieldText', fieldName: fn };
+                  }
+                } catch (e) {}
+              }
+            }
+
+            // 2. SetFieldText
+            if (typeof h.SetFieldText === 'function') {
+              for (var f2 = 0; f2 < titleFields.length; f2++) {
+                var fn2 = titleFields[f2];
+                try {
+                  var exist2 = typeof h.FieldExist === 'function' ? Boolean(h.FieldExist(fn2)) : true;
+                  if (exist2) {
+                    h.SetFieldText(fn2, titleText);
+                    return { success: true, method: 'HwpCtrl_SetFieldText', fieldName: fn2 };
+                  }
+                } catch (e) {}
+              }
+            }
+
+            // 3. MoveToField + InsertText
+            if (typeof h.MoveToField === 'function') {
+              for (var f3 = 0; f3 < titleFields.length; f3++) {
+                var fn3 = titleFields[f3];
+                try {
+                  var exist3 = typeof h.FieldExist === 'function' ? Boolean(h.FieldExist(fn3)) : true;
+                  if (exist3) {
+                    h.MoveToField(fn3, true, true, true);
+                    if (typeof h.InsertText === 'function') {
+                      h.InsertText(titleText);
+                      return { success: true, method: 'HwpCtrl_MoveToField_InsertText', fieldName: fn3 };
+                    }
+                  }
+                } catch (e) {}
+              }
+            }
+          }
+
+          // 2. DOM 탐색 (선택자 매칭)
+          var doc = document;
+          var selectors = [
+            'input[name="docTitle"]',
+            'input#docTitle',
+            'input[name="title"]',
+            'input#title',
+            'input[name="reportTitle"]',
+            'input#reportTitle',
+            'input[name="subject"]',
+            'input#subject',
+            'input[name="txtTitle"]',
+            'input#txtTitle',
+            'input[name="txtDocTitle"]',
+            'input#txtDocTitle',
+            'input[name="doc_title"]',
+            'input#doc_title',
+            'input[name="bmsTitle"]',
+            'input#bmsTitle',
+            'input[title="제목"]',
+            'input[placeholder*="제목"]',
+            'input[aria-label*="제목"]',
+            'textarea[name="docTitle"]',
+            'textarea#docTitle',
+            'textarea[name="title"]',
+            'textarea#title',
+          ];
+
+          for (var s = 0; s < selectors.length; s++) {
+            var sel = selectors[s];
+            if (!sel) continue;
+            var el = doc.querySelector(sel) as HTMLInputElement | null;
+            if (el && el.type !== 'hidden' && !el.disabled && !el.readOnly) {
+              el.focus();
+              el.value = titleText;
+              el.dispatchEvent(new Event('input', { bubbles: true }));
+              el.dispatchEvent(new Event('change', { bubbles: true }));
+              return { success: true, method: 'DOM_SELECTOR', fieldName: sel };
+            }
+          }
+
+          // 3. DOM 레이블/테이블 셀 '제목' 탐색 (공문 서식 구조)
+          var cells = doc.querySelectorAll('th, td, label, span, div, dt');
+          for (var c = 0; c < cells.length; c++) {
+            var cell = cells[c];
+            if (!cell) continue;
+            var txt = (cell.textContent || '').trim().replace(/\s+/g, '');
+            if (txt === '제목' || txt === '제목:' || txt === '[제목]' || txt === '제 목') {
+              if ((cell as HTMLLabelElement).htmlFor) {
+                var target = doc.getElementById((cell as HTMLLabelElement).htmlFor) as HTMLInputElement | null;
+                if (target && !target.disabled && !target.readOnly) {
+                  target.focus();
+                  target.value = titleText;
+                  target.dispatchEvent(new Event('input', { bubbles: true }));
+                  target.dispatchEvent(new Event('change', { bubbles: true }));
+                  return { success: true, method: 'DOM_LABEL_FOR' };
+                }
+              }
+              var tr = cell.closest('tr');
+              if (tr) {
+                var rowInp = tr.querySelector('input[type="text"], input:not([type]), textarea') as HTMLInputElement | null;
+                if (rowInp && !rowInp.disabled && !rowInp.readOnly && rowInp.type !== 'hidden') {
+                  rowInp.focus();
+                  rowInp.value = titleText;
+                  rowInp.dispatchEvent(new Event('input', { bubbles: true }));
+                  rowInp.dispatchEvent(new Event('change', { bubbles: true }));
+                  return { success: true, method: 'DOM_TABLE_ROW' };
+                }
+              }
+              var sibling = cell.nextElementSibling;
+              if (sibling) {
+                var sibInp = (sibling.tagName === 'INPUT' || sibling.tagName === 'TEXTAREA'
+                  ? sibling
+                  : sibling.querySelector('input[type="text"], input:not([type]), textarea')) as HTMLInputElement | null;
+                if (sibInp && !sibInp.disabled && !sibInp.readOnly && sibInp.type !== 'hidden') {
+                  sibInp.focus();
+                  sibInp.value = titleText;
+                  sibInp.dispatchEvent(new Event('input', { bubbles: true }));
+                  sibInp.dispatchEvent(new Event('change', { bubbles: true }));
+                  return { success: true, method: 'DOM_SIBLING' };
+                }
+              }
+            }
+          }
+
+          return { success: false, error: 'NO_TITLE_FIELD' };
+        } catch (err) {
+          return { success: false, error: String(err) };
+        }
+      },
+      args: [title],
+    });
+
+    for (const r of results ?? []) {
+      if (r?.result?.success) {
+        return r.result;
+      }
+    }
+    return { success: false, error: 'NO_FRAME_TITLE_SUCCESS' };
+  } catch (err) {
+    return { success: false, error: String(err) };
+  }
+}
+
+/**
+ * 온나라 기안기 탭의 모든 프레임에서 메인 월드(world: 'MAIN')로
+ * 한컴 웹기안기(HwpCtrl) 또는 에디터의 선택된 텍스트를 조회한다.
+ */
+async function handleMainWorldHwpGetSelection(tabId: number): Promise<{ text: string }> {
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId, allFrames: true },
+      world: 'MAIN',
+      func: () => {
+        try {
+          function findHwp() {
+            var w = window as any;
+            if (!w) return null;
+            var localCandidates = [
+              w.HwpCtrl,
+              w.pHwpCtrl,
+              w.tbContentElement,
+              w.vHwpCtrl,
+              w.hwpCtrl,
+              w.hwp_ctrl,
+              w.hwpDoc,
+              w.WebHwpCtrl,
+              w.HwpObject,
+              w.document && w.document.getElementById('HwpCtrl'),
+              w.document && w.document.getElementById('hwpCtrl'),
+              w.document && w.document.getElementById('tbContentElement'),
+            ];
+            for (var i = 0; i < localCandidates.length; i++) {
+              var c = localCandidates[i];
+              if (
+                c &&
+                (typeof c.GetTextFile === 'function' ||
+                  typeof c.GetSelectedText === 'function' ||
+                  typeof c.Run === 'function' ||
+                  typeof c.CreateAction === 'function')
+              ) {
+                return c;
+              }
+            }
+            return null;
+          }
+
+          var h = findHwp();
+          if (h) {
+            // 1. GetSelectedText 메서드 시도
+            if (typeof h.GetSelectedText === 'function') {
+              try {
+                var s = h.GetSelectedText();
+                if (typeof s === 'string' && s.trim()) return s.trim();
+              } catch (e) {}
+            }
+          }
+
+          // 2. 메인 월드의 window.getSelection() 탐색
+          var sel = window.getSelection();
+          if (sel && !sel.isCollapsed) {
+            var t = sel.toString().trim();
+            if (t.length >= 2) return t;
+          }
+
+          return '';
+        } catch {
+          return '';
+        }
+      },
+    });
+
+    for (const r of results ?? []) {
+      if (r?.result && typeof r.result === 'string' && r.result.trim()) {
+        return { text: r.result.trim() };
+      }
+    }
+    return { text: '' };
+  } catch {
+    return { text: '' };
+  }
+}
+
+/**
+ * 온나라 기안기 탭의 모든 프레임에서 메인 월드(world: 'MAIN')로
+ * 한컴 웹기안기(HwpCtrl)의 선택 영역을 새로운 텍스트로 치환(삭제 후 줄바꿈 보존 삽입)한다.
+ */
+async function handleMainWorldHwpReplaceSelection(
+  tabId: number,
+  newText: string
+): Promise<{ success: boolean; method?: string; error?: string }> {
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId, allFrames: true },
+      world: 'MAIN',
+      func: (replaceText: string) => {
+        try {
+          function findHwp() {
+            var w = window as any;
+            if (!w) return null;
+            var localCandidates = [
+              w.HwpCtrl,
+              w.pHwpCtrl,
+              w.tbContentElement,
+              w.vHwpCtrl,
+              w.hwpCtrl,
+              w.hwp_ctrl,
+              w.hwpDoc,
+              w.WebHwpCtrl,
+              w.HwpObject,
+              w.document && w.document.getElementById('HwpCtrl'),
+              w.document && w.document.getElementById('hwpCtrl'),
+              w.document && w.document.getElementById('tbContentElement'),
+            ];
+            for (var i = 0; i < localCandidates.length; i++) {
+              var c = localCandidates[i];
+              if (
+                c &&
+                (typeof c.InsertText === 'function' ||
+                  typeof c.Run === 'function' ||
+                  typeof c.CreateAction === 'function')
+              ) {
+                return c;
+              }
+            }
+            return null;
+          }
+
+          var h = findHwp();
+          if (!h) return { success: false, error: 'NO_HWP' };
+
+          // 1. 선택 블록 삭제 (Delete 액션)
+          if (typeof h.Run === 'function') {
+            try {
+              h.Run('Delete');
+            } catch (e) {}
+          } else if (h.HAction && typeof h.HAction.Run === 'function') {
+            try {
+              h.HAction.Run('Delete');
+            } catch (e) {}
+          }
+
+          // 2. 다중 행 줄바꿈(BreakPara) 보존 삽입
+          function insertLines(hwp: any, str: string) {
+            var lines = str.split(/\r?\n/);
+            if (lines.length <= 1) {
+              if (typeof hwp.InsertText === 'function') {
+                hwp.InsertText(str);
+                return true;
+              }
+              if (typeof hwp.CreateAction === 'function') {
+                var act = hwp.CreateAction('InsertText');
+                if (act && typeof act.CreateSet === 'function') {
+                  var st = act.CreateSet();
+                  if (st && typeof st.SetItem === 'function') {
+                    st.SetItem('Text', str);
+                    act.Execute(st);
+                    return true;
+                  }
+                }
+              }
+              return false;
+            }
+
+            var any = false;
+            for (var j = 0; j < lines.length; j++) {
+              var l = lines[j] || '';
+              if (l.length > 0) {
+                if (typeof hwp.InsertText === 'function') {
+                  hwp.InsertText(l);
+                  any = true;
+                } else if (typeof hwp.CreateAction === 'function') {
+                  var a = hwp.CreateAction('InsertText');
+                  if (a && typeof a.CreateSet === 'function') {
+                    var s = a.CreateSet();
+                    if (s && typeof s.SetItem === 'function') {
+                      s.SetItem('Text', l);
+                      a.Execute(s);
+                      any = true;
+                    }
+                  }
+                }
+              }
+              if (j < lines.length - 1) {
+                if (typeof hwp.Run === 'function') {
+                  hwp.Run('BreakPara');
+                  any = true;
+                } else if (hwp.HAction && typeof hwp.HAction.Run === 'function') {
+                  hwp.HAction.Run('BreakPara');
+                  any = true;
+                }
+              }
+            }
+            return any;
+          }
+
+          if (insertLines(h, replaceText)) {
+            return { success: true, method: 'DeleteAndInsertLines' };
+          }
+
+          if (typeof h.Run === 'function') {
+            try {
+              h.Run('Paste');
+              return { success: true, method: 'DeleteAndPaste' };
+            } catch (e) {}
+          }
+
+          return { success: false, error: 'NO_VALID_INSERT' };
+        } catch (err) {
+          return { success: false, error: String(err) };
+        }
+      },
+      args: [newText],
+    });
+
+    for (const r of results ?? []) {
+      if (r?.result?.success) {
+        return r.result;
+      }
+    }
+    return { success: false, error: 'NO_FRAME_SUCCESS' };
+  } catch (err) {
+    return { success: false, error: String(err) };
+  }
+}
+
+/**
  * 기안기에서 참고 문서로 지정된 '관련정보' 문서의 본문 텍스트를 열린 탭이나 백그라운드에서 조회
  */
 export async function handleFetchRelatedDocContent(
@@ -516,6 +950,33 @@ export default defineBackground(() => {
       const tabId = sender.tab?.id;
       if (tabId) {
         handleMainWorldHwpInsert(tabId, String((msg as any).text || ''))
+          .then(res => sendResponse(res))
+          .catch(err => sendResponse({ success: false, error: String(err) }));
+        return true;
+      }
+    }
+    if (msg && typeof msg === 'object' && (msg as any).type === 'DRAFT_MAIN_WORLD_HWP_TITLE') {
+      const tabId = sender.tab?.id;
+      if (tabId) {
+        handleMainWorldHwpTitle(tabId, String((msg as any).title || ''))
+          .then(res => sendResponse(res))
+          .catch(err => sendResponse({ success: false, error: String(err) }));
+        return true;
+      }
+    }
+    if (msg && typeof msg === 'object' && (msg as any).type === 'DRAFT_MAIN_WORLD_HWP_GET_SELECTION') {
+      const tabId = sender.tab?.id;
+      if (tabId) {
+        handleMainWorldHwpGetSelection(tabId)
+          .then(res => sendResponse(res))
+          .catch(err => sendResponse({ text: '', error: String(err) }));
+        return true;
+      }
+    }
+    if (msg && typeof msg === 'object' && (msg as any).type === 'DRAFT_MAIN_WORLD_HWP_REPLACE_SELECTION') {
+      const tabId = sender.tab?.id;
+      if (tabId) {
+        handleMainWorldHwpReplaceSelection(tabId, String((msg as any).text || ''))
           .then(res => sendResponse(res))
           .catch(err => sendResponse({ success: false, error: String(err) }));
         return true;

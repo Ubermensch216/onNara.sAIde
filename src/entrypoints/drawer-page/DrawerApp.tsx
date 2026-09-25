@@ -3,6 +3,10 @@ import { loadSettings, DEFAULT_SETTINGS, type Settings } from '@/lib/storage/set
 import { cleanAdminDraft } from '@/lib/onnara/draft-cleaner';
 import { copyDraftToClipboard } from '@/lib/onnara/draft-format';
 import {
+  buildDraftTitleSystemPrompt,
+  extractRecommendedTitleAndDraft,
+} from '@/lib/onnara/draft-title';
+import {
   buildReferencePrompt,
   generateDocSummary,
   generateRuleBasedSummary,
@@ -32,6 +36,9 @@ export function DrawerApp() {
   // 초안 작성 상태
   const [prompt, setPrompt] = useState('');
   const [generatedDraft, setGeneratedDraft] = useState('');
+  const [recommendedTitle, setRecommendedTitle] = useState<string>('');
+  const [isApplyingTitle, setIsApplyingTitle] = useState<boolean>(false);
+  const [hasAppliedTitle, setHasAppliedTitle] = useState<boolean>(false);
   const [loading, setLoading] = useState(false);
   const [statusMsg, setStatusMsg] = useState('');
   const [approvalModal, setApprovalModal] = useState<{
@@ -42,11 +49,11 @@ export function DrawerApp() {
   }>({ open: false });
   const [isTargetSelecting, setIsTargetSelecting] = useState<boolean>(false);
 
-  // 📑 서식(템플릿) 관리 상태
+  // 서식(템플릿) 관리 상태
   const [templates, setTemplates] = useState<DraftTemplate[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>('');
 
-  // 📎 관련정보 참고 문서 상태
+  // 관련정보 참고 문서 상태
   const [relatedDocs, setRelatedDocs] = useState<RelatedDocInfo[]>([]);
   const [selectedRelatedDoc, setSelectedRelatedDoc] = useState<RelatedDocInfo | null>(null);
   const [isReferenceExpanded, setIsReferenceExpanded] = useState<boolean>(false);
@@ -131,11 +138,22 @@ export function DrawerApp() {
         setPrompt(data.text);
         setStatusMsg('선택한 본문 내용이 질의 프롬프트로 입력되었습니다.');
         setTimeout(() => setStatusMsg(''), 3000);
+      } else if (data.type === 'DRAFT_APPLY_TITLE_RESULT') {
+        setIsApplyingTitle(false);
+        if (data.success) {
+          setHasAppliedTitle(true);
+          if (data.title) setDocTitle(data.title);
+          setStatusMsg(data.message || '공문 본 화면의 제목 필드에 반영되었습니다.');
+        } else {
+          setStatusMsg(data.message || '제목 반영에 실패했습니다.');
+        }
+        setTimeout(() => setStatusMsg(''), 3500);
       } else if (data.type === 'SAIDE_SET_DRAFT_PREVIEW') {
         if (data.prompt !== undefined) setPrompt(data.prompt);
         if (data.draft !== undefined) setGeneratedDraft(data.draft);
         if (data.templateId !== undefined) setSelectedTemplateId(data.templateId);
         if (data.activeTab !== undefined) setActiveTab(data.activeTab);
+        if (data.recommendedTitle !== undefined) setRecommendedTitle(data.recommendedTitle);
       }
     };
 
@@ -234,6 +252,7 @@ export function DrawerApp() {
     if (!prompt.trim()) return;
     setLoading(true);
     setGeneratedDraft('');
+    setHasAppliedTitle(false);
 
     const effectiveRefDoc = selectedRelatedDoc
       ? {
@@ -264,6 +283,9 @@ export function DrawerApp() {
 
     systemPrompt += ' 제공된 참고 문서(관련정보)의 추진 배경, 지침, 제출 기한, 서식명, 소관 부서 등의 사실관계를 충실히 반영하고, 사실이 불확실한 날짜나 금액은 [확인 필요: 내용]으로 표시하십시오.';
 
+    // 추천 제목 지침 추가
+    systemPrompt = buildDraftTitleSystemPrompt(systemPrompt);
+
     const requestBody = {
       model: settings.model,
       messages: [
@@ -283,8 +305,13 @@ export function DrawerApp() {
       if (!res.ok) throw new Error(`Ollama 응답 오류 (${res.status})`);
       const json = await res.json();
       const raw = json.message?.content || '';
-      const clean = cleanAdminDraft(raw);
-      setGeneratedDraft(clean);
+      const { title: recTitle, draft: cleanDraft } = extractRecommendedTitleAndDraft(
+        raw,
+        prompt,
+        docTitle
+      );
+      setRecommendedTitle(recTitle);
+      setGeneratedDraft(cleanDraft);
     } catch (e: any) {
       setGeneratedDraft(`[오류 발생: 로컬 AI 모델(Ollama)과 통신하지 못했습니다]\n\n원인: ${e.message}\n설정 확인: ${settings.endpoint}`);
     } finally {
@@ -292,14 +319,28 @@ export function DrawerApp() {
     }
   };
 
-  // 🎯 클릭하여 삽입 위치 지정 모드 시작 (유저 제스처 컨텍스트에서 사전 복사)
+  // 공문 본 화면의 '제목' 필드에 추천 제목 반영
+  const handleApplyTitle = () => {
+    if (!recommendedTitle.trim() || isApplyingTitle) return;
+    setIsApplyingTitle(true);
+    setStatusMsg('공문 본 화면의 제목 필드에 반영하는 중입니다...');
+    window.parent.postMessage(
+      {
+        type: 'DRAFT_APPLY_TITLE',
+        title: recommendedTitle.trim(),
+      },
+      '*'
+    );
+  };
+
+  // 클릭하여 삽입 위치 지정 모드 시작 (유저 제스처 컨텍스트에서 사전 복사)
   const handleStartClickTarget = async () => {
     if (!generatedDraft) return;
     const clean = cleanAdminDraft(generatedDraft);
     await copyDraftToClipboard(clean);
     setIsTargetSelecting(true);
     window.parent.postMessage({ type: 'SAIDE_START_CLICK_TARGET', text: clean }, '*');
-    setStatusMsg('🎯 기안기 화면에서 초안을 넣을 위치를 클릭하세요. (Esc: 취소)');
+    setStatusMsg('기안기 화면에서 초안을 넣을 위치를 클릭하세요. (Esc: 취소)');
   };
 
   // 타깃 지정 모드 취소
@@ -333,19 +374,19 @@ export function DrawerApp() {
           <span className="w-2.5 h-2.5 rounded-full bg-blue-600 inline-block"></span>
           <span>온나라 sAIde</span>
           <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 font-semibold border border-blue-200">
-            기안 도우미
+            기안 코파일럿
           </span>
         </div>
         <button
           onClick={closeDrawer}
-          className="text-slate-400 hover:text-slate-700 p-1 rounded hover:bg-slate-100 font-bold"
+          className="text-slate-400 hover:text-slate-700 p-1 rounded hover:bg-slate-100 font-bold flex items-center justify-center"
           title="사이드카 접기 (Esc)"
         >
-          ✕
+          <MaterialIcon name="close" size={16} />
         </button>
       </header>
 
-      {/* 🧭 사이드카 탭 메뉴 (초안 작성 / 서식관리) */}
+      {/* 사이드카 탭 메뉴 (초안 작성 / 서식관리) */}
       <nav className="flex items-center border-b border-slate-200 bg-white px-3 gap-1 pt-1.5 shrink-0" role="tablist">
         <button
           type="button"
@@ -395,11 +436,11 @@ export function DrawerApp() {
         /* ── 탭 1: 공문 초안 작성 화면 ── */
         <>
           <div className="flex-1 overflow-y-auto p-3 space-y-3">
-            {/* 📑 공문서 서식 지정 카드 */}
+            {/* 공문서 서식 지정 카드 */}
             <div className="p-2.5 bg-white border border-blue-200 rounded-lg shadow-2xs space-y-2">
               <div className="flex items-center justify-between">
                 <label className="font-bold text-slate-800 text-[11px] flex items-center gap-1.5">
-                  <span className="text-blue-600">📑</span>
+                  <MaterialIcon name="description" size={14} className="text-blue-600" />
                   <span>적용할 공문서 서식 선택</span>
                 </label>
               </div>
@@ -428,10 +469,11 @@ export function DrawerApp() {
                     <button
                       type="button"
                       onClick={handleInsertTemplateOutline}
-                      className="px-2 py-0.5 bg-white border border-blue-300 text-blue-700 hover:bg-blue-100 rounded text-[10.5px] font-semibold transition shadow-2xs"
-                      title="입력창에 서식의 주요 항목 목차를 골격으로 채웁니다"
+                      className="px-2 py-0.5 bg-white border border-blue-300 text-blue-700 hover:bg-blue-50 rounded text-[10.5px] font-semibold transition shadow-2xs flex items-center gap-1"
+                      title="입력창에 서식 항목 골격 넣기"
                     >
-                      📝 항목 골격 입력창에 넣기
+                      <MaterialIcon name="postAdd" size={14} />
+                      <span>항목 골격 입력창에 넣기</span>
                     </button>
                   </div>
 
@@ -445,12 +487,12 @@ export function DrawerApp() {
               )}
             </div>
 
-            {/* 📎 관련정보 참고 문서 카드 */}
+            {/* 관련정보 참고 문서 카드 */}
             {relatedDocs.length > 0 && (
               <div className="p-2.5 bg-indigo-50/90 border border-indigo-200 rounded-md text-indigo-950 space-y-2">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-1.5 font-bold text-[11px]">
-                    <span className="text-indigo-600">📎</span>
+                    <MaterialIcon name="attachFile" size={14} className="text-indigo-600" />
                     <span>관련정보 참고 문서 ({relatedDocs.length}건)</span>
                   </div>
                   {selectedRelatedDoc ? (
@@ -517,10 +559,10 @@ export function DrawerApp() {
                             <button
                               type="button"
                               onClick={() => setSelectedRelatedDoc(null)}
-                              className="text-slate-400 hover:text-slate-700 px-1 text-[11px]"
+                              className="text-slate-400 hover:text-slate-700 p-0.5 rounded text-[11px] flex items-center justify-center"
                               title="참고 해제"
                             >
-                              ✕
+                              <MaterialIcon name="close" size={13} />
                             </button>
                           </div>
                         )}
@@ -534,7 +576,7 @@ export function DrawerApp() {
                   <div className="pt-2 border-t border-indigo-200/80 space-y-2 text-[11px]">
                     <div className="flex items-center justify-between text-slate-700">
                       <span className="font-bold text-[11px] flex items-center gap-1.5">
-                        <span>📋</span>
+                        <MaterialIcon name="assignment" size={14} className="text-indigo-600" />
                         <span>참고 문서 핵심 요약</span>
                         {isSummarizing && (
                           <span className="text-[10px] text-indigo-600 font-normal animate-pulse">
@@ -569,7 +611,10 @@ export function DrawerApp() {
                       </div>
                     ) : (
                       <div className="p-2.5 bg-amber-50 border border-amber-200 rounded text-[11px] text-amber-800 space-y-1">
-                        <p className="font-semibold">⚠️ 본문이 아직 열려 있지 않습니다.</p>
+                        <p className="font-semibold flex items-center gap-1.5">
+                          <MaterialIcon name="warning" size={13} className="text-amber-600" />
+                          <span>본문이 아직 열려 있지 않습니다.</span>
+                        </p>
                         <p className="text-[10px] text-amber-700 leading-tight">
                           온나라 화면의 <strong>[관련정보]</strong>에서 문서를 클릭해 창을 띄워두신 후 <strong>[본문읽기]</strong>를 누르시거나, 아래 메모장에 핵심 내용을 직접 적어주세요.
                         </p>
@@ -597,7 +642,10 @@ export function DrawerApp() {
             {needsOpenBody && (
               <div className="p-2.5 bg-amber-50/90 border border-amber-200 rounded-md text-amber-900 space-y-1.5">
                 <div className="flex items-center justify-between font-bold text-[11px]">
-                  <span>💡 본문 에디터 열기 필요</span>
+                  <span className="flex items-center gap-1.5">
+                    <MaterialIcon name="lightbulb" size={14} className="text-amber-700" />
+                    <span>본문 에디터 열기 필요</span>
+                  </span>
                   {hasWriteBodyBtn && (
                     <button
                       onClick={clickOpenBody}
@@ -620,8 +668,12 @@ export function DrawerApp() {
                   작성할 공문서 개요 또는 핵심 메모
                 </label>
                 {selectedTemplate && (
-                  <span className="text-[10px] text-blue-700 font-semibold bg-blue-50 px-1.5 py-0.2 rounded border border-blue-200">
-                    [{selectedTemplate.title}] 서식 적용 중
+                  <span
+                    className="inline-flex items-center gap-1 text-[10.5px] text-blue-700 font-semibold bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200"
+                    title={`[${selectedTemplate.title}] 서식 적용 중`}
+                  >
+                    <MaterialIcon name="checkCircle" size={13} className="text-blue-600" />
+                    <span>서식 적용</span>
                   </span>
                 )}
               </div>
@@ -630,7 +682,7 @@ export function DrawerApp() {
                 onChange={(e) => setPrompt(e.target.value)}
                 placeholder={
                   selectedTemplate
-                    ? `[${selectedTemplate.title}] 서식에 맞추어 작성할 내용을 입력하세요.\n(상단의 '📝 항목 골격 입력창에 넣기'를 눌러 목차별 내용을 직접 채우거나 핵심 메모만 적어도 AI가 서식에 맞춰 완성합니다.)`
+                    ? `[${selectedTemplate.title}] 서식에 맞추어 작성할 내용을 입력하세요.\n(상단의 '골격 넣기'를 눌러 목차별 내용을 직접 채우거나 핵심 메모만 적어도 AI가 서식에 맞춰 완성합니다.)`
                     : selectedRelatedDoc
                     ? `예: 위 참고 문서 [${selectedRelatedDoc.title}]의 지침에 따라 우리 과 사업 안건 제출 공문 초안 작성해줘.`
                     : '예: 2026년 공공 AI 업무혁신 추진계획. 추진배경과 3대 전략을 개조식으로 작성해줘.'
@@ -645,11 +697,20 @@ export function DrawerApp() {
                 {loading ? (
                   <span>AI 초안 작성 중...</span>
                 ) : selectedTemplate ? (
-                  <span>✨ [{selectedTemplate.title}] 서식으로 초안 생성</span>
+                  <span className="flex items-center gap-1.5">
+                    <MaterialIcon name="autoAwesome" size={15} />
+                    <span>[{selectedTemplate.title}] 서식으로 초안 생성</span>
+                  </span>
                 ) : selectedRelatedDoc ? (
-                  <span>✨ 관련정보 참고하여 공문서 초안 생성</span>
+                  <span className="flex items-center gap-1.5">
+                    <MaterialIcon name="autoAwesome" size={15} />
+                    <span>관련정보 참고하여 공문서 초안 생성</span>
+                  </span>
                 ) : (
-                  <span>✨ 공문서 초안 생성</span>
+                  <span className="flex items-center gap-1.5">
+                    <MaterialIcon name="autoAwesome" size={15} />
+                    <span>공문서 초안 생성</span>
+                  </span>
                 )}
               </button>
             </div>
@@ -667,7 +728,7 @@ export function DrawerApp() {
                       ? `AI가 [${selectedTemplate.title}] 서식의 ${selectedTemplate.sections.length}개 주요 항목에 맞추어 작성 중입니다...`
                       : selectedRelatedDoc
                       ? `AI가 참고 문서 [${selectedRelatedDoc.title}]를 반영하여 초안을 작성 중입니다...`
-                      : 'AI가 행정 공문서 표준 서식으로 초안을 작성 중입니다...'}
+                      : 'AI가 공문서 추천 제목과 표준 서식 초안을 작성 중입니다...'}
                   </span>
                 </div>
                 {/* 옅은 스켈레톤 라인 애니메이션 */}
@@ -681,31 +742,72 @@ export function DrawerApp() {
             )}
 
             {/* 결과 표시 영역 */}
-            {generatedDraft && !loading && (
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <span className="font-semibold text-slate-700 flex items-center gap-1.5 flex-wrap">
-                    <span>📄 공문서 초안</span>
-                    {selectedTemplate ? (
-                      <span className="text-[10px] text-blue-800 bg-blue-50 border border-blue-200 px-1 py-0.2 rounded font-bold">
-                        {selectedTemplate.documentType} 서식 적용됨
-                      </span>
-                    ) : (
-                      <span className="text-[10px] text-emerald-700 bg-emerald-50 border border-emerald-200 px-1 py-0.2 rounded font-medium">
-                        표준 서식
+            {(generatedDraft || recommendedTitle) && !loading && (
+              <div className="space-y-2.5">
+                {/* 추천 제목 카드: 사용자가 추가 버튼 클릭 없이 즉시 수정 가능 & '반영' 버튼으로 본 화면 입력 */}
+                <div className="p-2.5 bg-blue-50/70 border border-blue-200 rounded-lg shadow-2xs space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="font-bold text-slate-800 text-[11px] flex items-center gap-1.5">
+                      <MaterialIcon name="label" size={14} className="text-blue-600" />
+                      <span>추천 공문 제목</span>
+                    </label>
+                    {hasAppliedTitle && (
+                      <span className="text-[10px] text-emerald-700 font-semibold bg-emerald-50 border border-emerald-200 px-1.5 py-0.2 rounded flex items-center gap-1">
+                        <MaterialIcon name="check" size={12} />
+                        <span>공문 본 화면 반영됨</span>
                       </span>
                     )}
-                  </span>
-                  <button
-                    onClick={copyToClipboard}
-                    className="text-[11px] text-blue-600 hover:underline font-semibold"
-                  >
-                    📋 서식 복사
-                  </button>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="text"
+                      value={recommendedTitle}
+                      onChange={(e) => {
+                        setRecommendedTitle(e.target.value);
+                        setHasAppliedTitle(false);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleApplyTitle();
+                        }
+                      }}
+                      placeholder="초안에 적합한 공문 제목을 입력하거나 수정하세요"
+                      className="flex-1 px-2.5 py-1.5 bg-white border border-slate-300 rounded text-xs font-semibold text-slate-900 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleApplyTitle}
+                      disabled={!recommendedTitle.trim() || isApplyingTitle}
+                      className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 text-white rounded text-xs font-bold transition shrink-0 flex items-center gap-1 shadow-2xs cursor-pointer"
+                      title="공문 본 화면의 '제목' 필드에 즉시 입력합니다"
+                    >
+                      {isApplyingTitle ? <span>반영 중...</span> : <span>반영</span>}
+                    </button>
+                  </div>
                 </div>
-                <div className="p-3 bg-white border border-slate-300 rounded-lg shadow-sm whitespace-pre-wrap leading-[1.68] max-h-64 overflow-y-auto select-text font-sans text-slate-800 text-[11.5px] tracking-tight">
-                  {generatedDraft}
-                </div>
+
+                {/* 초안 본문 영역 */}
+                {generatedDraft && (
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="font-semibold text-slate-700 flex items-center gap-1.5">
+                        <MaterialIcon name="description" size={14} className="text-slate-600" />
+                        <span>공문서 초안</span>
+                      </span>
+                      <button
+                        onClick={copyToClipboard}
+                        className="text-[11px] text-blue-600 hover:underline font-semibold flex items-center gap-1"
+                      >
+                        <MaterialIcon name="contentCopy" size={12} />
+                        <span>서식 복사</span>
+                      </button>
+                    </div>
+                    <div className="p-3 bg-white border border-slate-300 rounded-lg shadow-sm whitespace-pre-wrap leading-[1.68] max-h-64 overflow-y-auto select-text font-sans text-slate-800 text-[11.5px] tracking-tight">
+                      {generatedDraft}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
@@ -720,7 +822,10 @@ export function DrawerApp() {
           <footer className="p-3 bg-white border-t border-slate-200 space-y-2 shrink-0">
             {isTargetSelecting ? (
               <div className="p-2 bg-blue-50 border border-blue-200 rounded flex items-center justify-between">
-                <span className="text-blue-800 font-semibold text-[11px]">🎯 기안기 화면에서 초안을 넣을 위치를 클릭하세요</span>
+                <span className="text-blue-800 font-semibold text-[11px] flex items-center gap-1.5">
+                  <MaterialIcon name="adsClick" size={14} className="text-blue-600" />
+                  <span>기안기 화면에서 초안을 넣을 위치를 클릭하세요</span>
+                </span>
                 <button
                   onClick={handleCancelClickTarget}
                   className="px-2.5 py-1 bg-white border border-blue-300 text-blue-700 rounded text-[11px] font-semibold hover:bg-blue-100"
@@ -733,10 +838,11 @@ export function DrawerApp() {
                 <button
                   onClick={copyToClipboard}
                   disabled={!generatedDraft || loading}
-                  className="px-4 py-2 border border-slate-300 rounded-md font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40 whitespace-nowrap text-xs shadow-sm transition"
+                  className="px-4 py-2 border border-slate-300 rounded-md font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40 whitespace-nowrap text-xs shadow-sm transition flex items-center gap-1.5"
                   title="정제된 초안을 클립보드에 복사"
                 >
-                  📋 초안 복사
+                  <MaterialIcon name="contentCopy" size={14} />
+                  <span>초안 복사</span>
                 </button>
                 <button
                   onClick={handleStartClickTarget}
@@ -744,7 +850,7 @@ export function DrawerApp() {
                   className="flex-1 py-2 bg-blue-600 text-white rounded-md font-semibold hover:bg-blue-700 disabled:opacity-40 whitespace-nowrap px-3 shadow-sm text-xs flex items-center justify-center gap-1.5 transition"
                   title="원하는 본문이나 입력창을 클릭하여 즉시 삽입합니다."
                 >
-                  <span>🎯</span>
+                  <MaterialIcon name="adsClick" size={15} />
                   <span>클릭한 위치에 삽입</span>
                 </button>
               </div>
@@ -755,7 +861,10 @@ export function DrawerApp() {
           {approvalModal.open && (
             <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-3 z-50">
               <div className="bg-white rounded-lg p-4 max-w-xs w-full space-y-3 shadow-xl border border-slate-200">
-                <h3 className="font-bold text-slate-900 text-sm">⚠️ 본문 삽입 사전 확인</h3>
+                <h3 className="font-bold text-slate-900 text-sm flex items-center gap-1.5">
+                  <MaterialIcon name="warning" size={16} className="text-amber-500" />
+                  <span>본문 삽입 사전 확인</span>
+                </h3>
                 <p className="text-slate-600 text-xs leading-relaxed">
                   기안기 <span className="font-semibold text-blue-600">{approvalModal.targetLabel}</span>에 생성된 초안을 직접 입력합니다.
                 </p>

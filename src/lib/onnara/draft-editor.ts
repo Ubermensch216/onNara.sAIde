@@ -753,6 +753,83 @@ export async function insertViaMainWorldHwp(
 }
 
 /**
+ * 웹페이지 메인 월드(Main World) 컨텍스트에서 한컴 웹기안기(WebHWP)의 현재 선택 텍스트를 조회한다.
+ */
+export async function getViaMainWorldHwpSelection(
+  doc: Document = document
+): Promise<string> {
+  // 1. 서비스 워커(background.ts)를 통한 메인 월드 HwpCtrl 조회 (최우선)
+  if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+    try {
+      const resp = await chrome.runtime.sendMessage({
+        type: 'DRAFT_MAIN_WORLD_HWP_GET_SELECTION',
+      });
+      if (resp && typeof resp.text === 'string' && resp.text.trim()) {
+        return resp.text.trim();
+      }
+    } catch {
+      // background 미응답 시 로컬 탐색 진행
+    }
+  }
+
+  // 2. 현재 윈도우 스코프에서 HwpCtrl 직접 탐색
+  const win = doc.defaultView || (typeof window !== 'undefined' ? window : null);
+  if (win) {
+    try {
+      const directHwp = findHwpCtrlInAllWindows(win);
+      if (directHwp) {
+        if (typeof directHwp.GetSelectedText === 'function') {
+          const s = directHwp.GetSelectedText();
+          if (typeof s === 'string' && s.trim()) return s.trim();
+        }
+      }
+    } catch {}
+  }
+
+  return '';
+}
+
+/**
+ * 웹페이지 메인 월드(Main World) 컨텍스트에서 한컴 웹기안기(WebHWP)의 선택 영역을 새로운 텍스트로 치환한다.
+ */
+export async function replaceViaMainWorldHwp(
+  newText: string,
+  doc: Document = document
+): Promise<{ success: boolean; method?: string; error?: string }> {
+  // 1. 서비스 워커(background.ts)를 통한 메인 월드 치환 실행 (최우선)
+  if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+    try {
+      const resp = await chrome.runtime.sendMessage({
+        type: 'DRAFT_MAIN_WORLD_HWP_REPLACE_SELECTION',
+        text: newText,
+      });
+      if (resp && resp.success) {
+        return resp;
+      }
+    } catch {
+      // background 미응답 시 폴백
+    }
+  }
+
+  // 2. 현재 윈도우 스코프에서 HwpCtrl 직접 치환 시도
+  const win = doc.defaultView || (typeof window !== 'undefined' ? window : null);
+  if (win) {
+    try {
+      const directHwp = findHwpCtrlInAllWindows(win);
+      if (directHwp) {
+        if (typeof directHwp.Run === 'function') {
+          try { directHwp.Run('Delete'); } catch {}
+        }
+        const ok = insertMultilineIntoHwp(directHwp, newText);
+        if (ok) return { success: true, method: 'DirectHwp_DeleteAndInsert' };
+      }
+    } catch {}
+  }
+
+  return { success: false, error: 'HWP_REPLACE_FAILED' };
+}
+
+/**
  * 사용자가 클릭한 위치(요소)에 100% 안전하게 텍스트를 삽입하는 엔진.
  * WebHWP/에디터/텍스트필드에 정확히 주입하며, 일반 layout div는 오염시키지 않고 안전한 클립보드 안내로 폴백한다.
  */

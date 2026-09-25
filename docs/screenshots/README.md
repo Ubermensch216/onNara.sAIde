@@ -19,7 +19,7 @@
 | [**09-briefing-settings.png**](09-briefing-settings.png) | 1120 × 1000 | 공유/공람 브리핑 설정 | `InboxSettings` — 아침 브리핑·브리핑 시각, 대상 화면, 대상 범위와 포함·제외 키워드, 열람 처리(미열람 유지), 보관 기간 |
 | [**04-memory.png**](04-memory.png) | 1120 × 1000 | 로컬 기억 및 지식 저장소 | `MemoryPanel` — IndexedDB 벡터 저장소 목록과 보관 기간 |
 | [**05-presets.png**](05-presets.png) | 1120 × 1000 | 프롬프트 프리셋 편집기 | `PresetEditor` — 공문요약/조치사항/회신초안/공문교정 프리셋 |
-| [**10-drafter.png**](10-drafter.png) | 520 × 940 | 공문서 기안기 (인페이지 드로어 초안 작성) | `DrawerApp` — 공문서 서식 선택, 참고문서(관련정보) 자동 연동 및 요약, 표준 공문서 서식 초안 생성, 원클릭 복사 및 클릭 타깃 삽입 |
+| [**10-drafter.png**](10-drafter.png) | 520 × 940 | 온나라 공문서 기안 도우미 (사이드카 드로어 초안 작성) | `DrawerApp` — 공문서 서식 선택, 참고문서(관련정보) 자동 연동 및 요약, 추천 공문 제목 추출 및 본 화면 반영, 표준 공문서 서식 초안 생성, 원클릭 복사 및 클릭 타깃 삽입 |
 | [**11-template-manager.png**](11-template-manager.png) | 520 × 940 | 공문서 서식 관리자 (Template Manager) | `TemplateManager` — 4대 표준 서식(업무보고, 기본 계획서, 구축 계획서, 언론 보도) 및 사용자 정의 서식 등록·검색·복원 |
 
 README 상단의 [**infographic.png**](../infographic.png)(1200 × 1360)은 위의 `01-chat.png`·`06-automation.png`를 품은 소개용 포스터이며, 생성 원본은 [`scripts/generate-infographic.html`](../../scripts/generate-infographic.html)입니다.

@@ -43,7 +43,8 @@ export type DraftRequest =
   | { type: 'DRAFT_FETCH_RELATED_DOC'; doc: RelatedDocInfo }
   | { type: 'SAIDE_START_CLICK_TARGET'; text: string }
   | { type: 'SAIDE_CANCEL_CLICK_TARGET' }
-  | { type: 'SAIDE_INSERT_LAST_FOCUSED'; text: string };
+  | { type: 'SAIDE_INSERT_LAST_FOCUSED'; text: string }
+  | { type: 'DRAFT_APPLY_TITLE'; title: string };
 
 export type DraftResponse =
   | {
@@ -102,6 +103,13 @@ export type DraftResponse =
       type: 'SAIDE_FOCUS_STATUS';
       hasFocus: boolean;
       targetLabel?: string;
+    }
+  | {
+      type: 'DRAFT_APPLY_TITLE_RESULT';
+      success: boolean;
+      title: string;
+      message: string;
+      fallbackCopied?: boolean;
     };
 
 /** TargetRef 유효성 검사 */

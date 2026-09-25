@@ -59,4 +59,38 @@ describe('selection-bubble', () => {
     bubble.destroy();
     ta.remove();
   });
+
+  it('문서카드 화면의 제목 입력창에서 텍스트를 선택해도 블럭 메뉴가 노출되지 않는다', async () => {
+    const bubble = createSelectionBubble();
+    document.body.appendChild(bubble.element);
+
+    // 문서카드 화면 환경: [본문작성] 버튼과 제목 입력창 존재
+    const writeBtn = document.createElement('button');
+    writeBtn.textContent = '본문작성';
+    writeBtn.getBoundingClientRect = () => ({ width: 80, height: 30, top: 0, left: 0, right: 80, bottom: 30, x: 0, y: 0, toJSON: () => ({}) });
+    document.body.appendChild(writeBtn);
+
+    const titleInput = document.createElement('input');
+    titleInput.name = 'docTitle';
+    titleInput.value = '「2026 부산 웰니스관광지 신규 발굴 선정 등 공고」 안내 및 협조 요청';
+    document.body.appendChild(titleInput);
+
+    titleInput.focus();
+    titleInput.selectionStart = 15;
+    titleInput.selectionEnd = 24; // '신규 발굴 선정 등 공고'
+
+    const unbind = bubble.bindEvents(document);
+    document.dispatchEvent(new Event('selectionchange'));
+
+    // 타이머 대기
+    await new Promise(r => setTimeout(r, 200));
+
+    // 블럭 메뉴가 열리지 않아야 함!
+    expect(bubble.element.style.display).toBe('none');
+
+    unbind();
+    bubble.destroy();
+    writeBtn.remove();
+    titleInput.remove();
+  });
 });

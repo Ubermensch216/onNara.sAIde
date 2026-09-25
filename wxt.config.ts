@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { defineConfig } from 'wxt';
 import tailwindcss from '@tailwindcss/vite';
@@ -29,7 +29,20 @@ export default defineConfig({
         for (const chunk of step.chunks) {
           if (!/\.m?js$/.test(chunk.fileName)) continue;
           const fullPath = resolve(wxt.config.outDir, chunk.fileName);
-          const source = readFileSync(fullPath, 'utf8');
+          if (!existsSync(fullPath)) continue;
+          let source = '';
+          for (let attempt = 0; attempt < 5; attempt++) {
+            try {
+              source = readFileSync(fullPath, 'utf8');
+              break;
+            } catch (err: any) {
+              if ((err.code === 'EBUSY' || err.code === 'EPERM') && attempt < 4) {
+                Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 150);
+                continue;
+              }
+              throw err;
+            }
+          }
           const escaped = source.replace(
             /[\uFDD0-\uFDEF\uFFFE\uFFFF]|[\uD800-\uDBFF][\uDFFE\uDFFF]/g,
             character => Array.from({ length: character.length }, (_, i) =>
@@ -37,7 +50,18 @@ export default defineConfig({
             ).join('')
           );
           if (escaped !== source) {
-            writeFileSync(fullPath, escaped, 'utf8');
+            for (let attempt = 0; attempt < 5; attempt++) {
+              try {
+                writeFileSync(fullPath, escaped, 'utf8');
+                break;
+              } catch (err: any) {
+                if ((err.code === 'EBUSY' || err.code === 'EPERM') && attempt < 4) {
+                  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 150);
+                  continue;
+                }
+                throw err;
+              }
+            }
           }
         }
       }

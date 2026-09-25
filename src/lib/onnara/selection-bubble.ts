@@ -7,6 +7,7 @@
 
 import {
   captureActiveSelection,
+  captureWebHwpSelection,
   replaceSelectedText,
   calculateBubblePosition,
   type SelectionInfo,
@@ -587,16 +588,28 @@ export function createSelectionBubble(
   function bindEvents(doc: Document): () => void {
     let timer: any = null;
 
-    const handleSelectionChange = () => {
+    const handleSelectionChange = (e?: Event) => {
       if (isLoading) return; // 로딩 중에는 선택 변경으로 닫히지 않음
       if (timer) clearTimeout(timer);
 
-      timer = setTimeout(() => {
+      timer = setTimeout(async () => {
         // 이미 툴바 내부를 조작 중이면 무시
         const shadowRoot = wrapper.getRootNode() as ShadowRoot;
         if (wrapper.contains(doc.activeElement) || shadowRoot.activeElement === wrapper || (shadowRoot.activeElement && wrapper.contains(shadowRoot.activeElement))) return;
 
-        const sel = captureActiveSelection(doc);
+        const targetEl = (e?.target as HTMLElement) || (doc.activeElement as HTMLElement | null);
+        let sel = captureActiveSelection(doc, targetEl);
+
+        // DOM 선택이 없고 본문작성 에디터(WebHWP) 환경이면 WebHWP 비동기 선택 조회
+        if (!sel && e && (e.type === 'mouseup' || e.type === 'selectionchange')) {
+          const mouseEvent = (e instanceof MouseEvent) ? e : undefined;
+          sel = await captureWebHwpSelection(
+            doc,
+            mouseEvent ? { clientX: mouseEvent.clientX, clientY: mouseEvent.clientY } : undefined,
+            targetEl
+          );
+        }
+
         if (sel) {
           showAtSelection(sel);
         } else {

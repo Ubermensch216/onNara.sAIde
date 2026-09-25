@@ -11,6 +11,7 @@ import { DraftTransactionController } from '@/lib/onnara/draft-controller';
 import { findWriteBodyButton, isExactDraftPath } from '@/lib/onnara/draft-route';
 import { DRAWER_GAP_PX, applyPageLayoutShift } from '@/lib/onnara/drawer-layout';
 import { createSelectionBubble } from '@/lib/onnara/selection-bubble';
+import { applyDraftTitleToDom } from '@/lib/onnara/draft-title';
 
 const SELECTION_BRIDGE_REQUEST = 'SAIDE_SELECTION_BUBBLE_REQUEST';
 const SELECTION_BRIDGE_READY = 'SAIDE_SELECTION_BUBBLE_READY';
@@ -66,29 +67,20 @@ declare global {
 }
 
 export default defineUnlistedScript(() => {
-  // 하위 프레임에서도 선택 툴바를 쓸 수 있도록 최상위 프레임의 허가 응답을 기다린다.
-  // 편집기가 교차 출처 iframe이어도 해당 프레임 자체에서 Selection을 읽고 표시한다.
   if (window.self !== window.top) {
-    let attempts = 0;
-    let initialized = false;
-    const requestTimer = window.setInterval(() => {
-      if (initialized || ++attempts > 60) {
-        window.clearInterval(requestTimer);
-        return;
-      }
-      try {
-        window.top?.postMessage({ type: SELECTION_BRIDGE_REQUEST }, '*');
-      } catch {
-        // ignore
-      }
-    }, 400);
+    let topAccessible = false;
+    try {
+      topAccessible = Boolean(window.top && window.top.document);
+    } catch {
+      topAccessible = false;
+    }
 
-    window.addEventListener('message', (event: MessageEvent) => {
-      if (initialized || event.source !== window.top || event.data?.type !== SELECTION_BRIDGE_READY) return;
-      initialized = true;
-      window.clearInterval(requestTimer);
+    // 동일 출처의 상위 프레임이 존재하는 경우 최상위 오버레이가 iframes를 직접 감시하여
+    // 잘림 없는 전체 뷰포트에 버블을 플로팅하므로 중복 마운트를 방지한다.
+    // 교차 출처(Cross-origin)이거나 독립 프레임인 경우에만 자체 버블을 마운트한다.
+    if (!topAccessible) {
       mountFrameSelectionBubble(document);
-    });
+    }
     return;
   }
 
@@ -520,9 +512,33 @@ export default defineUnlistedScript(() => {
     });
     shadow.appendChild(selectionBubble.element);
 
-    // 최상위 문서는 최상위 오버레이가 처리한다. 각 하위 프레임은 자체 콘텐츠 스크립트가
-    // 선택을 읽고 프레임 좌표계에 맞춰 오버레이를 표시한다.
+    // 최상위 문서는 최상위 오버레이가 처리한다.
     selectionBubble.bindEvents(document);
+
+    // 하위 프레임(본문 에디터 iframe 등)도 최상위 오버레이에서 감지하여
+    // iframe 잘림(overflow: hidden 등) 없이 최상위 뷰포트에 완벽하게 플로팅 표시
+    const boundChildFrames = new WeakSet<Document>();
+    function observeAndBindFrames() {
+      const iframes = Array.from(document.querySelectorAll('iframe'));
+      for (const ifr of iframes) {
+        try {
+          const fDoc = ifr.contentDocument;
+          if (fDoc && !boundChildFrames.has(fDoc)) {
+            boundChildFrames.add(fDoc);
+            selectionBubble.bindEvents(fDoc);
+          }
+        } catch {
+          // cross-origin
+        }
+      }
+    }
+    observeAndBindFrames();
+    const frameObserver = new MutationObserver(observeAndBindFrames);
+    const rootEl = document.body || document.documentElement;
+    if (rootEl) {
+      frameObserver.observe(rootEl, { childList: true, subtree: true });
+    }
+    setInterval(observeAndBindFrames, 1000);
   } catch (err) {
     console.warn('[sAIde] selectionBubble initialization failed:', err);
   }
@@ -1073,6 +1089,67 @@ export default defineUnlistedScript(() => {
         },
         '*'
       );
+    } else if (msg.type === 'DRAFT_APPLY_TITLE' && typeof msg.title === 'string') {
+      const titleToApply = msg.title.trim();
+      let applied = false;
+      let methodUsed = '';
+
+      // 1. 서비스워커를 통해 메인 월드(HwpCtrl 누름틀 및 모든 프레임 DOM) 주입 시도
+      if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+        try {
+          const bgRes = await new Promise<{ success: boolean; method?: string }>((resolve) => {
+            chrome.runtime.sendMessage(
+              { type: 'DRAFT_MAIN_WORLD_HWP_TITLE', title: titleToApply },
+              (resp) => resolve(resp || { success: false })
+            );
+          });
+          if (bgRes && bgRes.success) {
+            applied = true;
+            methodUsed = bgRes.method || 'Background';
+          }
+        } catch {}
+      }
+
+      // 2. 현재 프레임 DOM 직접 주입 시도
+      if (!applied) {
+        const domRes = applyDraftTitleToDom(document, titleToApply);
+        if (domRes.success) {
+          applied = true;
+          methodUsed = domRes.method || 'LocalDOM';
+        }
+      }
+
+      if (applied) {
+        iframe.contentWindow?.postMessage(
+          {
+            type: 'DRAFT_APPLY_TITLE_RESULT',
+            success: true,
+            title: titleToApply,
+            message: '공문 본 화면의 제목 필드에 반영되었습니다.',
+          },
+          '*'
+        );
+      } else {
+        // 3. 필드를 못 찾았을 경우 클립보드 폴백 복사
+        let copied = false;
+        try {
+          await navigator.clipboard.writeText(titleToApply);
+          copied = true;
+        } catch {}
+
+        iframe.contentWindow?.postMessage(
+          {
+            type: 'DRAFT_APPLY_TITLE_RESULT',
+            success: false,
+            fallbackCopied: copied,
+            title: titleToApply,
+            message: copied
+              ? '제목 필드를 자동으로 찾지 못해 제목을 복사했습니다. (제목 칸에 Ctrl+V로 붙여넣기)'
+              : '공문 본 화면에서 제목 입력 필드를 찾지 못했습니다.',
+          },
+          '*'
+        );
+      }
     }
   });
 

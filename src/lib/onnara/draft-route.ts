@@ -163,3 +163,123 @@ export function classifyDraftRoute(
 
   return { status: 'pending', reason: 'DOM 신호 검증 대기 중' };
 }
+
+/**
+ * 주어진 요소가 온나라 기안기 '문서카드'의 메타데이터 필드(단위관리, 제목, 키워드, 요약 등)인지 판별.
+ * 블럭 메뉴(Bubble Menu)는 본문작성 영역에만 적용되어야 하므로, 메타데이터 필드 선택 시에는 절대 노출되지 않아야 한다.
+ */
+export function isMetadataField(el: HTMLElement | null): boolean {
+  if (!el) return false;
+
+  const tag = el.tagName.toLowerCase();
+  const name = (el.getAttribute('name') || '').toLowerCase();
+  const id = (el.id || '').toLowerCase();
+  const cls = (typeof el.className === 'string' ? el.className : '').toLowerCase();
+  const placeholder = ((el as HTMLInputElement).placeholder || '').toLowerCase();
+
+  // 1. 온나라 문서카드 주요 필드명 및 ID 패턴
+  const metadataPatterns = [
+    'title', 'doctitle', 'reporttitle', 'subject',
+    'keyword', 'searchkeyword',
+    'summary', 'docsummary', 'txtsummary',
+    'unittask', 'taskname', 'taskid',
+    'deptname', 'userdept', 'drafter', 'author',
+    'publicyn', 'openlevel', 'urgency', 'seclevel',
+    'docnum', 'sender', 'receiver'
+  ];
+
+  if (metadataPatterns.some(pat => name.includes(pat) || id.includes(pat))) {
+    return true;
+  }
+
+  // placeholder 검사
+  if (placeholder.includes('제목') || placeholder.includes('키워드') || placeholder.includes('요약') || placeholder.includes('단위관리')) {
+    return true;
+  }
+
+  // 2. 문서카드 전용 폼/컨테이너 내부의 입력 필드인지 검사
+  const cardContainer = el.closest(
+    '#reportForm, #docCard, #divDocCard, .docCard, #formDocCard, form[name="reportForm"], table.tbl_doc_card, .tb_docinfo, #div_doccard, #cardForm, #docInfoArea'
+  );
+  if (cardContainer) {
+    if (tag === 'input' || tag === 'textarea' || tag === 'select' || (tag === 'div' && !cls.includes('editor') && !id.includes('editor'))) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * 현재 기안기 화면이 '문서카드' 화면(메타데이터 입력 화면)인지 판별.
+ * - [본문작성] 버튼이 존재하고 눈에 보이거나
+ * - 문서카드 폼(#reportForm 등)이 활성화되어 있고 본문 에디터가 없는 상태
+ */
+export function isDraftCardScreen(doc: Document = document): boolean {
+  // 1. [본문작성] 버튼이 존재하고 눈에 보이는 상태면 무조건 문서카드 화면이다.
+  const writeBodyBtn = findWriteBodyButton(doc);
+  if (writeBodyBtn) {
+    try {
+      const rect = writeBodyBtn.getBoundingClientRect();
+      const style = doc.defaultView?.getComputedStyle(writeBodyBtn);
+      const isVisible = !(rect.width === 0 && rect.height === 0) && style?.display !== 'none' && style?.visibility !== 'hidden';
+      if (isVisible) return true;
+    } catch {
+      return true;
+    }
+  }
+
+  // 2. 문서카드 폼이 화면에 표시되어 있고 본문 에디터가 없는 상태
+  const cardForm = doc.querySelector('#reportForm, #docCard, #divDocCard, form[name="reportForm"], table.tbl_doc_card');
+  const hwpCtrl = doc.querySelector('#hwpCtrl, #HwpCtrl, #tbContentElement, canvas.webhwp_canvas');
+  if (cardForm && !hwpCtrl) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * 현재 기안기 화면이 '본문작성' 화면인지 판별.
+ * 첫 번째 첨부 이미지처럼 '문서카드' 상태에서는 false,
+ * 두 번째 첨부 이미지처럼 '본문작성' 에디터가 활성화된 상태에서는 true를 반환한다.
+ */
+export function isBodyWritingScreen(doc: Document = document): boolean {
+  // 1. 문서카드 화면이면 본문작성 화면이 아님
+  if (isDraftCardScreen(doc)) {
+    return false;
+  }
+
+  // 2. 본문작성 화면 전용 상단 액션 버튼들 (두 번째 첨부 이미지 상단 참조)
+  // [문서카드] (본문작성 화면에서 문서카드로 돌아가는 버튼), [본문저장], [본문(검정변환)], [표준기안문], [서식참조], [미리보기]
+  const allButtons = Array.from(doc.querySelectorAll<HTMLElement>('button, a, input[type="button"], .btn'));
+  const bodyActionKeywords = ['문서카드', '본문저장', '본문(검정변환)', '표준기안문', '서식참조'];
+  const hasBodyActionButtons = allButtons.some(b => {
+    const text = (b.textContent || (b as HTMLInputElement).value || '').replace(/\s+/g, '');
+    return bodyActionKeywords.some(kw => text.includes(kw));
+  });
+
+  // 3. 한글 기안기(WebHWP, HwpCtrl) 컨트롤 및 에디터 요소 탐색
+  const hasHwp = Boolean(
+    doc.querySelector(
+      '#hwpCtrl, #HwpCtrl, #tbContentElement, object[type*="hwp"], embed[type*="hwp"], canvas.webhwp_canvas, .webhwp-container, .hwp-menubar, .hwp_toolbar, iframe[name*="body"], iframe[id*="body"], iframe[src*="body"], iframe[src*="hwp"]'
+    )
+  );
+
+  // 4. 에디터 툴바 메뉴 텍스트 (보기, 입력, 서식, 쪽, 표)
+  const hasHwpToolbarMenu = allButtons.some(b => {
+    const text = (b.textContent || '').trim();
+    return text === '보기' || text === '입력' || text === '서식' || text === '쪽' || text === '표';
+  });
+
+  // 5. 프레임 URL이 본문작성 전용 .do 경로인 경우
+  const path = (doc.location?.pathname || '').toLowerCase();
+  const isBodyUrl = /(?:addhwpbody|modifyhwpbody|hwpctrl|webhwp|viewbody|draftbody)/i.test(path);
+
+  // 하위 프레임인 경우
+  if (doc.defaultView && doc.defaultView !== doc.defaultView.top) {
+    if (isBodyUrl || hasHwp) return true;
+  }
+
+  return hasBodyActionButtons || hasHwp || hasHwpToolbarMenu || isBodyUrl;
+}

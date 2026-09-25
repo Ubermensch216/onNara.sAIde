@@ -4,6 +4,7 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { DEFAULT_SETTINGS } from '@/lib/storage/settings';
+import '@/entrypoints/drawer-page/style.css';
 
 const mode = new URLSearchParams(location.search).get('view') || 'panel';
 window.addEventListener('unhandledrejection', event => {
@@ -315,6 +316,7 @@ if (mode.startsWith('options') || OPTION_VIEWS.includes(mode)) {
           window.postMessage({
             type: 'SAIDE_SET_DRAFT_PREVIEW',
             templateId: 'builtin-work-report',
+            recommendedTitle: '2026년도 인공지능 행정업무 시범사업 추진계획 수립의 건',
             prompt: '수신 공문 지침에 따라 2026년도 인공지능 행정업무 시범사업 추진계획 업무보고 초안을 작성해줘.',
             draft: `1. 추진 목적
   가. 인공지능 행정업무 시범사업 추진계획에 따른 지자체 행정 효율성 제고
