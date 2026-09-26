@@ -213,6 +213,22 @@ export async function transformTextWithAI(
     },
   };
 
+  // 콘텐츠 스크립트에서는 페이지 origin의 CORS 정책 때문에
+  // localhost:11434(Ollama)로 직접 fetch 할 수 없다.
+  // background 서비스 워커를 경유하여 요청한다.
+  if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+    const resp = await chrome.runtime.sendMessage({
+      type: 'BUBBLE_TRANSFORM_AI',
+      endpoint: settings.endpoint,
+      body: requestBody,
+    });
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+    if (resp?.error) throw new Error(resp.error);
+    const rawOutput = resp?.result || '';
+    return cleanAdminDraft(rawOutput);
+  }
+
+  // chrome.runtime이 없는 환경(테스트 등)에서는 직접 fetch
   const response = await fetch(`${settings.endpoint}/api/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

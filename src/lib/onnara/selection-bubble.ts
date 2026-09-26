@@ -590,12 +590,32 @@ export function createSelectionBubble(
 
     const handleSelectionChange = (e?: Event) => {
       if (isLoading) return; // 로딩 중에는 선택 변경으로 닫히지 않음
+
+      // 버블 메뉴 내부 클릭(문장 다듬기 드롭다운 등)이면 선택 변경 처리 건너뜀
+      if (e) {
+        const path = typeof (e as any).composedPath === 'function' ? (e as any).composedPath() : [];
+        const evtTarget = e.target as Node | null;
+        if (
+          (evtTarget && wrapper.contains(evtTarget)) ||
+          path.includes(wrapper) ||
+          path.some((item: any) => Boolean(item?.nodeType && wrapper.contains(item as Node)))
+        ) {
+          return;
+        }
+      }
+
+      // 드롭다운이 열려 있거나 프리뷰/로딩 UI가 활성 중이면 닫지 않음
+      if (isDropdownOpen || pendingResult) return;
+
       if (timer) clearTimeout(timer);
 
       timer = setTimeout(async () => {
         // 이미 툴바 내부를 조작 중이면 무시
         const shadowRoot = wrapper.getRootNode() as ShadowRoot;
         if (wrapper.contains(doc.activeElement) || shadowRoot.activeElement === wrapper || (shadowRoot.activeElement && wrapper.contains(shadowRoot.activeElement))) return;
+
+        // 드롭다운/프리뷰가 타이머 대기 중에 열렸을 수 있으므로 재확인
+        if (isDropdownOpen || pendingResult || isLoading) return;
 
         let targetEl: HTMLElement | null = null;
         if (e?.target && (e.target as any).nodeType === 1) {

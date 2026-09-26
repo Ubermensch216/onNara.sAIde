@@ -1150,6 +1150,29 @@ export default defineBackground(() => {
         return true;
       }
     }
+    // 블록 메뉴 AI 변환 — 콘텐츠 스크립트 대신 서비스 워커가 Ollama를 호출
+    if (msg && typeof msg === 'object' && (msg as any).type === 'BUBBLE_TRANSFORM_AI') {
+      const endpoint = String((msg as any).endpoint || 'http://localhost:11434');
+      const body = (msg as any).body;
+      (async () => {
+        try {
+          const response = await fetch(`${endpoint}/api/chat`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          });
+          if (!response.ok) {
+            sendResponse({ error: `Ollama 통신 오류 (${response.status})` });
+            return;
+          }
+          const json = await response.json();
+          sendResponse({ result: json.message?.content || '' });
+        } catch (err: any) {
+          sendResponse({ error: err?.message || 'AI 변환 요청 실패' });
+        }
+      })();
+      return true; // 비동기 응답
+    }
     if (!trustedPanel(sender)) return false;
     if (!validPanelRequest(msg)) {
       sendResponse({ type: 'ERROR', error: { code: 'ACTION_DENIED', message: '유효하지 않거나 만료된 요청입니다.' } });
