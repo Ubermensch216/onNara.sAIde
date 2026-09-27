@@ -266,6 +266,9 @@ export default defineUnlistedScript(() => {
     .saide-drawer.open {
       transform: translateX(0);
     }
+    :host(:has(.saide-drawer.open)) .saide-launcher {
+      display: none !important;
+    }
 
     /* 리사이즈 핸들 */
     .saide-resize-handle {
@@ -544,7 +547,7 @@ export default defineUnlistedScript(() => {
         iframe.src = chrome.runtime.getURL('drawer-page.html');
       }
       drawer.classList.add('open');
-      launcher.style.display = 'none';
+      launcher.style.setProperty('display', 'none', 'important');
 
       // 1. 본 화면 레이아웃 우측 여백 확보 (36px 안전 Gap 포함으로 본 화면 가림 100% 방지)
       applyPageLayoutShift(true, drawerWidth, DRAWER_GAP_PX);
@@ -563,7 +566,7 @@ export default defineUnlistedScript(() => {
       setTimeout(syncContextToIframe, 350);
     } else {
       drawer.classList.remove('open');
-      launcher.style.display = 'flex';
+      launcher.style.setProperty('display', 'flex', 'important');
       setLauncherPosition(launcherTop);
 
       // 1. 본 화면 레이아웃 복원

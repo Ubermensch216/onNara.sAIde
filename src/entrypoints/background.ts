@@ -462,7 +462,7 @@ async function handleMainWorldHwpGetSelection(tabId: number): Promise<{ text: st
       func: async () => {
         return new Promise<string>((resolve) => {
           try {
-            function findHwpInWindow(w: any) {
+            function findHwpInWindow(w: any): any {
               if (!w) return null;
               try {
                 var candidates = [
@@ -639,15 +639,16 @@ async function handleMainWorldHwpGetSelection(tabId: number): Promise<{ text: st
  */
 async function handleMainWorldHwpReplaceSelection(
   tabId: number,
-  newText: string
+  newText: string,
+  expectedSelectionText: string
 ): Promise<{ success: boolean; method?: string; error?: string }> {
   try {
     const results = await chrome.scripting.executeScript({
       target: { tabId, allFrames: true },
       world: 'MAIN',
-      func: (replaceText: string) => {
+      func: async (replaceText: string, expectedText: string) => {
         try {
-          function findHwpInWindow(w: any) {
+          function findHwpInWindow(w: any): any {
             if (!w) return null;
             try {
               var candidates = [
@@ -675,12 +676,6 @@ async function handleMainWorldHwpReplaceSelection(
                     if (typeof el.InsertText === 'function' || typeof el.Run === 'function' || typeof el.CreateAction === 'function') {
                       return el;
                     }
-                    if (el.contentWindow) {
-                      try {
-                        var cwHwp = findHwpInWindow(el.contentWindow);
-                        if (cwHwp) return cwHwp;
-                      } catch (e) {}
-                    }
                   }
                 }
               }
@@ -688,42 +683,57 @@ async function handleMainWorldHwpReplaceSelection(
             return null;
           }
 
-          function findHwp() {
-            var w = window as any;
-            if (!w) return null;
-            var direct = findHwpInWindow(w);
-            if (direct) return direct;
-            if (w.frames) {
-              for (var f = 0; f < w.frames.length; f++) {
+          var w = window as any;
+          if (!w) return { success: false, error: 'NO_WINDOW' };
+          // allFrames: true 이므로 다른 프레임의 HwpCtrl을 교차 탐색하지 않고, 오직 현재 프레임의 HwpCtrl만 직접 제어한다.
+          var h = findHwpInWindow(w);
+          if (!h) return { success: false, error: 'NO_LOCAL_HWP' };
+
+          // 포커스가 버블로 이동해 선택이 풀렸다면 현재 커서에 쓰지 않는다.
+          async function readSelectedText(ctrl: any): Promise<string> {
+            if (typeof ctrl.GetTextFile === 'function') {
+              const value = await new Promise<string>((resolve) => {
+                let done = false;
+                const finish = (result: any) => {
+                  if (done) return;
+                  done = true;
+                  clearTimeout(timer);
+                  resolve(typeof result === 'string' ? result : (result?.data || result?.result || result?.text || ''));
+                };
+                const timer = setTimeout(() => finish(''), 800);
                 try {
-                  var fw = w.frames[f];
-                  var fHwp = findHwpInWindow(fw);
-                  if (fHwp) return fHwp;
-                } catch (e) {}
-              }
+                  const result = ctrl.GetTextFile('TEXT', 'saveblock', finish);
+                  if (typeof result === 'string') finish(result);
+                  else if (result && typeof result.then === 'function') result.then(finish).catch(() => finish(''));
+                } catch { finish(''); }
+              });
+              if (value.trim()) return value;
             }
-            try {
-              if (w.parent && w.parent !== w) {
-                var pHwp = findHwpInWindow(w.parent);
-                if (pHwp) return pHwp;
-              }
-            } catch (e) {}
-            return null;
+            if (typeof ctrl.GetSelectedText === 'function') {
+              try { return String(ctrl.GetSelectedText() || ''); } catch {}
+            }
+            return '';
+          }
+          const normalize = (value: string) => value.replace(/\r\n?/g, '\n').trim();
+          if (!expectedText || normalize(await readSelectedText(h)) !== normalize(expectedText)) {
+            return { success: false, error: 'SELECTION_CHANGED' };
           }
 
-          var h = findHwp();
-          if (!h) return { success: false, error: 'NO_HWP' };
+          // 동일 컨트롤에 대한 1.5초 내 중복 치환 차단 (다중 프레임 및 중복 이벤트 원천 차단)
+          var now = Date.now();
+          if (h.__saide_last_replaced && now - h.__saide_last_replaced < 1500) {
+            return { success: false, error: 'DUPLICATE_REPLACE' };
+          }
+          h.__saide_last_replaced = now;
 
           // 1. 선택 블록 삭제 (Delete 액션)
+          var deleted = false;
           if (typeof h.Run === 'function') {
-            try {
-              h.Run('Delete');
-            } catch (e) {}
+            try { deleted = h.Run('Delete') !== false; } catch (e) {}
           } else if (h.HAction && typeof h.HAction.Run === 'function') {
-            try {
-              h.HAction.Run('Delete');
-            } catch (e) {}
+            try { deleted = h.HAction.Run('Delete') !== false; } catch (e) {}
           }
+          if (!deleted) return { success: false, error: 'DELETE_FAILED' };
 
           // 2. 다중 행 줄바꿈(BreakPara) 보존 삽입
           function insertLines(hwp: any, str: string) {
@@ -783,19 +793,12 @@ async function handleMainWorldHwpReplaceSelection(
             return { success: true, method: 'DeleteAndInsertLines' };
           }
 
-          if (typeof h.Run === 'function') {
-            try {
-              h.Run('Paste');
-              return { success: true, method: 'DeleteAndPaste' };
-            } catch (e) {}
-          }
-
           return { success: false, error: 'NO_VALID_INSERT' };
         } catch (err) {
           return { success: false, error: String(err) };
         }
       },
-      args: [newText],
+      args: [newText, expectedSelectionText],
     });
 
     for (const r of results ?? []) {
@@ -1113,7 +1116,7 @@ export default defineBackground(() => {
     if (msg && typeof msg === 'object' && (msg as any).type === 'DRAFT_MAIN_WORLD_HWP_REPLACE_SELECTION') {
       const tabId = sender.tab?.id;
       if (tabId) {
-        handleMainWorldHwpReplaceSelection(tabId, String((msg as any).text || ''))
+        handleMainWorldHwpReplaceSelection(tabId, String((msg as any).text || ''), String((msg as any).expectedSelectionText || ''))
           .then(res => sendResponse(res))
           .catch(err => sendResponse({ success: false, error: String(err) }));
         return true;

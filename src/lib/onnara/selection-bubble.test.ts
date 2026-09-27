@@ -3,6 +3,38 @@ import { describe, expect, it, vi } from 'vitest';
 import { createSelectionBubble } from './selection-bubble';
 
 describe('selection-bubble', () => {
+  it('버블 메뉴의 포인터 조작이 편집기 선택 블럭의 포커스를 빼앗지 않는다', async () => {
+    const bubble = createSelectionBubble();
+    document.body.appendChild(bubble.element);
+    const saveBtn = document.createElement('button');
+    saveBtn.textContent = '본문저장';
+    document.body.appendChild(saveBtn);
+    const ta = document.createElement('textarea');
+    ta.value = '선택한 문장을 다듬는다';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.setSelectionRange(0, 7);
+
+    const unbind = bubble.bindEvents(document);
+    document.dispatchEvent(new Event('selectionchange'));
+    await new Promise(r => setTimeout(r, 220));
+    expect(bubble.element.style.display).toBe('block');
+
+    const menu = bubble.element.querySelector<HTMLButtonElement>('#btnPolishMenu')!;
+    const down = new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0 });
+    menu.dispatchEvent(down);
+    expect(down.defaultPrevented).toBe(true);
+    menu.click();
+    expect(ta.selectionStart).toBe(0);
+    expect(ta.selectionEnd).toBe(7);
+    expect(bubble.element.querySelector<HTMLElement>('#dropdownPolish')?.style.display).toBe('flex');
+
+    unbind();
+    bubble.destroy();
+    ta.remove();
+    saveBtn.remove();
+  });
+
   it('버블 엘리먼트가 초기 상태에서는 숨겨져 있다', () => {
     const bubble = createSelectionBubble();
     expect(bubble.element.style.display).toBe('none');
@@ -333,6 +365,136 @@ describe('selection-bubble', () => {
     para.remove();
     selObj?.removeAllRanges();
   });
-});
 
+  it('프리뷰 카드에서 앞에 삽입, 뒤에 삽입, 대체하기(Enter) 3가지 적용 옵션 버튼이 제공된다', async () => {
+    const bubble = createSelectionBubble();
+    document.body.appendChild(bubble.element);
+
+    const ta = document.createElement('textarea');
+    ta.value = '문서 초안 작성 중';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.selectionStart = 3;
+    ta.selectionEnd = 5; // '초안'
+
+    const cardBtn = document.createElement('button');
+    cardBtn.textContent = '문서카드';
+    const saveBtn = document.createElement('button');
+    saveBtn.textContent = '본문저장';
+    document.body.appendChild(cardBtn);
+    document.body.appendChild(saveBtn);
+
+    const unbind = bubble.bindEvents(document);
+    document.dispatchEvent(new Event('selectionchange'));
+    await new Promise((r) => setTimeout(r, 220));
+
+    // 번호 매기기로 프리뷰 카드 즉시 열기
+    const btnNumber = bubble.element.querySelector<HTMLButtonElement>('#btnAutoNumber')!;
+    btnNumber.click();
+
+    const preview = bubble.element.querySelector<HTMLElement>('#bubblePreview')!;
+    expect(preview.style.display).toBe('block');
+
+    const btnApply = preview.querySelector<HTMLButtonElement>('#btnPreviewApply');
+    const btnBefore = preview.querySelector<HTMLButtonElement>('#btnPreviewInsertBefore');
+    const btnAfter = preview.querySelector<HTMLButtonElement>('#btnPreviewInsertAfter');
+
+    expect(btnApply).not.toBeNull();
+    expect(btnBefore).not.toBeNull();
+    expect(btnAfter).not.toBeNull();
+    expect(btnApply?.textContent).toContain('대체하기');
+    expect(btnBefore?.textContent).toContain('앞에 삽입');
+    expect(btnAfter?.textContent).toContain('뒤에 삽입');
+
+    unbind();
+    bubble.destroy();
+    ta.remove();
+    cardBtn.remove();
+    saveBtn.remove();
+  });
+
+  it('프리뷰 카드에서 "앞에 삽입" 클릭 시 선택 영역 앞에 텍스트를 삽입하고 창을 닫는다', async () => {
+    const showToast = vi.fn();
+    const bubble = createSelectionBubble({ showToast });
+    document.body.appendChild(bubble.element);
+
+    const ta = document.createElement('textarea');
+    ta.value = '신규 사업 계획';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.selectionStart = 6;
+    ta.selectionEnd = 8; // '계획'
+
+    const cardBtn = document.createElement('button');
+    cardBtn.textContent = '문서카드';
+    const saveBtn = document.createElement('button');
+    saveBtn.textContent = '본문저장';
+    document.body.appendChild(cardBtn);
+    document.body.appendChild(saveBtn);
+
+    const unbind = bubble.bindEvents(document);
+    document.dispatchEvent(new Event('selectionchange'));
+    await new Promise((r) => setTimeout(r, 220));
+
+    // 번호 매기기로 프리뷰 열기
+    const btnNumber = bubble.element.querySelector<HTMLButtonElement>('#btnAutoNumber')!;
+    btnNumber.click();
+
+    const btnBefore = bubble.element.querySelector<HTMLButtonElement>('#btnPreviewInsertBefore')!;
+    btnBefore.click();
+
+    // 약간 대기 후 결과 확인: '계획' 앞에 '1. 계획'이 삽입되어야 함
+    await new Promise((r) => setTimeout(r, 50));
+    expect(ta.value).toBe('신규 사업 1. 계획 계획');
+    expect(bubble.element.style.display).toBe('none');
+    expect(showToast).toHaveBeenCalled();
+
+    unbind();
+    bubble.destroy();
+    ta.remove();
+    cardBtn.remove();
+    saveBtn.remove();
+  });
+
+  it('프리뷰 카드에서 "뒤에 삽입" 클릭 시 선택 영역 뒤에 텍스트를 삽입한다', async () => {
+    const showToast = vi.fn();
+    const bubble = createSelectionBubble({ showToast });
+    document.body.appendChild(bubble.element);
+
+    const ta = document.createElement('textarea');
+    ta.value = '업무 추진';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.selectionStart = 3;
+    ta.selectionEnd = 5; // '추진'
+
+    const cardBtn = document.createElement('button');
+    cardBtn.textContent = '문서카드';
+    const saveBtn = document.createElement('button');
+    saveBtn.textContent = '본문저장';
+    document.body.appendChild(cardBtn);
+    document.body.appendChild(saveBtn);
+
+    const unbind = bubble.bindEvents(document);
+    document.dispatchEvent(new Event('selectionchange'));
+    await new Promise((r) => setTimeout(r, 220));
+
+    // 번호 매기기 실행
+    const btnNumber = bubble.element.querySelector<HTMLButtonElement>('#btnAutoNumber')!;
+    btnNumber.click();
+
+    const btnAfter = bubble.element.querySelector<HTMLButtonElement>('#btnPreviewInsertAfter')!;
+    btnAfter.click();
+
+    await new Promise((r) => setTimeout(r, 50));
+    expect(ta.value).toBe('업무 추진 1. 추진');
+    expect(bubble.element.style.display).toBe('none');
+
+    unbind();
+    bubble.destroy();
+    ta.remove();
+    cardBtn.remove();
+    saveBtn.remove();
+  });
+});
 

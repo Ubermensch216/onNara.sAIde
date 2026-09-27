@@ -832,38 +832,25 @@ export async function getViaMainWorldHwpSelection(
  */
 export async function replaceViaMainWorldHwp(
   newText: string,
-  doc: Document = document
+  doc: Document = document,
+  expectedSelectionText: string
 ): Promise<{ success: boolean; method?: string; error?: string }> {
-  // 1. 서비스 워커(background.ts)를 통한 메인 월드 치환 실행 (최우선)
+  // 선택 블럭을 검증할 수 없으면 커서 위치에 삽입할 위험이 있으므로 중단한다.
+  if (!expectedSelectionText.trim()) return { success: false, error: 'NO_EXPECTED_SELECTION' };
+
+  // 서비스 워커의 메인 월드에서 선택 내용 확인과 치환을 한 작업으로 실행한다.
   if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
     try {
       const resp = await chrome.runtime.sendMessage({
         type: 'DRAFT_MAIN_WORLD_HWP_REPLACE_SELECTION',
         text: newText,
+        expectedSelectionText,
       });
-      if (resp && resp.success) {
-        return resp;
-      }
+      return resp || { success: false, error: 'HWP_REPLACE_NO_RESPONSE' };
     } catch {
-      // background 미응답 시 폴백
+      return { success: false, error: 'HWP_REPLACE_NO_RESPONSE' };
     }
   }
-
-  // 2. 현재 윈도우 스코프에서 HwpCtrl 직접 치환 시도
-  const win = doc.defaultView || (typeof window !== 'undefined' ? window : null);
-  if (win) {
-    try {
-      const directHwp = findHwpCtrlInAllWindows(win);
-      if (directHwp) {
-        if (typeof directHwp.Run === 'function') {
-          try { directHwp.Run('Delete'); } catch {}
-        }
-        const ok = insertMultilineIntoHwp(directHwp, newText);
-        if (ok) return { success: true, method: 'DirectHwp_DeleteAndInsert' };
-      }
-    } catch {}
-  }
-
   return { success: false, error: 'HWP_REPLACE_FAILED' };
 }
 

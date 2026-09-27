@@ -241,23 +241,69 @@ export async function captureWebHwpSelection(
 }
 
 
+export type SelectionInsertMode = 'replace' | 'insert-before' | 'insert-after';
+
 /**
- * 선택된 블록 영역의 텍스트를 새로운 텍스트로 안전하게 교체(치환)합니다.
+ * 삽입 모드(대체, 앞에 삽입, 뒤에 삽입)에 맞춰 원본 블럭과 새 텍스트를 조합한다.
+ */
+export function composePlacementText(
+  originalText: string,
+  newText: string,
+  mode: SelectionInsertMode = 'replace'
+): string {
+  if (mode === 'replace') {
+    return newText;
+  }
+  const cleanOrig = originalText.trim();
+  const cleanNew = newText.trim();
+
+  if (!cleanOrig) return cleanNew;
+  if (!cleanNew) return cleanOrig;
+
+  const isMultiline = originalText.includes('\n') || newText.includes('\n');
+  const separator = isMultiline ? '\n' : ' ';
+
+  if (mode === 'insert-before') {
+    return `${cleanNew}${separator}${cleanOrig}`;
+  }
+
+  if (mode === 'insert-after') {
+    return `${cleanOrig}${separator}${cleanNew}`;
+  }
+
+  return newText;
+}
+
+function getSuccessMessage(mode: SelectionInsertMode, editorType?: string): string {
+  if (mode === 'insert-before') {
+    return '선택한 블럭 시작 부분에 추가되었습니다.';
+  }
+  if (mode === 'insert-after') {
+    return '선택한 블럭 끝 부분에 추가되었습니다.';
+  }
+  return editorType ? `${editorType} 내용이 교체되었습니다.` : '본문 내용이 교체되었습니다.';
+}
+
+/**
+ * 선택된 블록 영역의 텍스트를 새로운 텍스트로 안전하게 교체 또는 전후 삽입합니다.
  */
 export async function replaceSelectedText(
   selection: SelectionInfo,
-  newText: string
+  newText: string,
+  mode: SelectionInsertMode = 'replace'
 ): Promise<{ success: boolean; message?: string }> {
   const { targetElement, ownerDoc, inputRange, domRange, isHwp } = selection;
+  const finalText = composePlacementText(selection.text, newText, mode);
 
   // 0. WebHWP(한글 기안기)인 경우 우선적으로 선택 영역 교체 API 실행
   if (isHwp) {
     try {
-      const hwpRes = await replaceViaMainWorldHwp(newText, ownerDoc);
+      const hwpRes = await replaceViaMainWorldHwp(finalText, ownerDoc, selection.text);
       if (hwpRes.success) {
-        return { success: true, message: '한글 기안기 본문이 교체되었습니다.' };
+        return { success: true, message: getSuccessMessage(mode, '한글 기안기') };
       }
     } catch {}
+    return { success: false, message: '선택한 블럭을 확인할 수 없습니다. 본문을 다시 블럭 지정한 뒤 적용해 주세요.' };
   }
 
   // 1. Textarea / Input 치환
@@ -268,16 +314,19 @@ export async function replaceSelectedText(
   ) {
     try {
       const input = targetElement as HTMLTextAreaElement | HTMLInputElement;
+      if (input.value.substring(inputRange.start, inputRange.end).trim() !== selection.text) {
+        return { success: false, message: '선택한 문장이 변경되었습니다. 다시 블럭 지정해 주세요.' };
+      }
       input.focus();
       if (typeof input.setRangeText === 'function') {
-        input.setRangeText(newText, inputRange.start, inputRange.end, 'end');
+        input.setRangeText(finalText, inputRange.start, inputRange.end, 'end');
       } else {
         const val = input.value;
-        input.value = val.substring(0, inputRange.start) + newText + val.substring(inputRange.end);
+        input.value = val.substring(0, inputRange.start) + finalText + val.substring(inputRange.end);
       }
       input.dispatchEvent(new Event('input', { bubbles: true }));
       input.dispatchEvent(new Event('change', { bubbles: true }));
-      return { success: true, message: '본문 텍스트가 교체되었습니다.' };
+      return { success: true, message: getSuccessMessage(mode) };
     } catch (e: any) {
       return { success: false, message: e.message || '입력 필드 치환 실패' };
     }
@@ -286,6 +335,12 @@ export async function replaceSelectedText(
   // 2. Contenteditable / 일반 DOM Range 치환
   if (domRange) {
     try {
+      if (!domRange.startContainer.isConnected || domRange.toString().trim() !== selection.text) {
+        return { success: false, message: '선택한 문장이 변경되었습니다. 다시 블럭 지정해 주세요.' };
+      }
+      if (targetElement && typeof targetElement.focus === 'function') {
+        targetElement.focus();
+      }
       const win = ownerDoc.defaultView || window;
       const sel = win.getSelection();
       if (sel) {
@@ -294,7 +349,7 @@ export async function replaceSelectedText(
       }
 
       let applied = false;
-      const html = draftToHtml(newText);
+      const html = draftToHtml(finalText);
 
       // document.execCommand('insertHTML') 우선 시도 (줄바꿈/서식 보존)
       if (ownerDoc.queryCommandSupported && ownerDoc.queryCommandSupported('insertHTML')) {
@@ -303,16 +358,17 @@ export async function replaceSelectedText(
         } catch {}
       }
 
-      // document.execCommand('insertText') 차선 시도 (Undo 히스토리 지원)
+      // document.execCommand('insertText') 차선 시도 (Undo 히스토리 지원) - 단, insertHTML이 실패했을 때만!
       if (!applied && ownerDoc.queryCommandSupported && ownerDoc.queryCommandSupported('insertText')) {
         try {
-          applied = ownerDoc.execCommand('insertText', false, newText);
+          applied = ownerDoc.execCommand('insertText', false, finalText);
         } catch {}
       }
 
+      // 위 명령들이 모두 실패한 경우에만 직접 DOM 노드 삭제 후 삽입
       if (!applied) {
         domRange.deleteContents();
-        const frag = createDomFragmentFromText(ownerDoc, newText);
+        const frag = createDomFragmentFromText(ownerDoc, finalText);
         domRange.insertNode(frag);
         domRange.collapse(false);
         if (sel) {
@@ -324,27 +380,29 @@ export async function replaceSelectedText(
       if (targetElement) {
         targetElement.dispatchEvent(new Event('input', { bubbles: true }));
       }
-      return { success: true, message: '본문이 수정되었습니다.' };
+      return { success: true, message: getSuccessMessage(mode) };
     } catch {
-      // 계속 아래 WebHWP 또는 클립보드로 폴백
+      // 오류 시 클립보드로 안전 폴백
     }
   }
 
-  // 3. WebHWP(한글 기안기) 삽입 시도
-  try {
-    const hwpRes = await insertViaMainWorldHwp(newText, ownerDoc);
-    if (hwpRes.success) {
-      return { success: true, message: '한글 기안기 본문이 교체되었습니다.' };
+  // 3. WebHWP(한글 기안기) 삽입 시도 (isHwp 플래그가 아니었지만 WebHWP 환경인 경우에만 1회 시도)
+  if (!isHwp) {
+    try {
+      const hwpRes = await insertViaMainWorldHwp(finalText, ownerDoc);
+      if (hwpRes.success) {
+        return { success: true, message: getSuccessMessage(mode, '한글 기안기') };
+      }
+    } catch {
+      // ignore
     }
-  } catch {
-    // ignore
   }
 
   // 4. 안전한 클립보드 복사 폴백
   try {
-    const ok = await copyDraftToClipboard(newText);
+    const ok = await copyDraftToClipboard(finalText);
     if (ok) {
-      return { success: true, message: '교체할 텍스트가 클립보드에 복사되었습니다. (Ctrl+V로 붙여넣기)' };
+      return { success: true, message: '적용할 텍스트가 클립보드에 복사되었습니다. (Ctrl+V로 붙여넣기)' };
     }
   } catch {
     // ignore

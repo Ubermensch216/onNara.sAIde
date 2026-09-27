@@ -11,6 +11,8 @@
 
 import { loadSettings } from '@/lib/storage/settings';
 import { cleanAdminDraft } from './draft-cleaner';
+import { findTitleInputElement } from './draft-title';
+import { collectDocumentText } from '@/lib/extract/document-text';
 
 export type PolishMode =
   | 'shorten'   // 내용 줄이기 (간결화)
@@ -21,6 +23,11 @@ export type PolishMode =
   | 'courtesy'; // 정중한 협조체
 
 export type TransformAction = 'spellcheck' | PolishMode;
+
+export interface DocumentContextInfo {
+  title?: string;
+  bodyContext?: string;
+}
 
 export interface PrivacyMaskResult {
   text: string;
@@ -136,56 +143,102 @@ export function autoNumberAdminDraft(input: string): string {
 }
 
 /**
+ * 현재 문서(또는 상위 창)의 제목과 본문 맥락을 안전하게 추출한다.
+ */
+export function extractDocumentContext(doc: Document = document): DocumentContextInfo {
+  let title = '';
+  let bodyContext = '';
+
+  try {
+    const topDoc = doc.defaultView?.top?.document || doc;
+
+    // 1. 공문서 제목 추출 (제목 입력 필드 우선)
+    const titleEl = findTitleInputElement(doc) || findTitleInputElement(topDoc);
+    if (titleEl && 'value' in titleEl && typeof titleEl.value === 'string' && titleEl.value.trim()) {
+      title = titleEl.value.trim();
+    }
+    if (!title) {
+      const rawDocTitle = (topDoc.title || doc.title || '').trim();
+      title = rawDocTitle.replace(/(?:온나라|전자결재|기안기|온나라시스템| - [^-]+)$/g, '').trim();
+    }
+
+    // 2. 문서 전체 본문 맥락 수집 (최대 1,500자로 요약/압축하여 빠른 추론 유지)
+    bodyContext = collectDocumentText(topDoc) || collectDocumentText(doc) || '';
+    if (bodyContext.length > 1500) {
+      bodyContext = bodyContext.slice(0, 1500) + '... (이하 생략)';
+    }
+  } catch {
+    // ignore
+  }
+
+  return { title, bodyContext };
+}
+
+/**
  * 작업 유형별 AI 시스템 프롬프트 및 사용자 프롬프트 생성기.
+ * 문서 전체 맥락을 고려하되 오직 블럭 지정된 텍스트만을 변환 결과로 생성하도록 강제합니다.
  */
 export function buildTransformPrompt(
   action: TransformAction,
-  selectedText: string
+  selectedText: string,
+  context?: DocumentContextInfo
 ): { systemPrompt: string; userPrompt: string } {
   const baseSystemPrompt =
-    '당신은 대한민국 정부 공문서 작성 및 교정 전문가 AI입니다. 원문의 핵심 취지와 고유명사를 훼손하지 마십시오. 마크다운 특수기호(##, **, *, `, > 등)를 일체 사용하지 마십시오. 오직 교정·변환된 결과 문장 텍스트만을 출력하십시오.';
+    '당신은 대한민국 정부 공문서 작성 및 교정 전문가 AI입니다. ' +
+    '제공된 [문서 전체 맥락]을 깊이 참고하여 문서의 취지, 어조, 행정 목적에 어울리도록 작업하되, ' +
+    '★가장 중요한 원칙: 결과물에는 반드시 사용자가 블럭 지정한 [변환 대상 문장]만을 교정·변환한 단독 결과 텍스트만 출력하십시오. ' +
+    '블럭 외부의 문서 내용을 결과물에 덧붙이지 마십시오. ' +
+    '마크다운 특수기호(##, **, *, `, > 등)나 설명, 주석, 따옴표는 일체 포함하지 마십시오.';
+
+  let contextSection = '';
+  if (context && (context.title || (context.bodyContext && context.bodyContext.length > 10))) {
+    contextSection = `[문서 전체 맥락 참고]\n`;
+    if (context.title) contextSection += `문서 제목: ${context.title}\n`;
+    if (context.bodyContext) contextSection += `문서 본문 내용:\n${context.bodyContext}\n`;
+    contextSection += `────────────────────────────\n\n`;
+  }
 
   switch (action) {
     case 'spellcheck':
       return {
         systemPrompt: `${baseSystemPrompt} 주어진 텍스트의 한글 맞춤법, 띄어쓰기, 표준어 규정 및 공문서 문장부호를 정확하게 교정하십시오.`,
-        userPrompt: `다음 문장의 맞춤법과 띄어쓰기를 올바르게 교정해 주십시오:\n\n${selectedText}`,
+        userPrompt: `${contextSection}[작업 지침]\n위 문서 전체 맥락의 취지를 바탕으로, 아래 [변환 대상 문장]의 맞춤법과 띄어쓰기를 올바르게 교정해 주십시오. (오직 교정된 문장만 출력)\n\n[변환 대상 문장]\n${selectedText}`,
       };
 
     case 'shorten':
       return {
         systemPrompt: `${baseSystemPrompt} 불필요한 중복 수식어, 군더더기 피동 표현을 제거하고 명확하고 간결한 핵심 단문으로 압축하십시오.`,
-        userPrompt: `다음 문장의 군더더기를 없애고 핵심만 간결하게 압축해 주십시오:\n\n${selectedText}`,
+        userPrompt: `${contextSection}[작업 지침]\n위 문서 전체 맥락을 고려하여, 아래 [변환 대상 문장]의 군더더기를 없애고 핵심만 명확하고 간결하게 압축해 주십시오. (오직 압축된 문장만 출력)\n\n[변환 대상 문장]\n${selectedText}`,
       };
 
     case 'expand':
       return {
         systemPrompt: `${baseSystemPrompt} 핵심 키워드나 거친 메모 형태의 문장에 행정적 추진 배경, 근거, 기대효과를 보강하여 논리적으로 완성도 높은 공문서 문장으로 확장하십시오.`,
-        userPrompt: `다음 문장에 행정적 배경과 타당성을 보강하여 구체적인 공문서 문장으로 확장해 주십시오:\n\n${selectedText}`,
+        userPrompt: `${contextSection}[작업 지침]\n위 문서 전체 맥락을 파악하여, 아래 [변환 대상 문장]에 구체적인 행정적 배경과 타당성을 보강해 완성도 높은 공문서 문장으로 확장해 주십시오. (오직 확장된 문장만 출력)\n\n[변환 대상 문장]\n${selectedText}`,
       };
 
     case 'official':
       return {
         systemPrompt: `${baseSystemPrompt} 행정업무운영편람에 따라 정형화된 공문서 표준 어투(~코자 함, ~바람, ~통보함, ~알림 등)로 변환하십시오.`,
-        userPrompt: `다음 문장을 행정 공문서 표준 어투(~코자 함, ~바람 등)로 변환해 주십시오:\n\n${selectedText}`,
+        userPrompt: `${contextSection}[작업 지침]\n위 문서 전체 맥락에 어울리도록, 아래 [변환 대상 문장]을 행정 공문서 표준 어투(~코자 함, ~바람 등)로 변환해 주십시오. (오직 변환된 문장만 출력)\n\n[변환 대상 문장]\n${selectedText}`,
       };
 
     case 'bullet':
       return {
         systemPrompt: `${baseSystemPrompt} 서술형 줄글 문장을 공문서 표준 개조식 항목 기호(-, ·)를 사용하여 명확하게 항목별로 분절 및 구조화하십시오.`,
-        userPrompt: `다음 서술형 문장을 공문서 표준 개조식(-, ·) 형태로 요점화하여 변환해 주십시오:\n\n${selectedText}`,
+        userPrompt: `${contextSection}[작업 지침]\n위 문서 전체 맥락에 맞추어, 아래 [변환 대상 문장]을 공문서 표준 개조식(-, ·) 형태로 요점화하여 변환해 주십시오. (오직 개조식 문장만 출력)\n\n[변환 대상 문장]\n${selectedText}`,
       };
 
     case 'refine':
       return {
         systemPrompt: `${baseSystemPrompt} 국립국어원 공공언어 순화어 규정에 따라 어려운 한자어, 일본식 행정용어, 불필요한 외래어를 국민이 알기 쉬운 우리말 행정용어로 순화하십시오.`,
-        userPrompt: `다음 문장에 포함된 어려운 한자어나 일본식 표현, 외래어를 알기 쉬운 공공언어 순화어로 바꿔 주십시오:\n\n${selectedText}`,
+        userPrompt: `${contextSection}[작업 지침]\n위 문서 전체 맥락을 고려하여, 아래 [변환 대상 문장]에 포함된 어려운 한자어나 일본식 표현, 외래어를 알기 쉬운 공공언어 순화어로 바꿔 주십시오. (오직 순화된 문장만 출력)\n\n[변환 대상 문장]\n${selectedText}`,
       };
 
     case 'courtesy':
       return {
         systemPrompt: `${baseSystemPrompt} 타 부처, 공공기관 또는 대외 기관에 발송하는 공문에 알맞게 정중하고 격식 있는 협조 어조로 변환하십시오.`,
-        userPrompt: `다음 문장을 타 기관에 정중히 협조를 요청하는 격식 있는 공문서 문체로 변환해 주십시오:\n\n${selectedText}`,
+        userPrompt: `${contextSection}[작업 지침]\n위 문서 전체 맥락을 고려하여, 아래 [변환 대상 문장]을 타 기관에 정중히 협조를 요청하는 격식 있는 공문서 문체로 변환해 주십시오. (오직 변환된 문장만 출력)\n\n[변환 대상 문장]\n${selectedText}`,
       };
   }
 }
@@ -196,10 +249,11 @@ export function buildTransformPrompt(
 export async function transformTextWithAI(
   action: TransformAction,
   selectedText: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  context?: DocumentContextInfo
 ): Promise<string> {
   const settings = await loadSettings();
-  const { systemPrompt, userPrompt } = buildTransformPrompt(action, selectedText);
+  const { systemPrompt, userPrompt } = buildTransformPrompt(action, selectedText, context);
 
   const requestBody = {
     model: settings.model,

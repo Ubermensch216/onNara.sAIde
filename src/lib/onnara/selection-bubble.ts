@@ -11,11 +11,13 @@ import {
   replaceSelectedText,
   calculateBubblePosition,
   type SelectionInfo,
+  type SelectionInsertMode,
 } from './selection-manager';
 import {
   maskPrivacyInfo,
   autoNumberAdminDraft,
   transformTextWithAI,
+  extractDocumentContext,
   type PolishMode,
   type TransformAction,
 } from './bubble-transform';
@@ -45,6 +47,9 @@ const MATERIAL_ICON_PATHS: Record<string, string> = {
   account_balance: 'M12 3 2 8v2h20V8L12 3ZM4 12h2v7H4v-7Zm7 0h2v7h-2v-7Zm7 0h2v7h-2v-7ZM2 21h20v-2H2v2Z',
   checklist: 'M3 5h2v2H3V5Zm4 0h14v2H7V5ZM3 11h2v2H3v-2Zm4 0h14v2H7v-2Zm-4 6h2v2H3v-2Zm4 0h14v2H7v-2Z',
   translate: 'M12.87 15.07 10.33 12.56l.03-.03a17.52 17.52 0 0 0 3.71-6.53H17V4h-7V2H8v2H1v1.99h11.17a15.58 15.58 0 0 1-3 5.02 15.62 15.62 0 0 1-2.18-3.02H5a17.57 17.57 0 0 0 2.82 4.42L2.69 18.2 4.1 19.6 8.5 15.2l2.73 2.73.64-2.86ZM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2l-4.5-12Zm-2.13 7 1.13-3.02L18.63 17h-2.26Z',
+  arrow_back: 'M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2Z',
+  arrow_forward: 'M12 4l-1.41 1.41L16.17 11H4v2h12.17l-5.58 5.59L12 20l8-8-8-8Z',
+  check: 'M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17Z',
 };
 
 function materialIcon(name: keyof typeof MATERIAL_ICON_PATHS, size = 16): string {
@@ -65,6 +70,7 @@ export function createSelectionBubble(
   let isLoading = false;
   let pendingResult: { original: string; transformed: string; actionTitle: string } | null = null;
   let abortController: AbortController | null = null;
+  let isApplying = false;
 
   // 1. 내부 마크업 생성
   wrapper.innerHTML = `
@@ -236,9 +242,10 @@ export function createSelectionBubble(
         border: 1px solid #cbd5e1;
         border-radius: 9px;
         box-shadow: 0 12px 28px rgba(0, 0, 0, 0.22);
-        padding: 10px;
-        width: 380px;
-        max-width: 90vw;
+        padding: 10px 12px;
+        width: 440px;
+        max-width: calc(100vw - 24px);
+        box-sizing: border-box;
         animation: saideBubbleFadeIn 0.15s ease-out;
       }
       .saide-preview-header {
@@ -274,25 +281,47 @@ export function createSelectionBubble(
       .saide-preview-actions {
         display: flex;
         align-items: center;
-        justify-content: flex-end;
+        justify-content: space-between;
         gap: 6px;
         margin-top: 8px;
+        flex-wrap: wrap;
+      }
+      .saide-preview-left-actions,
+      .saide-preview-right-actions {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
       }
       .saide-action-btn {
-        padding: 5px 10px;
+        display: inline-flex;
+        align-items: center;
+        gap: 3px;
+        padding: 5px 8px;
         border-radius: 5px;
         font-size: 11px;
         font-weight: 600;
         cursor: pointer;
         border: 1px solid transparent;
         transition: all 0.15s;
+        white-space: nowrap;
       }
       .saide-action-btn.apply {
         background: #2563eb;
         color: #ffffff;
+        border-color: #1d4ed8;
       }
       .saide-action-btn.apply:hover {
         background: #1d4ed8;
+      }
+      .saide-action-btn.insert-mode {
+        background: #f1f5f9;
+        border-color: #cbd5e1;
+        color: #334155;
+      }
+      .saide-action-btn.insert-mode:hover {
+        background: #e2e8f0;
+        border-color: #94a3b8;
+        color: #0f172a;
       }
       .saide-action-btn.copy {
         background: #ffffff;
@@ -525,13 +554,25 @@ export function createSelectionBubble(
       <div class="saide-preview-card" id="bubblePreview" style="display: none;">
         <div class="saide-preview-header">
           <span class="saide-preview-badge" id="previewBadge">맞춤법 검사 결과</span>
-          <span style="font-size: 10px; color: #64748b;">Enter로 본문 적용</span>
+          <span style="font-size: 10px; color: #64748b;">원하는 적용 방식을 선택하세요</span>
         </div>
         <div class="saide-preview-body" id="previewContent"></div>
         <div class="saide-preview-actions">
-          <button type="button" class="saide-action-btn cancel" id="btnPreviewCancel">취소</button>
-          <button type="button" class="saide-action-btn copy" id="btnPreviewCopy">${materialIcon('article', 14)} 복사</button>
-          <button type="button" class="saide-action-btn apply" id="btnPreviewApply">본문에 적용 (Enter)</button>
+          <div class="saide-preview-left-actions">
+            <button type="button" class="saide-action-btn cancel" id="btnPreviewCancel">취소</button>
+            <button type="button" class="saide-action-btn copy" id="btnPreviewCopy">${materialIcon('article', 13)} 복사</button>
+          </div>
+          <div class="saide-preview-right-actions">
+            <button type="button" class="saide-action-btn insert-mode" id="btnPreviewInsertBefore" title="선택한 블럭 시작 부분에 추가">
+              ${materialIcon('arrow_back', 13)} 앞에 삽입
+            </button>
+            <button type="button" class="saide-action-btn insert-mode" id="btnPreviewInsertAfter" title="선택한 블럭 끝 부분에 추가">
+              ${materialIcon('arrow_forward', 13)} 뒤에 삽입
+            </button>
+            <button type="button" class="saide-action-btn apply" id="btnPreviewApply" title="선택한 블럭을 AI 결과물로 교체 (Enter)">
+              ${materialIcon('check', 13)} 대체하기 (Enter)
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -556,8 +597,20 @@ export function createSelectionBubble(
   const previewBadge = wrapper.querySelector<HTMLElement>('#previewBadge')!;
   const previewContent = wrapper.querySelector<HTMLElement>('#previewContent')!;
   const btnPreviewApply = wrapper.querySelector<HTMLButtonElement>('#btnPreviewApply')!;
+  const btnPreviewInsertBefore = wrapper.querySelector<HTMLButtonElement>('#btnPreviewInsertBefore')!;
+  const btnPreviewInsertAfter = wrapper.querySelector<HTMLButtonElement>('#btnPreviewInsertAfter')!;
   const btnPreviewCopy = wrapper.querySelector<HTMLButtonElement>('#btnPreviewCopy')!;
   const btnPreviewCancel = wrapper.querySelector<HTMLButtonElement>('#btnPreviewCancel')!;
+
+  // Shadow DOM의 버튼을 누를 때 편집기의 포커스와 선택 블럭을 빼앗지 않는다.
+  // click은 그대로 전달되므로 메뉴와 프리뷰의 모든 동작은 유지된다.
+  const preserveEditorSelection = (event: MouseEvent | PointerEvent) => {
+    if (event.button === 0 && wrapper.style.display !== 'none') {
+      event.preventDefault();
+    }
+  };
+  wrapper.addEventListener('pointerdown', preserveEditorSelection, true);
+  wrapper.addEventListener('mousedown', preserveEditorSelection, true);
 
   const DEFAULT_BUBBLE_WIDTH = 580;
   const DEFAULT_BUBBLE_HEIGHT = 44;
@@ -648,6 +701,7 @@ export function createSelectionBubble(
   function hidePreviewAndLoading() {
     setAiLoading(false);
     pendingResult = null;
+    isApplying = false;
     bubblePreview.style.display = 'none';
     if (abortController) {
       abortController.abort();
@@ -715,15 +769,27 @@ export function createSelectionBubble(
     }
   }
 
-  async function applyPendingResult() {
+  async function applyPendingResult(mode: SelectionInsertMode = 'replace') {
+    if (isApplying) return;
     if (!currentSelection || !pendingResult) return;
-    const textToInsert = pendingResult.transformed;
-    const res = await replaceSelectedText(currentSelection, textToInsert);
 
-    if (options.showToast) {
-      options.showToast(res.message || '본문에 반영되었습니다.');
+    isApplying = true;
+    try {
+      const textToInsert = pendingResult.transformed;
+      const targetSelection = currentSelection;
+      const res = await replaceSelectedText(targetSelection, textToInsert, mode);
+
+      if (options.showToast) {
+        options.showToast(res.message || '본문에 반영되었습니다.');
+      }
+      if (res.success) hide();
+    } catch (err: any) {
+      if (options.showToast) {
+        options.showToast(`적용 실패: ${err.message || '오류 발생'}`);
+      }
+    } finally {
+      isApplying = false;
     }
-    hide();
   }
 
   // 1. 맞춤법 검사 클릭
@@ -741,7 +807,8 @@ export function createSelectionBubble(
     );
 
     try {
-      const fixed = await transformTextWithAI('spellcheck', currentSelection.text, abortController.signal);
+      const docContext = currentSelection.ownerDoc ? extractDocumentContext(currentSelection.ownerDoc) : undefined;
+      const fixed = await transformTextWithAI('spellcheck', currentSelection.text, abortController.signal, docContext);
       showPreview('✓ 맞춤법 검사 결과', fixed);
     } catch (err: any) {
       if (err.name === 'AbortError') return;
@@ -786,7 +853,8 @@ export function createSelectionBubble(
       );
 
       try {
-        const polished = await transformTextWithAI(mode, currentSelection.text, abortController.signal);
+        const docContext = currentSelection.ownerDoc ? extractDocumentContext(currentSelection.ownerDoc) : undefined;
+        const polished = await transformTextWithAI(mode, currentSelection.text, abortController.signal, docContext);
         showPreview(titleMap[mode] || '문장 다듬기 결과', polished);
       } catch (err: any) {
         if (err.name === 'AbortError') return;
@@ -851,8 +919,21 @@ export function createSelectionBubble(
 
   // 프리뷰 액션 버튼들
   btnPreviewApply.addEventListener('click', (e) => {
+    e.preventDefault();
     e.stopPropagation();
-    applyPendingResult();
+    applyPendingResult('replace');
+  });
+
+  btnPreviewInsertBefore.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    applyPendingResult('insert-before');
+  });
+
+  btnPreviewInsertAfter.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    applyPendingResult('insert-after');
   });
 
   btnPreviewCopy.addEventListener('click', async (e) => {
@@ -987,11 +1068,13 @@ export function createSelectionBubble(
       if (wrapper.style.display === 'none') return;
 
       if (e.key === 'Escape') {
-        hide();
-      } else if (e.key === 'Enter' && pendingResult) {
-        // 프리뷰 상태에서 Enter를 누르면 본문 적용
         e.preventDefault();
-        applyPendingResult();
+        hide();
+      } else if (e.key === 'Enter' && pendingResult && !isApplying) {
+        // 프리뷰 상태에서 Enter를 누르면 기본 '대체하기' 수행 (중복 전파 차단)
+        e.preventDefault();
+        e.stopPropagation();
+        applyPendingResult('replace');
       }
     };
 

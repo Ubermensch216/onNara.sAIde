@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { loadSettings, DEFAULT_SETTINGS, type Settings } from '@/lib/storage/settings';
 import { cleanAdminDraft } from '@/lib/onnara/draft-cleaner';
 import { copyDraftToClipboard } from '@/lib/onnara/draft-format';
@@ -13,7 +13,6 @@ import {
   type RelatedDocInfo,
 } from '@/lib/onnara/related-info';
 import {
-  generateTemplateOutline,
   type DraftTemplate,
 } from '@/lib/onnara/draft-templates';
 import {
@@ -39,7 +38,9 @@ export function DrawerApp() {
   const [recommendedTitle, setRecommendedTitle] = useState<string>('');
   const [isApplyingTitle, setIsApplyingTitle] = useState<boolean>(false);
   const [hasAppliedTitle, setHasAppliedTitle] = useState<boolean>(false);
+  const [titleApplyError, setTitleApplyError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [generationError, setGenerationError] = useState<string | null>(null);
   const [statusMsg, setStatusMsg] = useState('');
   const [approvalModal, setApprovalModal] = useState<{
     open: boolean;
@@ -62,6 +63,20 @@ export function DrawerApp() {
   const [refDocSummaries, setRefDocSummaries] = useState<Record<string, string>>({});
   const [isSummarizing, setIsSummarizing] = useState<boolean>(false);
   const [showRawContent, setShowRawContent] = useState<boolean>(false);
+  const [isSettingsFolded, setIsSettingsFolded] = useState<boolean>(false);
+
+  const resultSectionRef = useRef<HTMLElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  // 초안 결과가 생성되거나 주입되면 결과 영역으로 매끄럽게 자동 스크롤
+  useEffect(() => {
+    if (generatedDraft) {
+      const timer = setTimeout(() => {
+        resultSectionRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [generatedDraft]);
 
   useEffect(() => {
     loadSettings().then(setSettings);
@@ -92,19 +107,19 @@ export function DrawerApp() {
         setHasWriteBodyBtn(Boolean(data.hasWriteBodyBtn));
         if (Array.isArray(data.relatedDocs) && data.relatedDocs.length > 0) {
           setRelatedDocs(data.relatedDocs);
-          setSelectedRelatedDoc(prev => prev ?? data.relatedDocs[0]);
+          setSelectedRelatedDoc((prev) => prev ?? data.relatedDocs[0]);
         }
       } else if (data.type === 'DRAFT_RELATED_DOC_CONTENT') {
         setIsFetchingRefDoc(false);
         const { title, content, error } = data;
-        setRelatedDocs(prev =>
-          prev.map(d =>
+        setRelatedDocs((prev) =>
+          prev.map((d) =>
             d.title === title
               ? { ...d, content, status: content ? 'loaded' : 'error', errorMessage: error }
               : d
           )
         );
-        setSelectedRelatedDoc(prev =>
+        setSelectedRelatedDoc((prev) =>
           prev && prev.title === title
             ? { ...prev, content, status: content ? 'loaded' : 'error', errorMessage: error }
             : prev
@@ -136,21 +151,26 @@ export function DrawerApp() {
         setTimeout(() => setStatusMsg(''), 3000);
       } else if (data.type === 'SAIDE_FILL_PROMPT' && data.text) {
         setPrompt(data.text);
-        setStatusMsg('선택한 본문 내용이 질의 프롬프트로 입력되었습니다.');
+        setStatusMsg('선택한 내용이 질의 프롬프트로 입력되었습니다.');
         setTimeout(() => setStatusMsg(''), 3000);
       } else if (data.type === 'DRAFT_APPLY_TITLE_RESULT') {
         setIsApplyingTitle(false);
         if (data.success) {
           setHasAppliedTitle(true);
+          setTitleApplyError(null);
           if (data.title) setDocTitle(data.title);
           setStatusMsg(data.message || '공문 본 화면의 제목 필드에 반영되었습니다.');
         } else {
+          setTitleApplyError(data.message || '제목 반영에 실패했습니다.');
           setStatusMsg(data.message || '제목 반영에 실패했습니다.');
         }
         setTimeout(() => setStatusMsg(''), 3500);
       } else if (data.type === 'SAIDE_SET_DRAFT_PREVIEW') {
         if (data.prompt !== undefined) setPrompt(data.prompt);
-        if (data.draft !== undefined) setGeneratedDraft(data.draft);
+        if (data.draft !== undefined) {
+          setGeneratedDraft(data.draft);
+          setGenerationError(null);
+        }
         if (data.templateId !== undefined) setSelectedTemplateId(data.templateId);
         if (data.activeTab !== undefined) setActiveTab(data.activeTab);
         if (data.recommendedTitle !== undefined) setRecommendedTitle(data.recommendedTitle);
@@ -189,14 +209,14 @@ export function DrawerApp() {
     if (!content || !content.trim()) return;
     // 1. 규칙 기반 요약 즉시 반영
     const initialSummary = generateRuleBasedSummary(content, title);
-    setRefDocSummaries(prev => ({ ...prev, [title]: initialSummary }));
+    setRefDocSummaries((prev) => ({ ...prev, [title]: initialSummary }));
 
     // 2. Ollama AI 요약 비동기 호출
     setIsSummarizing(true);
     generateDocSummary(content, title, settings)
-      .then(aiSummary => {
+      .then((aiSummary) => {
         if (aiSummary && aiSummary.trim()) {
-          setRefDocSummaries(prev => ({ ...prev, [title]: aiSummary.trim() }));
+          setRefDocSummaries((prev) => ({ ...prev, [title]: aiSummary.trim() }));
         }
       })
       .catch(() => {})
@@ -212,7 +232,7 @@ export function DrawerApp() {
   // 참고 문서 본문 조회 요청
   const handleFetchRefContent = (doc: RelatedDocInfo) => {
     setIsFetchingRefDoc(true);
-    setIsReferenceExpanded(true); // 본문 조회를 누르면 패널을 열어 진행 상황과 요약을 바로 볼 수 있게 함
+    setIsReferenceExpanded(true);
     window.parent.postMessage({ type: 'DRAFT_FETCH_RELATED_DOC', doc }, '*');
     setStatusMsg(`'${doc.title}' 본문을 조회하는 중입니다...`);
   };
@@ -226,18 +246,6 @@ export function DrawerApp() {
     }
   };
 
-  // 선택된 서식의 주요 항목 골격을 입력창(prompt)에 불러오기
-  const handleInsertTemplateOutline = () => {
-    if (!selectedTemplate) return;
-    const outline = generateTemplateOutline(selectedTemplate);
-    if (!prompt.trim()) {
-      setPrompt(outline);
-    } else {
-      setPrompt((prev) => `${prev.trim()}\n\n[지정 서식 항목 골격]\n${outline}`);
-    }
-    setStatusMsg(`'${selectedTemplate.title}' 서식의 주요 항목 골격이 입력창에 반영되었습니다.`);
-    setTimeout(() => setStatusMsg(''), 2800);
-  };
 
   // 서식관리 탭에서 서식을 선택하여 초안 작성으로 전환
   const handleSelectTemplateFromManager = (template: DraftTemplate) => {
@@ -250,9 +258,12 @@ export function DrawerApp() {
   // 초안 생성 실행 (로컬 Ollama)
   const handleGenerate = async () => {
     if (!prompt.trim()) return;
+    setIsSettingsFolded(true);
     setLoading(true);
+    setGenerationError(null);
     setGeneratedDraft('');
     setHasAppliedTitle(false);
+    setTitleApplyError(null);
 
     const effectiveRefDoc = selectedRelatedDoc
       ? {
@@ -313,7 +324,8 @@ export function DrawerApp() {
       setRecommendedTitle(recTitle);
       setGeneratedDraft(cleanDraft);
     } catch (e: any) {
-      setGeneratedDraft(`[오류 발생: 로컬 AI 모델(Ollama)과 통신하지 못했습니다]\n\n원인: ${e.message}\n설정 확인: ${settings.endpoint}`);
+      setGenerationError(e?.message ? `로컬 AI 모델(Ollama) 통신 실패: ${e.message}` : '로컬 AI 모델(Ollama)과 통신하지 못했습니다.');
+      setGeneratedDraft('');
     } finally {
       setLoading(false);
     }
@@ -323,6 +335,7 @@ export function DrawerApp() {
   const handleApplyTitle = () => {
     if (!recommendedTitle.trim() || isApplyingTitle) return;
     setIsApplyingTitle(true);
+    setTitleApplyError(null);
     setStatusMsg('공문 본 화면의 제목 필드에 반영하는 중입니다...');
     window.parent.postMessage(
       {
@@ -376,50 +389,86 @@ export function DrawerApp() {
     }
   };
 
+  /** 참고문서의 실제 데이터 상태를 정확히 구분 */
+  const getRefDocContentStatus = (doc: RelatedDocInfo, isSelected: boolean) => {
+    if (doc.status === 'error' || doc.errorMessage) {
+      return {
+        key: 'error' as const,
+        label: '오류',
+        badgeClass: 'bg-rose-50 text-rose-700 border-rose-200',
+        detail: doc.errorMessage || '본문을 불러오지 못했습니다.',
+      };
+    }
+    if ((isFetchingRefDoc && isSelected) || doc.status === 'loading') {
+      return {
+        key: 'loading' as const,
+        label: '본문 불러오는 중',
+        badgeClass: 'bg-amber-50 text-amber-700 border-amber-200',
+        detail: '온나라 열린 창에서 본문을 추출하고 있습니다.',
+      };
+    }
+    if (doc.content && doc.content.trim()) {
+      return {
+        key: 'ready' as const,
+        label: `본문 준비됨 (${doc.content.length.toLocaleString()}자)`,
+        badgeClass: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+        detail: '본문이 준비되어 AI 작성 시 참고자료로 반영됩니다.',
+      };
+    }
+    return {
+      key: 'empty' as const,
+      label: '본문 없음',
+      badgeClass: 'bg-slate-100 text-slate-600 border-slate-200',
+      detail: '본문이 아직 추출되지 않았습니다. [본문 읽어오기]를 눌러주세요.',
+    };
+  };
+
   return (
-    <div className="flex flex-col h-full bg-slate-50 text-slate-800 text-xs">
-      {/* 상단 헤더: 온나라 sAIde | 기안 코파일럿 동일 레벨 시스템 명칭 레이블 */}
-      <header className="flex items-center justify-between px-3 py-2 bg-white border-b border-slate-200 shrink-0">
+    <div className="flex flex-col h-full bg-slate-50 text-slate-800 text-[13.5px]">
+      {/* ── 상단 헤더: 온나라 sAIde 브랜드 + 기안 코파일럿 시스템 명칭 ── */}
+      <header className="flex items-center justify-between px-3.5 py-2.5 bg-white border-b border-slate-200 shrink-0">
         <div className="flex items-center gap-2 select-none">
           {/* 플랫폼 브랜드 */}
           <div className="flex items-center gap-1.5">
-            <span className="w-2.5 h-2.5 rounded-full bg-blue-600 inline-block shadow-xs"></span>
-            <span className="font-bold text-slate-900 text-[13.5px] tracking-tight">
+            <span className="w-2.5 h-2.5 rounded-full bg-blue-600 inline-block shadow-2xs" />
+            <span className="font-bold text-slate-900 text-sm tracking-tight">
               온나라 s<span className="text-blue-600 font-extrabold">AI</span>de
             </span>
           </div>
 
           {/* 시스템 레벨 구분 디바이더 */}
-          <span className="h-3 w-px bg-slate-300" aria-hidden="true"></span>
+          <span className="h-3 w-px bg-slate-300" aria-hidden="true" />
 
-          {/* 시스템 명칭 레이블 (동일 레벨의 세련된 타이포그래피 + 스마트 코파일럿 액센트) */}
-          <div className="flex items-center gap-1 font-semibold text-[13.5px] tracking-tight">
+          {/* 시스템 명칭 레이블 */}
+          <div className="flex items-center gap-1 font-semibold text-sm tracking-tight">
             <span className="text-slate-800 font-bold">기안</span>
             <span className="font-extrabold text-blue-600 flex items-center gap-0.5">
               <span>코파일럿</span>
-              <svg className="w-3 h-3 text-blue-500 fill-current ml-0.5" viewBox="0 0 24 24">
+              <svg className="w-3.5 h-3.5 text-blue-500 fill-current ml-0.5" viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M19 9l1.25-2.75L23 5l-2.75-1.25L19 1l-1.25 2.75L15 5l2.75 1.25L19 9zm-7.5.5L9 4 6.5 9.5 1 12l5.5 2.5L9 20l2.5-5.5L17 12l-5.5-2.5zM19 15l-1.25 2.75L15 19l2.75 1.25L19 23l1.25-2.75L23 19l-2.75-1.25L19 15z" />
               </svg>
             </span>
           </div>
         </div>
         <button
+          type="button"
           onClick={closeDrawer}
-          className="text-slate-400 hover:text-slate-700 p-1 rounded hover:bg-slate-100 font-bold flex items-center justify-center"
+          className="text-slate-400 hover:text-slate-700 p-1 rounded-md hover:bg-slate-100 transition flex items-center justify-center cursor-pointer focus-visible:ring-2 focus-visible:ring-blue-500"
           title="사이드카 접기 (Esc)"
+          aria-label="사이드카 닫기"
         >
-          <MaterialIcon name="close" size={16} />
+          <MaterialIcon name="close" size={18} />
         </button>
       </header>
 
-      {/* 사이드카 탭 메뉴 (초안 작성 / 서식관리) */}
+      {/* ── 상단 탭 메뉴: 초안 작성 / 서식관리 (서식관리는 별도 관리 화면) ── */}
       <nav className="flex items-center border-b border-slate-200 bg-white px-3 gap-1 pt-1.5 shrink-0" role="tablist">
         <button
           type="button"
           role="tab"
           aria-selected={activeTab === 'draft'}
           onClick={() => setActiveTab('draft')}
-          className={`px-3 py-1.5 font-semibold text-xs border-b-2 transition flex items-center gap-1.5 ${
+          className={`px-3 py-2 font-semibold text-xs sm:text-[13px] border-b-2 transition flex items-center gap-1.5 cursor-pointer ${
             activeTab === 'draft'
               ? 'border-blue-600 text-blue-700 bg-blue-50/60 rounded-t'
               : 'border-transparent text-slate-500 hover:text-slate-800 hover:bg-slate-50 rounded-t'
@@ -433,7 +482,7 @@ export function DrawerApp() {
           role="tab"
           aria-selected={activeTab === 'templates'}
           onClick={() => setActiveTab('templates')}
-          className={`px-3 py-1.5 font-semibold text-xs border-b-2 transition flex items-center gap-1.5 ${
+          className={`px-3 py-2 font-semibold text-xs sm:text-[13px] border-b-2 transition flex items-center gap-1.5 cursor-pointer ${
             activeTab === 'templates'
               ? 'border-blue-600 text-blue-700 bg-blue-50/60 rounded-t'
               : 'border-transparent text-slate-500 hover:text-slate-800 hover:bg-slate-50 rounded-t'
@@ -442,14 +491,14 @@ export function DrawerApp() {
           <MaterialIcon name="description" size={16} />
           <span>서식관리</span>
           {templates.length > 0 && (
-            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-100 text-slate-600 font-bold border border-slate-200">
+            <span className="text-[11px] px-1.5 py-0.2 rounded-full bg-slate-100 text-slate-600 font-bold border border-slate-200">
               {templates.length}
             </span>
           )}
         </button>
       </nav>
 
-      {/* ── 탭 2: 서식관리 화면 ── */}
+      {/* ── 탭 2: 서식관리 화면 (별도 관리 도구) ── */}
       {activeTab === 'templates' ? (
         <TemplateManager
           templates={templates}
@@ -459,342 +508,445 @@ export function DrawerApp() {
           }}
         />
       ) : (
-        /* ── 탭 1: 공문 초안 작성 화면 ── */
+        /* ── 탭 1: 공문 초안 작성 화면 (작성 설정 → 작성 요청 → 생성 결과 → 온나라에 적용) ── */
         <>
-          <div className="flex-1 overflow-y-auto p-3 space-y-3">
-            {/* 공문서 서식 지정 카드 */}
-            <div className="p-2.5 bg-white border border-blue-200 rounded-lg shadow-2xs space-y-2">
-              <div className="flex items-center justify-between">
-                <label className="font-bold text-slate-800 text-[11px] flex items-center gap-1.5">
-                  <MaterialIcon name="description" size={14} className="text-blue-600" />
-                  <span>적용할 공문서 서식 선택</span>
-                </label>
-              </div>
-
-              {/* 서식 선택 드롭다운 */}
-              <div>
-                <select
-                  value={selectedTemplateId}
-                  onChange={(e) => setSelectedTemplateId(e.target.value)}
-                  className="w-full px-2 py-1.5 bg-slate-50 border border-slate-300 rounded text-xs text-slate-800 font-medium focus:outline-none focus:ring-1 focus:ring-blue-500 focus:bg-white"
-                >
-                  <option value="">-- 서식 미선택 (자유 형식 기안문) --</option>
-                  {templates.map((tpl) => (
-                    <option key={tpl.id} value={tpl.id}>
-                      [{tpl.documentType}] {tpl.title} ({tpl.sections.length}개 항목)
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* 선택된 서식의 간단한 정보 표시 */}
-              {selectedTemplate && (
-                <div className="p-2 bg-blue-50/70 border border-blue-200 rounded space-y-1.5 text-[11px]">
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-blue-900">{selectedTemplate.title}</span>
-                    <button
-                      type="button"
-                      onClick={handleInsertTemplateOutline}
-                      className="px-2 py-0.5 bg-white border border-blue-300 text-blue-700 hover:bg-blue-50 rounded text-[10.5px] font-semibold transition shadow-2xs flex items-center gap-1"
-                      title="입력창에 서식 항목 골격 넣기"
-                    >
-                      <MaterialIcon name="postAdd" size={14} />
-                      <span>항목 골격 입력창에 넣기</span>
-                    </button>
-                  </div>
-
-                  {selectedTemplate.description && (
-                    <p className="text-[10.5px] text-slate-600 leading-tight">
-                      {selectedTemplate.description}
-                    </p>
-                  )}
-
-                </div>
-              )}
-            </div>
-
-            {/* 관련정보 참고 문서 카드 */}
-            {relatedDocs.length > 0 && (
-              <div className="p-2.5 bg-indigo-50/90 border border-indigo-200 rounded-md text-indigo-950 space-y-2">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1.5 font-bold text-[11px]">
-                    <MaterialIcon name="attachFile" size={14} className="text-indigo-600" />
-                    <span>관련정보 참고 문서 ({relatedDocs.length}건)</span>
-                  </div>
-                  {selectedRelatedDoc ? (
-                    <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-indigo-100 text-indigo-800 border border-indigo-200">
-                      {selectedRelatedDoc.content
-                        ? `본문 준비됨 (${selectedRelatedDoc.content.length}자)`
-                        : isFetchingRefDoc
-                        ? '불러오는 중...'
-                        : '참고 적용 중'}
-                    </span>
-                  ) : (
-                    <span className="text-[10px] text-slate-400">참고 안 함</span>
-                  )}
-                </div>
-
-                {/* 관련문서 목록 / 선택 칩 */}
-                <div className="space-y-1">
-                  {relatedDocs.map((doc, idx) => {
-                    const isSelected = selectedRelatedDoc?.title === doc.title;
-                    return (
-                      <div
-                        key={idx}
-                        className={`flex items-center justify-between p-1.5 rounded text-[11px] transition ${
-                          isSelected
-                            ? 'bg-white border border-indigo-300 shadow-xs'
-                            : 'bg-indigo-50/50 hover:bg-white/70 border border-transparent'
-                        }`}
-                      >
-                        <label className="flex items-center gap-1.5 cursor-pointer overflow-hidden flex-1 mr-2">
-                          <input
-                            type="radio"
-                            name="selectedRelatedDoc"
-                            checked={isSelected}
-                            onChange={() => setSelectedRelatedDoc(isSelected ? null : doc)}
-                            className="accent-indigo-600 cursor-pointer"
-                          />
-                          <span className="font-semibold text-indigo-700 whitespace-nowrap text-[10px] bg-indigo-100/80 px-1 py-0.2 rounded">
-                            [{doc.type || '문서'}]
-                          </span>
-                          <span className="truncate font-medium text-slate-800" title={doc.title}>
-                            {doc.title}
-                          </span>
-                        </label>
-
-                        {isSelected && (
-                          <div className="flex items-center gap-1 shrink-0">
-                            <button
-                              type="button"
-                              onClick={() => handleToggleExpand(doc)}
-                              className="px-2 py-0.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-[10px] font-semibold transition"
-                              title="참고 문서 내용 요약 보기 및 메모 첨언"
-                            >
-                              {isReferenceExpanded ? '접기' : '내용'}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleFetchRefContent(doc)}
-                              disabled={isFetchingRefDoc}
-                              className="px-1.5 py-0.5 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 disabled:text-slate-400 rounded text-[10px] font-medium transition"
-                              title="열린 탭에서 본문 새로고침/다시 읽기"
-                            >
-                              {isFetchingRefDoc ? '읽는 중...' : '본문읽기'}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setSelectedRelatedDoc(null)}
-                              className="text-slate-400 hover:text-slate-700 p-0.5 rounded text-[11px] flex items-center justify-center"
-                              title="참고 해제"
-                            >
-                              <MaterialIcon name="close" size={13} />
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-
-                {/* 펼쳐진 참고 본문 미리보기 및 추가 메모 영역 */}
-                {selectedRelatedDoc && isReferenceExpanded && (
-                  <div className="pt-2 border-t border-indigo-200/80 space-y-2 text-[11px]">
-                    <div className="flex items-center justify-between text-slate-700">
-                      <span className="font-bold text-[11px] flex items-center gap-1.5">
-                        <MaterialIcon name="assignment" size={14} className="text-indigo-600" />
-                        <span>참고 문서 핵심 요약</span>
-                        {isSummarizing && (
-                          <span className="text-[10px] text-indigo-600 font-normal animate-pulse">
-                            (AI 요약 중...)
-                          </span>
-                        )}
-                      </span>
-                      {selectedRelatedDoc.content && (
-                        <button
-                          type="button"
-                          onClick={() => setShowRawContent(!showRawContent)}
-                          className="text-[10px] text-indigo-600 hover:text-indigo-800 underline font-medium"
-                        >
-                          {showRawContent ? '요약 보기' : '원문 전체 보기'}
-                        </button>
-                      )}
-                    </div>
-
-                    {selectedRelatedDoc.content ? (
-                      showRawContent ? (
-                        <div className="p-2 bg-white border border-slate-200 rounded max-h-32 overflow-y-auto font-mono text-[10px] leading-relaxed text-slate-700 whitespace-pre-wrap select-text">
-                          {selectedRelatedDoc.content}
-                        </div>
-                      ) : (
-                        <div className="p-2.5 bg-white border border-indigo-200 rounded max-h-32 overflow-y-auto text-[11px] leading-relaxed text-slate-800 whitespace-pre-wrap select-text shadow-2xs font-sans">
-                          {refDocSummaries[selectedRelatedDoc.title] || generateRuleBasedSummary(selectedRelatedDoc.content, selectedRelatedDoc.title)}
-                        </div>
-                      )
-                    ) : isFetchingRefDoc ? (
-                      <div className="p-3 bg-white border border-indigo-200 rounded text-center text-indigo-700 text-xs">
-                        <span className="animate-pulse font-medium">열린 탭에서 본문을 조회하고 요약하는 중입니다...</span>
-                      </div>
-                    ) : (
-                      <div className="p-2.5 bg-amber-50 border border-amber-200 rounded text-[11px] text-amber-800 space-y-1">
-                        <p className="font-semibold flex items-center gap-1.5">
-                          <MaterialIcon name="warning" size={13} className="text-amber-600" />
-                          <span>본문이 아직 열려 있지 않습니다.</span>
-                        </p>
-                        <p className="text-[10px] text-amber-700 leading-tight">
-                          온나라 화면의 <strong>[관련정보]</strong>에서 문서를 클릭해 창을 띄워두신 후 <strong>[본문읽기]</strong>를 누르시거나, 아래 메모장에 핵심 내용을 직접 적어주세요.
-                        </p>
-                      </div>
-                    )}
-
-                    {/* 사용자가 첨언할 수 있는 지금 화면 유지 */}
-                    <div>
-                      <label className="text-[10px] text-slate-600 font-semibold block mb-0.5">
-                        참고 문서 관련 추가 요구사항 또는 핵심 메모 (첨언):
-                      </label>
-                      <textarea
-                        value={customRefNotes}
-                        onChange={(e) => setCustomRefNotes(e.target.value)}
-                        placeholder="위 요약 내용을 확인하고, 우리 과 상황에 맞게 반영할 변경사항이나 강조할 내용을 적어주세요. (예: 3페이지 서식에 따라 우리 부서 제출 기한은 10월 12일까지로 변경하여 반영할 것)"
-                        className="w-full h-16 p-2 border border-slate-300 rounded bg-white text-xs resize-none focus:outline-none focus:ring-1 focus:ring-indigo-500 leading-relaxed"
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* 본문작성 화면 안내 배너 (문서관리카드 상태일 때) */}
+          <div ref={scrollContainerRef} className="flex-1 overflow-y-auto p-3.5 space-y-4">
+            {/* 본문작성 화면 진입 안내 배너 (문서관리카드 상태일 때) */}
             {needsOpenBody && (
-              <div className="p-2.5 bg-amber-50/90 border border-amber-200 rounded-md text-amber-900 space-y-1.5">
-                <div className="flex items-center justify-between font-bold text-[11px]">
-                  <span className="flex items-center gap-1.5">
-                    <MaterialIcon name="lightbulb" size={14} className="text-amber-700" />
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-900 space-y-1.5 shadow-2xs">
+                <div className="flex items-center justify-between font-bold text-xs">
+                  <span className="flex items-center gap-1.5 text-amber-800">
+                    <MaterialIcon name="lightbulb" size={15} />
                     <span>본문 에디터 열기 필요</span>
                   </span>
                   {hasWriteBodyBtn && (
                     <button
+                      type="button"
                       onClick={clickOpenBody}
-                      className="px-2 py-0.5 bg-amber-600 hover:bg-amber-700 text-white rounded text-[10px] font-semibold transition"
+                      className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded text-xs font-semibold transition cursor-pointer"
                     >
                       [본문작성] 열기
                     </button>
                   )}
                 </div>
-                <p className="text-[11px] leading-tight text-amber-800">
-                  현재 화면은 문서관리카드입니다. 본문 안에 붙여넣으시려면 기안기 상단의 <strong>[본문작성]</strong> 버튼을 먼저 클릭해 본문 편집창을 열어주세요.
+                <p className="text-xs leading-normal text-amber-800">
+                  현재 화면은 문서관리카드입니다. 본문 안에 초안을 삽입하시려면 기안기 상단의 <strong>[본문작성]</strong> 버튼을 먼저 클릭해 본문 편집창을 열어주세요.
                 </p>
               </div>
             )}
 
-            {/* 입력 영역 */}
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between">
-                <label className="font-semibold text-slate-700 block">
-                  공문서 개요 또는 핵심 내용
-                </label>
-                {selectedTemplate && (
-                  <span
-                    className="inline-flex items-center gap-1 text-[10.5px] text-blue-700 font-semibold bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200"
-                    title={`[${selectedTemplate.title}] 서식 적용 중`}
-                  >
-                    <MaterialIcon name="checkCircle" size={13} className="text-blue-600" />
-                    <span>서식 적용</span>
+            {/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                영역 1: 작성 설정 (서식 선택 & 참고문서 선택을 동일 위계로 배치)
+               ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */}
+            <section aria-labelledby="section-settings-title" className="space-y-3">
+              <div className="flex items-center justify-between gap-2 pb-1 border-b border-slate-200">
+                <h2 id="section-settings-title" className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
+                  <span className="w-5 h-5 rounded-full bg-slate-100 text-slate-700 font-bold text-xs flex items-center justify-center border border-slate-300">
+                    1
                   </span>
-                )}
+                  <span>작성 설정</span>
+                </h2>
+                <button
+                  type="button"
+                  aria-expanded={!isSettingsFolded}
+                  aria-controls="section-settings-content"
+                  onClick={() => setIsSettingsFolded((folded) => !folded)}
+                  className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-800 rounded px-1 py-0.5 cursor-pointer focus-visible:ring-2 focus-visible:ring-blue-500"
+                >
+                  <span>서식 및 참고문서 지정</span>
+                  <MaterialIcon name={isSettingsFolded ? 'arrowDown' : 'arrowUp'} size={14} />
+                  <span className="sr-only">{isSettingsFolded ? '펼치기' : '접기'}</span>
+                </button>
               </div>
-              <textarea
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                onKeyDown={handlePromptKeyDown}
-                placeholder={
-                  selectedTemplate
-                    ? `[${selectedTemplate.title}] 서식에 맞추어 작성할 내용을 입력하세요.\n(상단의 '골격 넣기'를 눌러 목차별 내용을 직접 채우거나 핵심 메모만 적어도 AI가 서식에 맞춰 완성합니다.)`
-                    : selectedRelatedDoc
-                    ? `예: 위 참고 문서 [${selectedRelatedDoc.title}]의 지침에 따라 우리 과 사업 안건 제출 공문 초안 작성해줘.`
-                    : '예: 2026년 공공 AI 업무혁신 추진계획. 추진배경과 3대 전략을 개조식으로 작성해줘.'
-                }
-                className="w-full h-24 min-h-[6rem] p-2 border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500 text-xs resize-y bg-white leading-relaxed"
-              />
-              <div className="flex items-center justify-between text-[10.5px] text-slate-400 px-0.5">
-                <span>Enter: 초안 생성 / Shift + Enter: 줄바꿈</span>
-              </div>
-              <button
-                onClick={handleGenerate}
-                disabled={loading || !prompt.trim()}
-                className="w-full py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white rounded font-semibold transition flex items-center justify-center gap-1.5 shadow-2xs"
-              >
-                {loading ? (
-                  <span>AI 초안 작성 중...</span>
-                ) : selectedTemplate ? (
-                  <span className="flex items-center gap-1.5">
-                    <MaterialIcon name="autoAwesome" size={15} />
-                    <span>[{selectedTemplate.title}] 서식으로 초안 생성</span>
-                  </span>
-                ) : selectedRelatedDoc ? (
-                  <span className="flex items-center gap-1.5">
-                    <MaterialIcon name="autoAwesome" size={15} />
-                    <span>관련정보 참고하여 공문서 초안 생성</span>
-                  </span>
-                ) : (
-                  <span className="flex items-center gap-1.5">
-                    <MaterialIcon name="autoAwesome" size={15} />
-                    <span>공문서 초안 생성</span>
-                  </span>
-                )}
-              </button>
-            </div>
 
-            {/* 옅은 초안 생성 중 애니메이션 인디케이터 */}
+              <div id="section-settings-content" hidden={isSettingsFolded} className="space-y-3">
+              {/* 1-A. 서식 선택 카드 */}
+              <div className="p-3 bg-white border border-slate-200 rounded-lg shadow-2xs space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 font-bold text-slate-900 text-xs sm:text-[13px]">
+                    <MaterialIcon name="description" size={15} className="text-blue-600" />
+                    <span>서식 선택</span>
+                    {selectedTemplate && (
+                      <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-700 bg-blue-50 border border-blue-200 px-1.5 py-0.2 rounded">
+                        <MaterialIcon name="check" size={12} />
+                        <span>선택됨</span>
+                      </span>
+                    )}
+                  </div>
+                  {selectedTemplate && (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedTemplateId('')}
+                      className="text-xs text-slate-500 hover:text-slate-800 underline transition cursor-pointer"
+                      title="선택된 서식 해제"
+                    >
+                      서식 해제
+                    </button>
+                  )}
+                </div>
+
+                {/* 서식 선택 드롭다운 */}
+                <div>
+                  <select
+                    id="template-select"
+                    value={selectedTemplateId}
+                    onChange={(e) => setSelectedTemplateId(e.target.value)}
+                    className="w-full px-2.5 py-2 bg-white border border-slate-300 rounded-lg text-xs sm:text-[13px] text-slate-800 font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition"
+                  >
+                    <option value="">-- 서식 미선택 (자유 형식 기안문) --</option>
+                    {templates.map((tpl) => (
+                      <option key={tpl.id} value={tpl.id}>
+                        [{tpl.documentType}] {tpl.title} ({tpl.sections.length}개 항목)
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* 1-B. 참고문서 선택 카드 */}
+              <div className="p-3 bg-white border border-slate-200 rounded-lg shadow-2xs space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 font-bold text-slate-900 text-xs sm:text-[13px]">
+                    <MaterialIcon name="attachFile" size={15} className="text-blue-600" />
+                    <span>참고문서 선택</span>
+                    {relatedDocs.length > 0 && (
+                      <span className="text-xs font-normal text-slate-500">
+                        ({relatedDocs.length}건 감지됨)
+                      </span>
+                    )}
+                  </div>
+                  {selectedRelatedDoc && (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedRelatedDoc(null)}
+                      className="text-xs text-slate-500 hover:text-slate-800 underline transition cursor-pointer"
+                      title="선택된 참고문서 해제"
+                    >
+                      참고 해제
+                    </button>
+                  )}
+                </div>
+
+                {relatedDocs.length === 0 ? (
+                  <div className="p-2.5 bg-slate-50 border border-dashed border-slate-200 rounded-lg text-center text-xs text-slate-500 leading-relaxed">
+                    현재 화면에서 감지된 관련정보 참고문서가 없습니다.
+                  </div>
+                ) : (
+                  <div className="space-y-1.5">
+                    {relatedDocs.map((doc, idx) => {
+                      const isSelected = selectedRelatedDoc?.title === doc.title;
+
+                      return (
+                        <div
+                          key={doc.title || idx}
+                          className={`p-2 rounded-lg border transition ${
+                            isSelected
+                              ? 'bg-blue-50/40 border-blue-300 shadow-2xs'
+                              : 'bg-white border-slate-200 hover:border-slate-300'
+                          }`}
+                        >
+                          {/* 1행: 라디오 + 구분 태그 + 문서 제목 + 체크 아이콘(선택 시) + [내용] 버튼(선택 시) */}
+                          <div className="flex items-center justify-between gap-2">
+                            <label
+                              htmlFor={`refdoc-${idx}`}
+                              className="flex-1 min-w-0 cursor-pointer flex items-center gap-1.5"
+                            >
+                              <input
+                                type="radio"
+                                id={`refdoc-${idx}`}
+                                name="relatedDocChoice"
+                                checked={isSelected}
+                                onChange={() => setSelectedRelatedDoc(isSelected ? null : doc)}
+                                className="accent-blue-600 h-4 w-4 cursor-pointer shrink-0 focus-visible:ring-2 focus-visible:ring-blue-500"
+                              />
+                              <span className="text-[11px] font-bold text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200 shrink-0">
+                                {doc.type || '문서'}
+                              </span>
+                              <span
+                                className="text-xs sm:text-[13px] font-medium text-slate-900 truncate flex-1"
+                                title={doc.title}
+                              >
+                                {doc.title}
+                              </span>
+                            </label>
+
+                            {/* 우측: 선택 표시(체크 아이콘) & 내용 확인 버튼 */}
+                            {isSelected && (
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                <span className="text-blue-600 flex items-center" title="참고문서 선택됨">
+                                  <MaterialIcon name="checkCircle" size={16} />
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleToggleExpand(doc)}
+                                  className="px-2 py-0.5 bg-white hover:bg-slate-50 border border-slate-300 text-slate-700 rounded text-xs font-medium transition flex items-center gap-1 cursor-pointer focus-visible:ring-2 focus-visible:ring-blue-500"
+                                  title="참고문서 내용 요약 보기"
+                                >
+                                  <MaterialIcon name={isReferenceExpanded ? 'arrowUp' : 'arrowDown'} size={13} />
+                                  <span>{isReferenceExpanded ? '접기' : '내용'}</span>
+                                </button>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* 펼침 영역: 요약 및 추가 메모 (내용 버튼 클릭 시 유지) */}
+                          {isSelected && isReferenceExpanded && (
+                            <div className="mt-2 pt-2 border-t border-slate-200 space-y-2 text-xs bg-slate-50/70 p-2.5 rounded-lg">
+                              <div className="flex items-center justify-between text-slate-700">
+                                <span className="font-bold text-xs flex items-center gap-1.5">
+                                  <MaterialIcon name="assignment" size={14} className="text-blue-600" />
+                                  <span>참고문서 핵심 요약</span>
+                                  {isSummarizing && (
+                                    <span className="text-[11px] text-blue-600 font-normal animate-pulse">
+                                      (AI 요약 정리 중...)
+                                    </span>
+                                  )}
+                                </span>
+                                {selectedRelatedDoc.content && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setShowRawContent(!showRawContent)}
+                                    className="text-xs text-blue-600 hover:text-blue-800 underline font-medium cursor-pointer"
+                                  >
+                                    {showRawContent ? '요약 보기' : '원문 전체 보기'}
+                                  </button>
+                                )}
+                              </div>
+
+                              {selectedRelatedDoc.content ? (
+                                showRawContent ? (
+                                  <div className="p-2.5 bg-white border border-slate-200 rounded max-h-36 overflow-y-auto font-mono text-[11px] leading-relaxed text-slate-700 whitespace-pre-wrap select-text">
+                                    {selectedRelatedDoc.content}
+                                  </div>
+                                ) : (
+                                  <div className="p-2.5 bg-white border border-slate-200 rounded max-h-36 overflow-y-auto text-xs leading-relaxed text-slate-800 whitespace-pre-wrap select-text shadow-2xs font-sans">
+                                    {refDocSummaries[selectedRelatedDoc.title] ||
+                                      generateRuleBasedSummary(selectedRelatedDoc.content, selectedRelatedDoc.title)}
+                                  </div>
+                                )
+                              ) : isFetchingRefDoc ? (
+                                <div className="p-3 bg-white border border-slate-200 rounded text-center text-blue-700 text-xs">
+                                  <span className="animate-pulse font-medium">열린 탭에서 본문을 조회하고 요약하는 중입니다...</span>
+                                </div>
+                              ) : (
+                                <div className="p-2.5 bg-amber-50 border border-amber-200 rounded text-xs text-amber-800 space-y-1">
+                                  <p className="font-semibold flex items-center gap-1.5">
+                                    <MaterialIcon name="warning" size={13} className="text-amber-600" />
+                                    <span>본문이 아직 열려 있지 않습니다.</span>
+                                  </p>
+                                  <p className="text-[11px] text-amber-700 leading-normal">
+                                    온나라 화면의 <strong>[관련정보]</strong>에서 문서를 클릭해 창을 띄워두신 후 [내용]을 다시 누르시거나, 아래 메모장에 핵심 내용을 직접 적어주세요.
+                                  </p>
+                                </div>
+                              )}
+
+                              {/* 사용자 추가 첨언 메모 */}
+                              <div>
+                                <label htmlFor="ref-doc-custom-notes" className="text-xs text-slate-700 font-semibold block mb-1">
+                                  참고문서 관련 추가 요구사항 또는 핵심 메모 (선택사항):
+                                </label>
+                                <textarea
+                                  id="ref-doc-custom-notes"
+                                  value={customRefNotes}
+                                  onChange={(e) => setCustomRefNotes(e.target.value)}
+                                  placeholder="위 내용을 확인하고, 우리 과 상황에 맞게 반영할 변경사항이나 강조할 내용을 적어주세요. (예: 우리 부서 제출 기한은 10월 12일까지로 변경하여 반영할 것)"
+                                  className="w-full h-18 p-2 border border-slate-300 rounded bg-white text-xs resize-none focus:outline-none focus:ring-1 focus:ring-blue-500 leading-relaxed"
+                                />
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+              </div>
+            </section>
+
+            {/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                영역 2: 작성 요청 (설명적 라벨, 충분한 높이의 textarea, 도움말, 초안 생성 버튼)
+                (선택된 서식의 상태 배지는 제목 옆에 중복 표시하지 않음)
+               ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */}
+            <section aria-labelledby="section-request-title" className="space-y-3">
+              <div className="flex items-center justify-between pb-1 border-b border-slate-200">
+                <h2 id="section-request-title" className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
+                  <span className="w-5 h-5 rounded-full bg-slate-100 text-slate-700 font-bold text-xs flex items-center justify-center border border-slate-300">
+                    2
+                  </span>
+                  <span>작성 요청</span>
+                </h2>
+                <span className="text-xs text-slate-500">핵심 내용 및 요구사항</span>
+              </div>
+
+              <div className="p-3 bg-white border border-slate-200 rounded-lg space-y-2.5 shadow-2xs">
+                <div>
+                  <label htmlFor="draft-prompt-textarea" className="font-semibold text-xs sm:text-[13px] text-slate-800 block mb-1">
+                    기안할 공문서의 핵심 내용이나 개요
+                  </label>
+                  <textarea
+                    id="draft-prompt-textarea"
+                    value={prompt}
+                    onChange={(e) => setPrompt(e.target.value)}
+                    onKeyDown={handlePromptKeyDown}
+                    placeholder={
+                      selectedTemplate
+                        ? `[${selectedTemplate.title}] 서식에 맞추어 작성할 핵심 메모나 요구사항을 입력하세요. (AI가 서식 항목 순서와 표준 공문 어투에 맞춰 완성합니다.)`
+                        : selectedRelatedDoc
+                        ? `예: 위 참고문서 [${selectedRelatedDoc.title}]의 지침에 따라 우리 과 사업 안건 제출 공문 초안 작성해줘.`
+                        : '예: 2026년 공공 AI 업무혁신 추진계획. 추진배경과 3대 전략을 개조식으로 작성해줘.'
+                    }
+                    className="w-full h-28 min-h-[7rem] p-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-xs sm:text-sm resize-y bg-white leading-relaxed placeholder:text-slate-400"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between text-xs text-slate-500 px-0.5">
+                  <span>Enter: 초안 생성 · Shift + Enter: 줄바꿈</span>
+                  {prompt.trim().length > 0 && <span>{prompt.trim().length}자</span>}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleGenerate}
+                  disabled={loading || !prompt.trim()}
+                  className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 text-white rounded-lg font-semibold text-sm transition flex items-center justify-center gap-2 shadow-xs cursor-pointer disabled:cursor-not-allowed focus-visible:ring-2 focus-visible:ring-blue-500"
+                >
+                  {loading ? (
+                    <span className="flex items-center gap-2">
+                      <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      <span>AI 초안 작성 중...</span>
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-1.5">
+                      <MaterialIcon name="autoAwesome" size={16} />
+                      <span>
+                        {selectedTemplate
+                          ? `[${selectedTemplate.title}] 서식으로 초안 생성`
+                          : selectedRelatedDoc
+                          ? '참고문서 반영하여 공문서 초안 생성'
+                          : '공문서 초안 생성'}
+                      </span>
+                    </span>
+                  )}
+                </button>
+              </div>
+            </section>
+
+            {/* 초안 생성 중 애니메이션 인디케이터 */}
             {loading && (
-              <div className="p-3 bg-blue-50/70 border border-blue-200/80 rounded-lg space-y-2.5">
-                <div className="flex items-center gap-2 text-blue-700 font-semibold text-[11px]">
+              <div className="p-3.5 bg-blue-50/60 border border-blue-200 rounded-lg space-y-2.5 animate-pulse">
+                <div className="flex items-center gap-2 text-blue-700 font-semibold text-xs">
                   <span className="relative flex h-2.5 w-2.5">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-blue-600"></span>
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75" />
+                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-blue-600" />
                   </span>
                   <span>
                     {selectedTemplate
                       ? `AI가 [${selectedTemplate.title}] 서식의 ${selectedTemplate.sections.length}개 주요 항목에 맞추어 작성 중입니다...`
                       : selectedRelatedDoc
-                      ? `AI가 참고 문서 [${selectedRelatedDoc.title}]를 반영하여 초안을 작성 중입니다...`
+                      ? `AI가 참고문서 [${selectedRelatedDoc.title}]를 반영하여 초안을 작성 중입니다...`
                       : 'AI가 공문서 추천 제목과 표준 서식 초안을 작성 중입니다...'}
                   </span>
                 </div>
-                {/* 옅은 스켈레톤 라인 애니메이션 */}
-                <div className="animate-pulse space-y-2 pt-1">
-                  <div className="h-2.5 bg-blue-200/60 rounded-full w-11/12"></div>
-                  <div className="h-2.5 bg-blue-200/50 rounded-full w-4/5"></div>
-                  <div className="h-2.5 bg-blue-200/60 rounded-full w-5/6"></div>
-                  <div className="h-2.5 bg-blue-200/40 rounded-full w-3/5"></div>
+                <div className="space-y-2 pt-1">
+                  <div className="h-2.5 bg-blue-200/60 rounded-full w-11/12" />
+                  <div className="h-2.5 bg-blue-200/50 rounded-full w-4/5" />
+                  <div className="h-2.5 bg-blue-200/60 rounded-full w-5/6" />
+                  <div className="h-2.5 bg-blue-200/40 rounded-full w-3/5" />
                 </div>
               </div>
             )}
 
-            {/* 결과 표시 영역 */}
-            {(generatedDraft || recommendedTitle) && !loading && (
-              <div className="space-y-2.5">
-                {/* 추천 제목 카드: 사용자가 추가 버튼 클릭 없이 즉시 수정 가능 & '반영' 버튼으로 본 화면 입력 */}
-                <div className="p-2.5 bg-blue-50/70 border border-blue-200 rounded-lg shadow-2xs space-y-1.5">
+            {/* 초안 생성 오류 안내 (오류 문구를 생성된 초안으로 취급하지 않음) */}
+            {generationError && !loading && (
+              <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-lg space-y-2 text-rose-900" role="alert">
+                <div className="flex items-center justify-between font-bold text-xs">
+                  <span className="flex items-center gap-1.5 text-rose-700">
+                    <MaterialIcon name="warning" size={16} />
+                    <span>초안 생성 실패</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setGenerationError(null)}
+                    className="text-rose-500 hover:text-rose-700 p-0.5 rounded cursor-pointer"
+                    title="오류 닫기"
+                  >
+                    <MaterialIcon name="close" size={14} />
+                  </button>
+                </div>
+                <p className="text-xs text-rose-800 leading-relaxed font-mono whitespace-pre-wrap bg-white/70 p-2 rounded border border-rose-200">
+                  {generationError}
+                </p>
+                <div className="flex items-center justify-between pt-1">
+                  <span className="text-[11px] text-rose-600">
+                    로컬 AI 모델(Ollama) 설정과 서비스 상태를 확인해주세요.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleGenerate}
+                    disabled={loading || !prompt.trim()}
+                    className="px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded text-xs font-semibold transition cursor-pointer"
+                  >
+                    다시 시도
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                영역 3: 생성 결과 (결과가 생성되었을 때만 표시)
+                - 추천 제목: 수정 가능한 입력창과 '제목 반영' 버튼을 한 그룹으로 배치
+                - 초안 본문: 결과의 중심 콘텐츠, 넉넉한 글자 크기(14px)와 줄 간격
+                - 서식 복사/초안 복사 중복 제거: 복사 동작은 하단 고정 동작 영역에만 배치
+               ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */}
+            {(generatedDraft || recommendedTitle) && !loading && !generationError && (
+              <section ref={resultSectionRef} aria-labelledby="section-result-title" className="space-y-3">
+                <div className="flex items-center justify-between pb-1 border-b border-slate-200">
+                  <h2 id="section-result-title" className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
+                    <span className="w-5 h-5 rounded-full bg-blue-100 text-blue-700 font-bold text-xs flex items-center justify-center border border-blue-300">
+                      3
+                    </span>
+                    <span>생성 결과</span>
+                  </h2>
+                  <span className="text-xs text-slate-500">제목 반영 및 본문 확인</span>
+                </div>
+
+                {/* 3-A. 추천 공문 제목 그룹 (입력창 + 제목 반영 버튼 + 상태 표시) */}
+                <div className="p-3 bg-white border border-slate-200 rounded-lg shadow-2xs space-y-2">
                   <div className="flex items-center justify-between">
-                    <label className="font-bold text-slate-800 text-[11px] flex items-center gap-1.5">
-                      <MaterialIcon name="label" size={14} className="text-blue-600" />
+                    <label htmlFor="recommended-title-input" className="font-bold text-slate-900 text-xs sm:text-[13px] flex items-center gap-1.5">
+                      <MaterialIcon name="label" size={15} className="text-blue-600" />
                       <span>추천 공문 제목</span>
                     </label>
-                    {hasAppliedTitle && (
-                      <span className="text-[10px] text-emerald-700 font-semibold bg-emerald-50 border border-emerald-200 px-1.5 py-0.2 rounded flex items-center gap-1">
-                        <MaterialIcon name="check" size={12} />
+
+                    {/* 제목 반영 상태 인디케이터 */}
+                    {isApplyingTitle ? (
+                      <span className="text-xs text-blue-700 font-medium flex items-center gap-1">
+                        <span className="w-3 h-3 border-2 border-blue-600/30 border-t-blue-600 rounded-full animate-spin" />
+                        <span>반영 중...</span>
+                      </span>
+                    ) : hasAppliedTitle ? (
+                      <span className="text-xs text-emerald-700 font-semibold bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded flex items-center gap-1">
+                        <MaterialIcon name="check" size={13} />
                         <span>공문 본 화면 반영됨</span>
                       </span>
-                    )}
+                    ) : titleApplyError ? (
+                      <span className="text-xs text-rose-600 font-medium flex items-center gap-1">
+                        <MaterialIcon name="warning" size={13} />
+                        <span>{titleApplyError}</span>
+                      </span>
+                    ) : null}
                   </div>
-                  <div className="flex items-center gap-1.5">
+
+                  <div className="flex gap-2 items-center">
                     <input
+                      id="recommended-title-input"
                       type="text"
                       value={recommendedTitle}
                       onChange={(e) => {
                         setRecommendedTitle(e.target.value);
                         setHasAppliedTitle(false);
+                        setTitleApplyError(null);
                       }}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter') {
@@ -803,114 +955,133 @@ export function DrawerApp() {
                         }
                       }}
                       placeholder="초안에 적합한 공문 제목을 입력하거나 수정하세요"
-                      className="flex-1 px-2.5 py-1.5 bg-white border border-slate-300 rounded text-xs font-semibold text-slate-900 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition"
+                      className="flex-1 px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs sm:text-sm font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition"
                     />
                     <button
                       type="button"
                       onClick={handleApplyTitle}
                       disabled={!recommendedTitle.trim() || isApplyingTitle}
-                      className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 text-white rounded text-xs font-bold transition shrink-0 flex items-center gap-1 shadow-2xs cursor-pointer"
+                      className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 text-white rounded-lg text-xs font-bold transition shrink-0 flex items-center gap-1 shadow-2xs cursor-pointer focus-visible:ring-2 focus-visible:ring-blue-500"
                       title="공문 본 화면의 '제목' 필드에 즉시 입력합니다"
                     >
-                      {isApplyingTitle ? <span>반영 중...</span> : <span>반영</span>}
+                      <span>제목 반영</span>
                     </button>
                   </div>
                 </div>
 
-                {/* 초안 본문 영역 */}
+                {/* 3-B. 초안 본문 영역 (결과의 중심 콘텐츠로 편안한 읽기 환경 제공) */}
                 {generatedDraft && (
                   <div className="space-y-1.5">
                     <div className="flex items-center justify-between">
-                      <span className="font-semibold text-slate-700 flex items-center gap-1.5">
-                        <MaterialIcon name="description" size={14} className="text-slate-600" />
-                        <span>공문서 초안</span>
+                      <label className="font-bold text-slate-900 text-xs sm:text-[13px] flex items-center gap-1.5">
+                        <MaterialIcon name="description" size={15} className="text-slate-700" />
+                        <span>공문서 초안 본문</span>
+                      </label>
+                      <span className="text-xs text-slate-500 font-medium">
+                        {generatedDraft.length.toLocaleString()}자
                       </span>
-                      <button
-                        onClick={copyToClipboard}
-                        className="text-[11px] text-blue-600 hover:underline font-semibold flex items-center gap-1"
-                      >
-                        <MaterialIcon name="contentCopy" size={12} />
-                        <span>서식 복사</span>
-                      </button>
                     </div>
-                    <div className="p-3 bg-white border border-slate-300 rounded-lg shadow-sm whitespace-pre-wrap leading-[1.68] max-h-64 overflow-y-auto select-text font-sans text-slate-800 text-[11.5px] tracking-tight">
+                    <div
+                      tabIndex={0}
+                      aria-label="생성된 공문서 초안 본문"
+                      className="p-3.5 bg-white border border-slate-300 rounded-lg shadow-2xs whitespace-pre-wrap leading-[1.72] min-h-[180px] max-h-[380px] overflow-y-auto select-text font-sans text-slate-800 text-xs sm:text-sm tracking-tight focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
                       {generatedDraft}
                     </div>
                   </div>
                 )}
-              </div>
+              </section>
             )}
 
+            {/* 상태 알림 메시지 */}
             {statusMsg && (
-              <div className="p-2 bg-blue-50 border border-blue-200 text-blue-800 rounded text-center font-medium">
+              <div
+                role="status"
+                aria-live="polite"
+                className="p-2.5 bg-blue-50 border border-blue-200 text-blue-900 rounded-lg text-center font-medium text-xs shadow-2xs"
+              >
                 {statusMsg}
               </div>
             )}
           </div>
 
-          {/* 하단 액션 바 */}
-          <footer className="p-3 bg-white border-t border-slate-200 space-y-2 shrink-0">
+          {/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+              하단 고정 동작 영역
+              - 결과가 있을 때: '초안 복사'와 '본문에 삽입'(주요 동작) 표시
+              - 삽입 위치 선택 중: 안내 문구와 '선택 취소' 표시
+             ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */}
+          <footer className="p-3 bg-white border-t border-slate-200 shrink-0">
             {isTargetSelecting ? (
-              <div className="p-2 bg-blue-50 border border-blue-200 rounded flex items-center justify-between">
-                <span className="text-blue-800 font-semibold text-[11px] flex items-center gap-1.5">
-                  <MaterialIcon name="adsClick" size={14} className="text-blue-600" />
-                  <span>기안기 화면에서 초안을 넣을 위치를 클릭하세요</span>
+              <div className="p-2.5 bg-blue-50 border border-blue-200 rounded-lg flex items-center justify-between gap-2">
+                <span className="text-blue-900 font-medium text-xs flex items-center gap-1.5 flex-1 min-w-0">
+                  <MaterialIcon name="adsClick" size={16} className="text-blue-600 shrink-0" />
+                  <span className="truncate">기안기 화면에서 초안을 넣을 위치를 클릭하세요 (Esc 취소)</span>
                 </span>
                 <button
+                  type="button"
                   onClick={handleCancelClickTarget}
-                  className="px-2.5 py-1 bg-white border border-blue-300 text-blue-700 rounded text-[11px] font-semibold hover:bg-blue-100"
+                  className="px-3 py-1.5 bg-white hover:bg-slate-50 border border-blue-300 text-blue-700 rounded-md text-xs font-semibold transition shrink-0 shadow-2xs cursor-pointer focus-visible:ring-2 focus-visible:ring-blue-500"
                 >
                   선택 취소
                 </button>
               </div>
-            ) : (
+            ) : generatedDraft ? (
               <div className="flex gap-2 items-center">
                 <button
+                  type="button"
                   onClick={copyToClipboard}
-                  disabled={!generatedDraft || loading}
-                  className="px-4 py-2 border border-slate-300 rounded-md font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40 whitespace-nowrap text-xs shadow-sm transition flex items-center gap-1.5"
-                  title="정제된 초안을 클립보드에 복사"
+                  disabled={loading}
+                  className="px-3.5 py-2.5 border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 rounded-lg font-semibold text-xs sm:text-sm whitespace-nowrap shadow-2xs transition flex items-center gap-1.5 cursor-pointer focus-visible:ring-2 focus-visible:ring-blue-500"
+                  title="정제된 표준 공문서 초안을 클립보드에 복사합니다 (Ctrl+V로 붙여넣기)"
                 >
-                  <MaterialIcon name="contentCopy" size={14} />
+                  <MaterialIcon name="contentCopy" size={15} />
                   <span>초안 복사</span>
                 </button>
                 <button
+                  type="button"
                   onClick={handleStartClickTarget}
-                  disabled={!generatedDraft || loading}
-                  className="flex-1 py-2 bg-blue-600 text-white rounded-md font-semibold hover:bg-blue-700 disabled:opacity-40 whitespace-nowrap px-3 shadow-sm text-xs flex items-center justify-center gap-1.5 transition"
-                  title="원하는 본문이나 입력창을 클릭하여 즉시 삽입합니다."
+                  disabled={loading}
+                  className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold text-xs sm:text-sm whitespace-nowrap px-4 shadow-xs flex items-center justify-center gap-1.5 transition cursor-pointer focus-visible:ring-2 focus-visible:ring-blue-500"
+                  title="기안기 본문 또는 원하는 입력창을 클릭하여 즉시 삽입합니다"
                 >
-                  <MaterialIcon name="adsClick" size={15} />
-                  <span>클릭한 위치에 삽입</span>
+                  <MaterialIcon name="adsClick" size={16} />
+                  <span>본문에 삽입</span>
                 </button>
               </div>
-            )}
+            ) : null}
           </footer>
 
-          {/* 2단계 명시적 승인 모달 */}
+          {/* 2단계 명시적 승인 모달 (본문 삽입 사전 확인) */}
           {approvalModal.open && (
-            <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-3 z-50">
-              <div className="bg-white rounded-lg p-4 max-w-xs w-full space-y-3 shadow-xl border border-slate-200">
-                <h3 className="font-bold text-slate-900 text-sm flex items-center gap-1.5">
-                  <MaterialIcon name="warning" size={16} className="text-amber-500" />
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="approval-modal-title"
+              className="fixed inset-0 bg-black/40 flex items-center justify-center p-3 z-50"
+            >
+              <div className="bg-white rounded-xl p-4 max-w-sm w-full space-y-3.5 shadow-xl border border-slate-200">
+                <h3 id="approval-modal-title" className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                  <MaterialIcon name="warning" size={18} className="text-amber-500" />
                   <span>본문 삽입 사전 확인</span>
                 </h3>
-                <p className="text-slate-600 text-xs leading-relaxed">
-                  기안기 <span className="font-semibold text-blue-600">{approvalModal.targetLabel}</span>에 생성된 초안을 직접 입력합니다.
+                <p className="text-slate-700 text-xs leading-relaxed">
+                  기안기 <span className="font-bold text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200">{approvalModal.targetLabel}</span>에 생성된 초안을 직접 입력합니다.
                 </p>
-                <div className="p-2 bg-amber-50 border border-amber-200 text-amber-800 text-[11px] rounded">
+                <div className="p-2.5 bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-lg leading-relaxed">
                   ※ 자동 저장이나 결재는 진행되지 않습니다. 삽입 후 기안기 본문에서 내용을 최종 검토하고 직접 저장하세요.
                 </div>
                 <div className="flex gap-2 justify-end pt-1">
                   <button
+                    type="button"
                     onClick={() => setApprovalModal({ open: false })}
-                    className="px-3 py-1.5 rounded border border-slate-300 text-slate-600 hover:bg-slate-50 font-semibold"
+                    className="px-3.5 py-2 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50 font-semibold text-xs transition cursor-pointer"
                   >
                     취소
                   </button>
                   <button
+                    type="button"
                     onClick={handleConfirmApply}
-                    className="px-3 py-1.5 rounded bg-blue-600 text-white hover:bg-blue-700 font-semibold"
+                    className="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 font-semibold text-xs transition cursor-pointer shadow-xs"
                   >
                     이 문서에 삽입
                   </button>

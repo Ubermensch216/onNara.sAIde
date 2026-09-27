@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   captureActiveSelection,
   replaceSelectedText,
   calculateBubblePosition,
+  composePlacementText,
 } from './selection-manager';
 
 describe('selection-manager', () => {
@@ -169,8 +170,79 @@ describe('selection-manager', () => {
     });
   });
 
+  describe('composePlacementText', () => {
+    it('replace 모드에서는 새 텍스트만 반환한다', () => {
+      const res = composePlacementText('기존 내용', '새로운 내용', 'replace');
+      expect(res).toBe('새로운 내용');
+    });
+
+    it('insert-before 모드에서는 새 텍스트를 원본 앞에 배치한다', () => {
+      const res = composePlacementText('추진하고자 함.', '신속하게', 'insert-before');
+      expect(res).toBe('신속하게 추진하고자 함.');
+    });
+
+    it('insert-after 모드에서는 새 텍스트를 원본 뒤에 배치한다', () => {
+      const res = composePlacementText('추진하고자 함.', '신속하게', 'insert-after');
+      expect(res).toBe('추진하고자 함. 신속하게');
+    });
+
+    it('줄바꿈이 포함된 경우 개행 문자로 연결한다', () => {
+      const orig = '1. 안건 개요\n2. 추진 배경';
+      const added = '0. 총괄 요약';
+      const before = composePlacementText(orig, added, 'insert-before');
+      expect(before).toBe('0. 총괄 요약\n1. 안건 개요\n2. 추진 배경');
+
+      const after = composePlacementText(orig, '3. 기대 효과', 'insert-after');
+      expect(after).toBe('1. 안건 개요\n2. 추진 배경\n3. 기대 효과');
+    });
+  });
+
   describe('replaceSelectedText', () => {
-    it('textarea의 선택 영역을 새로운 텍스트로 치환한다', async () => {
+    it('WebHWP 선택이 풀리면 현재 커서로 삽입하지 않는다', async () => {
+      const sendMessage = vi.fn().mockResolvedValue({ success: false, error: 'SELECTION_CHANGED' });
+      vi.stubGlobal('chrome', { runtime: { sendMessage } });
+      try {
+        const result = await replaceSelectedText({
+          text: '원래 선택한 문장',
+          clientRect: new DOMRect(0, 0, 100, 20),
+          targetElement: null,
+          ownerDoc: document,
+          isEditable: true,
+          isHwp: true,
+        }, '다듬은 문장');
+
+        expect(result.success).toBe(false);
+        expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({
+          type: 'DRAFT_MAIN_WORLD_HWP_REPLACE_SELECTION',
+          expectedSelectionText: '원래 선택한 문장',
+        }));
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it('선택 이후 입력 내용이 바뀌면 이전 범위에 삽입하지 않는다', async () => {
+      const ta = document.createElement('textarea');
+      ta.value = '원래 선택한 문장';
+      document.body.appendChild(ta);
+      const selection = {
+        text: '선택한',
+        clientRect: new DOMRect(0, 0, 100, 20),
+        targetElement: ta,
+        ownerDoc: document,
+        isEditable: true,
+        inputRange: { start: 3, end: 6 },
+      };
+
+      ta.value = '원래 바뀌어 버린 문장';
+      const result = await replaceSelectedText(selection, '교정한');
+
+      expect(result.success).toBe(false);
+      expect(ta.value).toBe('원래 바뀌어 버린 문장');
+      ta.remove();
+    });
+
+    it('textarea의 선택 영역을 새로운 텍스트로 치환한다 (replace)', async () => {
       const doc = document.implementation.createHTMLDocument();
       const ta = doc.createElement('textarea');
       ta.value = '오늘은 화창한 날씨입니다.';
@@ -185,9 +257,49 @@ describe('selection-manager', () => {
         inputRange: { start: 4, end: 7 },
       };
 
-      const res = await replaceSelectedText(selection, '매우 맑은');
+      const res = await replaceSelectedText(selection, '매우 맑은', 'replace');
       expect(res.success).toBe(true);
       expect(ta.value).toBe('오늘은 매우 맑은 날씨입니다.');
+    });
+
+    it('textarea의 선택 영역 앞에 텍스트를 삽입한다 (insert-before)', async () => {
+      const doc = document.implementation.createHTMLDocument();
+      const ta = doc.createElement('textarea');
+      ta.value = '사업을 추진하고자 함.';
+      doc.body.appendChild(ta);
+
+      const selection = {
+        text: '추진하고자 함.',
+        clientRect: { top: 0, left: 0, width: 100, height: 20 } as DOMRect,
+        targetElement: ta,
+        ownerDoc: doc,
+        isEditable: true,
+        inputRange: { start: 4, end: 13 },
+      };
+
+      const res = await replaceSelectedText(selection, '적극적으로', 'insert-before');
+      expect(res.success).toBe(true);
+      expect(ta.value).toBe('사업을 적극적으로 추진하고자 함.');
+    });
+
+    it('textarea의 선택 영역 뒤에 텍스트를 삽입한다 (insert-after)', async () => {
+      const doc = document.implementation.createHTMLDocument();
+      const ta = doc.createElement('textarea');
+      ta.value = '사업을 추진하고자 함.';
+      doc.body.appendChild(ta);
+
+      const selection = {
+        text: '사업을',
+        clientRect: { top: 0, left: 0, width: 100, height: 20 } as DOMRect,
+        targetElement: ta,
+        ownerDoc: doc,
+        isEditable: true,
+        inputRange: { start: 0, end: 3 },
+      };
+
+      const res = await replaceSelectedText(selection, '조속히', 'insert-after');
+      expect(res.success).toBe(true);
+      expect(ta.value).toBe('사업을 조속히 추진하고자 함.');
     });
   });
 

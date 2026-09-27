@@ -76,13 +76,18 @@ describe('bubble-transform', () => {
       expect(userPrompt).toContain('안녕하새요.');
     });
 
-    it('문장 다듬기 6대 모드가 모두 유효한 프롬프트를 생성한다', () => {
-      const modes = ['shorten', 'expand', 'official', 'bullet', 'refine', 'courtesy'] as const;
-      for (const m of modes) {
-        const { systemPrompt, userPrompt } = buildTransformPrompt(m, '테스트 문장');
-        expect(systemPrompt).toBeDefined();
-        expect(userPrompt).toContain('테스트 문장');
-      }
+    it('문서 전체 맥락(context)이 제공되면 프롬프트에 맥락 참고 영역이 포함된다', () => {
+      const context = {
+        title: '2026 부산 웰니스관광 활성화 계획',
+        bodyContext: '본 계획은 시민 건강증진과 체류형 관광 활성화를 목적으로 수립됨.',
+      };
+      const { systemPrompt, userPrompt } = buildTransformPrompt('official', '추진하고자 함.', context);
+
+      expect(userPrompt).toContain('[문서 전체 맥락 참고]');
+      expect(userPrompt).toContain('문서 제목: 2026 부산 웰니스관광 활성화 계획');
+      expect(userPrompt).toContain('본 계획은 시민 건강증진과 체류형 관광 활성화');
+      expect(userPrompt).toContain('[변환 대상 문장]\n추진하고자 함.');
+      expect(systemPrompt).toContain('결과물에는 반드시 사용자가 블럭 지정한 [변환 대상 문장]만을 교정·변환한 단독 결과 텍스트만 출력');
     });
   });
 });

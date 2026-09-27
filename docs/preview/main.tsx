@@ -314,6 +314,23 @@ if (mode.startsWith('options') || OPTION_VIEWS.includes(mode)) {
             type: 'SAIDE_SET_DRAFT_PREVIEW',
             activeTab: 'templates',
           }, '*');
+        } else if (new URLSearchParams(location.search).get('state') === 'init') {
+          window.postMessage({
+            type: 'SAIDE_SET_DRAFT_PREVIEW',
+            templateId: 'builtin-work-report',
+            prompt: '수신 공문 지침에 따라 2026년도 인공지능 행정업무 시범사업 추진계획 업무보고 초안을 작성해줘.',
+          }, '*');
+        } else if (new URLSearchParams(location.search).get('state') === 'ref-expanded') {
+          window.postMessage({
+            type: 'SAIDE_SET_DRAFT_PREVIEW',
+            templateId: 'builtin-work-report',
+            prompt: '수신 공문 지침에 따라 2026년도 인공지능 행정업무 시범사업 추진계획 업무보고 초안을 작성해줘.',
+          }, '*');
+          setTimeout(() => {
+            const btns = [...document.querySelectorAll('button')];
+            const contentBtn = btns.find((b) => b.textContent?.includes('내용'));
+            contentBtn?.click();
+          }, 180);
         } else {
           window.postMessage({
             type: 'SAIDE_SET_DRAFT_PREVIEW',
