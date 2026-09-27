@@ -208,8 +208,11 @@ export async function transformTextWithAI(
       { role: 'user', content: userPrompt },
     ],
     stream: false,
+    think: false, // ★ 매우 중요: gemma4 등 thinking 모델의 30초 지연 및 공백 방지
+    keep_alive: settings.keepAlive || '10m',
     options: {
       temperature: 0.3, // 교정 및 다듬기는 정밀도를 위해 낮은 temperature 적용
+      num_ctx: settings.numCtx,
     },
   };
 
@@ -225,7 +228,11 @@ export async function transformTextWithAI(
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
     if (resp?.error) throw new Error(resp.error);
     const rawOutput = resp?.result || '';
-    return cleanAdminDraft(rawOutput);
+    const cleaned = cleanAdminDraft(rawOutput);
+    if (!cleaned || !cleaned.trim()) {
+      throw new Error('AI 변환 결과가 비어 있습니다. 다시 시도해 주세요.');
+    }
+    return cleaned;
   }
 
   // chrome.runtime이 없는 환경(테스트 등)에서는 직접 fetch
@@ -241,6 +248,11 @@ export async function transformTextWithAI(
   }
 
   const json = await response.json();
-  const rawOutput = json.message?.content || '';
-  return cleanAdminDraft(rawOutput);
+  let rawOutput = json.message?.content || json.message?.thinking || '';
+  rawOutput = rawOutput.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+  const cleaned = cleanAdminDraft(rawOutput);
+  if (!cleaned || !cleaned.trim()) {
+    throw new Error('AI 변환 결과가 비어 있습니다. 다시 시도해 주세요.');
+  }
+  return cleaned;
 }

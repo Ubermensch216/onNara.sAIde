@@ -231,5 +231,63 @@ describe('selection-manager', () => {
       expect(pos.placement).toBe('bottom');
       expect(pos.top).toBe(48); // 40 + 8
     });
+
+    it('화면 오른쪽 가장자리에 블럭이 지정되면 버블이 화면 밖으로 잘리지 않도록 우측 여백 12px 이내로 완벽히 클램프된다', () => {
+      window.innerWidth = 1200;
+      window.innerHeight = 800;
+
+      // 선택 영역이 화면 오른쪽 끝(left: 1100, width: 90 -> right: 1190)
+      const rect = {
+        top: 300,
+        left: 1100,
+        width: 90,
+        height: 24,
+        bottom: 324,
+        right: 1190,
+      } as DOMRect;
+
+      const bubbleWidth = 580;
+      const pos = calculateBubblePosition(rect, bubbleWidth, 44, 8);
+
+      // 버블의 오른쪽 끝(pos.left + bubbleWidth)이 viewportWidth - 12 (1188)를 절대 초과하지 않아야 함!
+      expect(pos.left + bubbleWidth).toBeLessThanOrEqual(1200 - 12);
+      expect(pos.left).toBe(1200 - bubbleWidth - 12); // 608
+    });
+
+    it('화면 왼쪽 가장자리에 블럭이 지정되면 버블이 좌측 12px 여백을 유지한다', () => {
+      window.innerWidth = 1200;
+      window.innerHeight = 800;
+
+      // 선택 영역이 화면 왼쪽 끝(left: 0, width: 30)
+      const rect = {
+        top: 300,
+        left: 0,
+        width: 30,
+        height: 24,
+        bottom: 324,
+        right: 30,
+      } as DOMRect;
+
+      const pos = calculateBubblePosition(rect, 580, 44, 8);
+      expect(pos.left).toBe(12);
+    });
+
+    it('화면 맨 아래쪽에 블럭이 지정되고 하단 공간이 부족하면 뷰포트 하단 10px 이내로 안전하게 유지된다', () => {
+      window.innerWidth = 1200;
+      window.innerHeight = 800;
+
+      // 선택 영역이 화면 최하단(top: 780, bottom: 795)
+      const rect = {
+        top: 780,
+        left: 500,
+        width: 100,
+        height: 15,
+        bottom: 795,
+        right: 600,
+      } as DOMRect;
+
+      const pos = calculateBubblePosition(rect, 580, 44, 8);
+      expect(pos.top + 44).toBeLessThanOrEqual(800 - 10);
+    });
   });
 });

@@ -167,7 +167,8 @@ export function captureActiveSelection(
 export async function captureWebHwpSelection(
   doc: Document = document,
   mousePos?: { clientX: number; clientY: number },
-  targetEl?: HTMLElement | null
+  targetEl?: HTMLElement | null,
+  fallbackRect?: DOMRect | null
 ): Promise<SelectionInfo | null> {
   // 문서카드 화면이면 무시
   if (isDraftCardScreen(doc)) {
@@ -191,9 +192,39 @@ export async function captureWebHwpSelection(
       text = await getViaMainWorldHwpSelection(doc);
     }
     if (text && text.trim().length >= 2) {
-      const x = mousePos?.clientX ?? (window.innerWidth / 2);
-      const y = mousePos?.clientY ?? (window.innerHeight / 2);
-      const fakeRect = new DOMRect(x - 60, y - 20, 120, 24);
+      // 1. 기존 유효 rect가 있고 마우스 위치가 없으면 기존 위치 유지
+      if (fallbackRect && fallbackRect.width > 0 && fallbackRect.height > 0) {
+        return {
+          text: text.trim(),
+          clientRect: fallbackRect,
+          targetElement: targetEl || null,
+          ownerDoc: doc,
+          isEditable: true,
+          isHwp: true,
+        };
+      }
+
+      // 2. 마우스 좌표 결정 (마우스 위치 -> 타깃 엘리먼트 중심 -> 화면 중앙 폴백)
+      let x = mousePos?.clientX;
+      let y = mousePos?.clientY;
+
+      if (typeof x !== 'number' || typeof y !== 'number') {
+        if (targetEl && typeof targetEl.getBoundingClientRect === 'function') {
+          const tRect = targetEl.getBoundingClientRect();
+          if (tRect.width > 0 && tRect.height > 0) {
+            x = tRect.left + tRect.width / 2;
+            y = tRect.top + Math.min(60, tRect.height / 2);
+          }
+        }
+      }
+
+      const winWidth = typeof window !== 'undefined' ? window.innerWidth : 1200;
+      const winHeight = typeof window !== 'undefined' ? window.innerHeight : 800;
+
+      const finalX = typeof x === 'number' ? Math.max(20, Math.min(x, winWidth - 20)) : winWidth / 2;
+      const finalY = typeof y === 'number' ? Math.max(20, Math.min(y, winHeight - 20)) : winHeight / 2;
+
+      const fakeRect = new DOMRect(finalX - 60, finalY - 20, 120, 24);
 
       return {
         text: text.trim(),
@@ -322,33 +353,37 @@ export async function replaceSelectedText(
   return { success: false, message: '텍스트를 적용하지 못했습니다.' };
 }
 
-/** 툴바의 최적 표시 좌표(Top, Left)를 뷰포트 경계에 맞춰 계산 */
+/** 툴바의 최적 표시 좌표(Top, Left)를 뷰포트 경계에 맞춰 계산 (화면 가장자리 잘림 100% 방지) */
 export function calculateBubblePosition(
   rect: DOMRect,
-  bubbleWidth: number = 380,
+  bubbleWidth: number = 580,
   bubbleHeight: number = 44,
   offsetY: number = 8
 ): { top: number; left: number; placement: 'top' | 'bottom' } {
-  const viewportWidth = window.innerWidth;
-  const viewportHeight = window.innerHeight;
+  const viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 1200;
+  const viewportHeight = typeof window !== 'undefined' ? window.innerHeight : 800;
 
   // 수평 중앙 정렬
   let left = rect.left + rect.width / 2 - bubbleWidth / 2;
-  // 좌우 여백 12px 보장
-  left = Math.max(12, Math.min(left, viewportWidth - bubbleWidth - 12));
+  // 좌우 여백 12px 엄격 보장 (가장자리 블럭 지정 시에도 화면 밖으로 절대 나가지 않음)
+  const maxLeft = Math.max(12, viewportWidth - bubbleWidth - 12);
+  left = Math.max(12, Math.min(left, maxLeft));
 
   // 기본은 선택 영역 상단
   let top = rect.top - bubbleHeight - offsetY;
   let placement: 'top' | 'bottom' = 'top';
 
-  // 상단 공간이 부족하면 선택 영역 하단으로 이동
+  // 상단 공간이 부족(top < 10)하면 선택 영역 하단으로 플립(Flip)
   if (top < 10) {
     top = rect.bottom + offsetY;
     placement = 'bottom';
-    // 하단 공간도 부족하면 뷰포트 내부로 강제 클램프
+    // 하단 공간도 부족하면 뷰포트 내부로 강제 클램프 (화면 최하단에 걸치지 않도록)
     if (top + bubbleHeight > viewportHeight - 10) {
       top = Math.max(10, viewportHeight - bubbleHeight - 10);
     }
+  } else if (top + bubbleHeight > viewportHeight - 10) {
+    // 상단 배치인데도 하단 뷰포트를 벗어나는 경우 보정
+    top = Math.max(10, viewportHeight - bubbleHeight - 10);
   }
 
   return {

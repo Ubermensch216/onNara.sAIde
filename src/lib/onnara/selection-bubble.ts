@@ -59,6 +59,8 @@ export function createSelectionBubble(
   wrapper.style.display = 'none';
 
   let currentSelection: SelectionInfo | null = null;
+  let lastValidRect: DOMRect | null = null;
+  let lastMousePos: { clientX: number; clientY: number } | null = null;
   let isDropdownOpen = false;
   let isLoading = false;
   let pendingResult: { original: string; transformed: string; actionTitle: string } | null = null;
@@ -76,6 +78,8 @@ export function createSelectionBubble(
         line-height: 1.4;
         color: #1e293b;
         user-select: none;
+        max-width: calc(100vw - 24px);
+        box-sizing: border-box;
         animation: saideBubbleFadeIn 0.15s ease-out;
       }
 
@@ -90,6 +94,38 @@ export function createSelectionBubble(
         border-radius: 9px;
         box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.35), 0 8px 10px -6px rgba(0, 0, 0, 0.25);
         border: 1px solid #334155;
+        position: relative;
+        overflow: hidden;
+        box-sizing: border-box;
+        max-width: 100%;
+        transition: border-color 0.25s ease, box-shadow 0.25s ease;
+      }
+
+      /* AI 작업 중 툴바 옅은 애니메이션 */
+      .saide-bubble-bar.is-ai-working {
+        border-color: rgba(99, 102, 241, 0.65);
+        box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.35), 0 0 16px rgba(99, 102, 241, 0.35);
+        animation: saideAiBarPulse 2s ease-in-out infinite alternate;
+      }
+
+      /* AI 작업 중 툴바 하단 옅은 광채/쉬머 흐름 라인 */
+      .saide-bubble-bar.is-ai-working::after {
+        content: '';
+        position: absolute;
+        bottom: 0;
+        left: -100%;
+        width: 200%;
+        height: 2px;
+        background: linear-gradient(
+          90deg,
+          transparent 0%,
+          rgba(96, 165, 250, 0.2) 20%,
+          rgba(99, 102, 241, 0.85) 50%,
+          rgba(168, 85, 247, 0.85) 80%,
+          transparent 100%
+        );
+        animation: saideAiShimmerLine 1.8s ease-in-out infinite;
+        pointer-events: none;
       }
 
       .saide-bubble-btn {
@@ -104,7 +140,7 @@ export function createSelectionBubble(
         font-size: 11.5px;
         font-weight: 500;
         cursor: pointer;
-        transition: background 0.15s ease, color 0.15s ease;
+        transition: background 0.15s ease, color 0.15s ease, opacity 0.2s ease;
         white-space: nowrap;
       }
       .saide-bubble-btn svg, .saide-dropdown-item svg, .saide-action-btn svg { flex: none; }
@@ -115,6 +151,18 @@ export function createSelectionBubble(
       .saide-bubble-btn.active {
         background: #2563eb;
         color: #ffffff;
+      }
+      .saide-bubble-btn.is-ai-active {
+        background: rgba(37, 99, 235, 0.4);
+        color: #93c5fd;
+      }
+      .saide-bubble-btn.is-ai-active svg {
+        animation: saideIconBreath 1.3s ease-in-out infinite alternate;
+      }
+      .saide-bubble-btn.is-busy {
+        opacity: 0.45;
+        cursor: not-allowed;
+        pointer-events: none;
       }
       .saide-bubble-btn.close-btn {
         padding: 5px 6px;
@@ -147,8 +195,14 @@ export function createSelectionBubble(
         flex-direction: column;
         gap: 2px;
         min-width: 190px;
+        max-width: calc(100vw - 24px);
+        box-sizing: border-box;
         z-index: 10;
         animation: saideBubbleFadeIn 0.12s ease-out;
+      }
+      .saide-bubble-dropdown.align-right {
+        left: auto;
+        right: 6px;
       }
       .saide-dropdown-item {
         display: flex;
@@ -261,21 +315,97 @@ export function createSelectionBubble(
         margin-top: 6px;
         background: #ffffff;
         border: 1px solid #cbd5e1;
-        border-radius: 8px;
-        padding: 10px 14px;
-        box-shadow: 0 10px 20px rgba(0, 0, 0, 0.15);
+        border-radius: 9px;
+        padding: 9px 12px;
+        box-shadow: 0 10px 22px rgba(0, 0, 0, 0.12), 0 0 12px rgba(99, 102, 241, 0.15);
         display: flex;
         align-items: center;
         gap: 10px;
-        width: 320px;
+        width: 360px;
+        max-width: 90vw;
+        position: relative;
+        overflow: hidden;
+        animation: saideBubbleFadeIn 0.15s ease-out;
+      }
+      .saide-loading-box::after {
+        content: '';
+        position: absolute;
+        bottom: 0;
+        left: -100%;
+        width: 200%;
+        height: 2px;
+        background: linear-gradient(
+          90deg,
+          transparent 0%,
+          rgba(59, 130, 246, 0.2) 20%,
+          #3b82f6 50%,
+          #8b5cf6 80%,
+          transparent 100%
+        );
+        animation: saideAiShimmerLine 1.6s ease-in-out infinite;
       }
       .saide-spinner {
-        width: 16px;
-        height: 16px;
+        width: 18px;
+        height: 18px;
         border: 2px solid #e2e8f0;
         border-top-color: #2563eb;
+        border-right-color: #818cf8;
         border-radius: 50%;
-        animation: saideSpin 0.7s linear infinite;
+        flex: none;
+        animation: saideSpin 0.75s linear infinite;
+      }
+      .saide-loading-text-wrap {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+      .saide-loading-title {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 11px;
+        font-weight: 600;
+        color: #1e293b;
+      }
+      .saide-loading-badge {
+        font-size: 9.5px;
+        font-weight: 700;
+        color: #2563eb;
+        background: #eff6ff;
+        padding: 1px 6px;
+        border-radius: 4px;
+        border: 1px solid #dbeafe;
+      }
+      .saide-loading-sub {
+        font-size: 10px;
+        color: #64748b;
+        font-weight: normal;
+      }
+      .saide-loading-detail {
+        font-size: 11px;
+        color: #475569;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .saide-loading-cancel-btn {
+        flex: none;
+        background: transparent;
+        border: 1px solid #cbd5e1;
+        color: #64748b;
+        font-size: 11px;
+        font-weight: 500;
+        padding: 3px 8px;
+        border-radius: 5px;
+        cursor: pointer;
+        transition: all 0.15s ease;
+      }
+      .saide-loading-cancel-btn:hover {
+        background: #f1f5f9;
+        color: #0f172a;
+        border-color: #94a3b8;
       }
 
       @keyframes saideBubbleFadeIn {
@@ -284,6 +414,32 @@ export function createSelectionBubble(
       }
       @keyframes saideSpin {
         to { transform: rotate(360deg); }
+      }
+      @keyframes saideAiBarPulse {
+        0% {
+          border-color: rgba(99, 102, 241, 0.45);
+          box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.35), 0 0 8px rgba(99, 102, 241, 0.25);
+        }
+        100% {
+          border-color: rgba(147, 197, 253, 0.8);
+          box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.35), 0 0 20px rgba(129, 140, 248, 0.5);
+        }
+      }
+      @keyframes saideAiShimmerLine {
+        0% { transform: translateX(0); }
+        100% { transform: translateX(50%); }
+      }
+      @keyframes saideIconBreath {
+        0% {
+          transform: scale(1);
+          filter: drop-shadow(0 0 1px rgba(147, 197, 253, 0.5));
+          opacity: 0.85;
+        }
+        100% {
+          transform: scale(1.18);
+          filter: drop-shadow(0 0 5px rgba(96, 165, 250, 0.9));
+          opacity: 1;
+        }
       }
     </style>
 
@@ -353,9 +509,16 @@ export function createSelectionBubble(
       <!-- 로딩 인디케이터 -->
       <div class="saide-loading-box" id="bubbleLoading" style="display: none;">
         <div class="saide-spinner"></div>
-        <div style="font-size: 11px; font-weight: 500; color: #334155;" id="bubbleLoadingText">
-          AI가 내용을 분석하고 있습니다...
+        <div class="saide-loading-text-wrap">
+          <div class="saide-loading-title">
+            <span class="saide-loading-badge">AI 처리 중</span>
+            <span class="saide-loading-sub" id="bubbleLoadingSub">잠시만 기다려 주세요</span>
+          </div>
+          <div class="saide-loading-detail" id="bubbleLoadingText">
+            AI가 내용을 분석하고 있습니다...
+          </div>
         </div>
+        <button type="button" class="saide-loading-cancel-btn" id="btnLoadingCancel" title="작업 취소">취소</button>
       </div>
 
       <!-- 프리뷰 & Diff 카드 -->
@@ -376,6 +539,7 @@ export function createSelectionBubble(
 
   // 엘리먼트 참조
   const bubbleWrapper = wrapper.querySelector<HTMLElement>('#saideBubbleWrapper')!;
+  const bubbleBar = wrapper.querySelector<HTMLElement>('.saide-bubble-bar')!;
   const btnSpellcheck = wrapper.querySelector<HTMLButtonElement>('#btnSpellcheck')!;
   const btnPolishMenu = wrapper.querySelector<HTMLButtonElement>('#btnPolishMenu')!;
   const btnPrivacyMask = wrapper.querySelector<HTMLButtonElement>('#btnPrivacyMask')!;
@@ -385,7 +549,9 @@ export function createSelectionBubble(
 
   const dropdownPolish = wrapper.querySelector<HTMLElement>('#dropdownPolish')!;
   const bubbleLoading = wrapper.querySelector<HTMLElement>('#bubbleLoading')!;
+  const bubbleLoadingSub = wrapper.querySelector<HTMLElement>('#bubbleLoadingSub')!;
   const bubbleLoadingText = wrapper.querySelector<HTMLElement>('#bubbleLoadingText')!;
+  const btnLoadingCancel = wrapper.querySelector<HTMLButtonElement>('#btnLoadingCancel')!;
   const bubblePreview = wrapper.querySelector<HTMLElement>('#bubblePreview')!;
   const previewBadge = wrapper.querySelector<HTMLElement>('#previewBadge')!;
   const previewContent = wrapper.querySelector<HTMLElement>('#previewContent')!;
@@ -393,20 +559,95 @@ export function createSelectionBubble(
   const btnPreviewCopy = wrapper.querySelector<HTMLButtonElement>('#btnPreviewCopy')!;
   const btnPreviewCancel = wrapper.querySelector<HTMLButtonElement>('#btnPreviewCancel')!;
 
+  const DEFAULT_BUBBLE_WIDTH = 580;
+  const DEFAULT_BUBBLE_HEIGHT = 44;
+
+  /** 버블 메뉴 전체가 화면 경계(좌우 12px, 상하 10px)를 벗어나지 않도록 실제 DOM 크기 기반 정밀 클램프 */
+  function clampBubbleToViewport(targetRect?: DOMRect) {
+    const rect = targetRect || currentSelection?.clientRect || lastValidRect;
+    if (!rect) return;
+
+    // 현재 렌더링된 bubbleWrapper의 크기 측정 (display !== 'none'인 경우 실제 너비/높이 취득 가능)
+    const bubbleRect = bubbleWrapper.getBoundingClientRect();
+    const actualWidth = bubbleRect.width > 50 ? bubbleRect.width : DEFAULT_BUBBLE_WIDTH;
+    const actualHeight = bubbleRect.height > 20 ? bubbleRect.height : DEFAULT_BUBBLE_HEIGHT;
+
+    const pos = calculateBubblePosition(rect, actualWidth, actualHeight, 8);
+
+    const winWidth = typeof window !== 'undefined' ? window.innerWidth : 1200;
+    const winHeight = typeof window !== 'undefined' ? window.innerHeight : 800;
+
+    let left = pos.left;
+    let top = pos.top;
+
+    // 좌우 12px 안전 여백 보장 (화면 가장자리 블럭 지정 시 우측/좌측 잘림 원천 차단)
+    if (left + actualWidth > winWidth - 12) {
+      left = Math.max(12, winWidth - actualWidth - 12);
+    }
+    if (left < 12) {
+      left = 12;
+    }
+
+    // 상하 10px 안전 여백 보장
+    if (top + actualHeight > winHeight - 10) {
+      top = Math.max(10, winHeight - actualHeight - 10);
+    }
+    if (top < 10) {
+      top = 10;
+    }
+
+    bubbleWrapper.style.top = `${Math.round(top)}px`;
+    bubbleWrapper.style.left = `${Math.round(left)}px`;
+
+    // 문장 다듬기 드롭다운이 화면 우측 경계를 벗어나는지 확인 후 우측 정렬 클래스 토글
+    if (left + 80 + 200 > winWidth - 12) {
+      dropdownPolish.classList.add('align-right');
+    } else {
+      dropdownPolish.classList.remove('align-right');
+    }
+  }
+
   function setDropdownOpen(open: boolean) {
     isDropdownOpen = open;
     dropdownPolish.style.display = open ? 'flex' : 'none';
     if (open) {
       btnPolishMenu.classList.add('active');
+      clampBubbleToViewport();
     } else {
       btnPolishMenu.classList.remove('active');
     }
   }
 
+  function setAiLoading(loading: boolean, text?: string, activeBtn?: HTMLElement | null, subTitle?: string) {
+    isLoading = loading;
+    if (loading) {
+      bubbleBar.classList.add('is-ai-working');
+      if (activeBtn) {
+        activeBtn.classList.add('is-ai-active');
+      }
+      // AI 작업 중 다른 메뉴 버튼 비활성화 (오작동/중복 클릭 방지)
+      bubbleBar.querySelectorAll<HTMLButtonElement>('.saide-bubble-btn').forEach((b) => {
+        if (b !== activeBtn && b !== btnCloseBubble) {
+          b.classList.add('is-busy');
+        }
+      });
+      bubblePreview.style.display = 'none';
+      if (text) bubbleLoadingText.textContent = text;
+      if (subTitle && bubbleLoadingSub) bubbleLoadingSub.textContent = subTitle;
+      bubbleLoading.style.display = 'flex';
+      clampBubbleToViewport();
+    } else {
+      bubbleBar.classList.remove('is-ai-working');
+      bubbleBar.querySelectorAll<HTMLButtonElement>('.saide-bubble-btn').forEach((b) => {
+        b.classList.remove('is-ai-active', 'is-busy');
+      });
+      bubbleLoading.style.display = 'none';
+    }
+  }
+
   function hidePreviewAndLoading() {
-    isLoading = false;
+    setAiLoading(false);
     pendingResult = null;
-    bubbleLoading.style.display = 'none';
     bubblePreview.style.display = 'none';
     if (abortController) {
       abortController.abort();
@@ -423,29 +664,55 @@ export function createSelectionBubble(
 
   function showAtSelection(selection: SelectionInfo) {
     currentSelection = selection;
+    lastValidRect = selection.clientRect;
     hidePreviewAndLoading();
     setDropdownOpen(false);
 
-    const pos = calculateBubblePosition(selection.clientRect, 380, 42, 8);
+    // 1단계: 기본 툴바 크기(580x44) 기준으로 1차 배치
+    const estWidth = bubbleWrapper.offsetWidth > 50 ? bubbleWrapper.offsetWidth : DEFAULT_BUBBLE_WIDTH;
+    const estHeight = bubbleWrapper.offsetHeight > 20 ? bubbleWrapper.offsetHeight : DEFAULT_BUBBLE_HEIGHT;
+    const pos = calculateBubblePosition(selection.clientRect, estWidth, estHeight, 8);
     bubbleWrapper.style.top = `${pos.top}px`;
     bubbleWrapper.style.left = `${pos.left}px`;
     wrapper.style.display = 'block';
+
+    // 2단계: DOM 렌더링 직후 실제 측정된 크기를 반영하여 뷰포트 내 완벽 피팅 (1px도 잘리지 않도록 보정)
+    clampBubbleToViewport(selection.clientRect);
+
+    // 3단계: 프레임 틱에서 추가 보정
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => {
+        if (wrapper.style.display !== 'none') {
+          clampBubbleToViewport(selection.clientRect);
+        }
+      });
+    }
   }
 
   function showPreview(actionTitle: string, transformedText: string) {
     if (!currentSelection) return;
-    isLoading = false;
-    bubbleLoading.style.display = 'none';
+    setAiLoading(false);
+
+    const safeText = transformedText?.trim() || '(변환 결과가 비어 있습니다)';
 
     pendingResult = {
       original: currentSelection.text,
-      transformed: transformedText,
+      transformed: safeText,
       actionTitle,
     };
 
     previewBadge.textContent = actionTitle;
-    previewContent.textContent = transformedText;
+    previewContent.textContent = safeText;
     bubblePreview.style.display = 'block';
+
+    clampBubbleToViewport();
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => {
+        if (wrapper.style.display !== 'none') {
+          clampBubbleToViewport();
+        }
+      });
+    }
   }
 
   async function applyPendingResult() {
@@ -463,26 +730,31 @@ export function createSelectionBubble(
   btnSpellcheck.addEventListener('click', async (e) => {
     e.stopPropagation();
     setDropdownOpen(false);
-    if (!currentSelection) return;
-
-    isLoading = true;
-    bubblePreview.style.display = 'none';
-    bubbleLoadingText.textContent = 'AI가 맞춤법과 띄어쓰기를 교정 중입니다...';
-    bubbleLoading.style.display = 'flex';
+    if (!currentSelection || isLoading) return;
 
     abortController = new AbortController();
+    setAiLoading(
+      true,
+      'AI가 맞춤법과 띄어쓰기를 정밀 교정 중입니다...',
+      btnSpellcheck,
+      '맞춤법 검사'
+    );
+
     try {
       const fixed = await transformTextWithAI('spellcheck', currentSelection.text, abortController.signal);
       showPreview('✓ 맞춤법 검사 결과', fixed);
     } catch (err: any) {
       if (err.name === 'AbortError') return;
       showPreview('오류 발생', `교정 실패: ${err.message}`);
+    } finally {
+      setAiLoading(false);
     }
   });
 
   // 2. 문장 다듬기 메뉴 토글
   btnPolishMenu.addEventListener('click', (e) => {
     e.stopPropagation();
+    if (isLoading) return;
     setDropdownOpen(!isDropdownOpen);
   });
 
@@ -491,7 +763,7 @@ export function createSelectionBubble(
     item.addEventListener('click', async (e) => {
       e.stopPropagation();
       setDropdownOpen(false);
-      if (!currentSelection) return;
+      if (!currentSelection || isLoading) return;
 
       const mode = item.getAttribute('data-mode') as PolishMode;
       const titleMap: Record<PolishMode, string> = {
@@ -502,21 +774,36 @@ export function createSelectionBubble(
         refine: '행정용어 순화 결과',
         courtesy: '정중한 협조체 결과',
       };
-
-      isLoading = true;
-      bubblePreview.style.display = 'none';
-      bubbleLoadingText.textContent = `AI가 [${item.querySelector('span')?.textContent}] 모드로 다듬는 중입니다...`;
-      bubbleLoading.style.display = 'flex';
+      const modeLabel = item.querySelector('span')?.textContent?.trim() || '문장 다듬기';
+      const descLabel = item.querySelector('.desc')?.textContent?.trim() || '';
 
       abortController = new AbortController();
+      setAiLoading(
+        true,
+        `AI가 [${modeLabel}${descLabel ? ' · ' + descLabel : ''}] 변환 중입니다...`,
+        btnPolishMenu,
+        titleMap[mode] || '문장 다듬기'
+      );
+
       try {
         const polished = await transformTextWithAI(mode, currentSelection.text, abortController.signal);
         showPreview(titleMap[mode] || '문장 다듬기 결과', polished);
       } catch (err: any) {
         if (err.name === 'AbortError') return;
         showPreview('오류 발생', `다듬기 실패: ${err.message}`);
+      } finally {
+        setAiLoading(false);
       }
     });
+  });
+
+  // 로딩 취소 버튼 클릭
+  btnLoadingCancel.addEventListener('click', (e) => {
+    e.stopPropagation();
+    hidePreviewAndLoading();
+    if (options.showToast) {
+      options.showToast('AI 작업이 취소되었습니다.');
+    }
   });
 
   // 3. 개인정보 마스킹 클릭 (로컬 즉시 실행)
@@ -588,8 +875,31 @@ export function createSelectionBubble(
   function bindEvents(doc: Document): () => void {
     let timer: any = null;
 
+    const MODIFIER_KEYS = new Set(['Alt', 'Control', 'Shift', 'Meta', 'AltGraph', 'CapsLock', 'Tab']);
+
+    const recordPointerCoords = (e: MouseEvent | PointerEvent) => {
+      if (typeof e.clientX === 'number' && typeof e.clientY === 'number' && (e.clientX > 0 || e.clientY > 0)) {
+        lastMousePos = { clientX: e.clientX, clientY: e.clientY };
+      }
+    };
+
     const handleSelectionChange = (e?: Event) => {
       if (isLoading) return; // 로딩 중에는 선택 변경으로 닫히지 않음
+
+      // 1. 키보드 액션인 경우:
+      // Alt, Control, Shift 등 수식키를 단독으로 누르거나 뗐을 때:
+      // 이미 버블이 떠 있고 선택 텍스트가 유효하다면 위치 재계산/화면 중앙 점프를 방지하고 상태를 완벽 유지!
+      if (e && e.type === 'keyup') {
+        const keyEvt = e as KeyboardEvent;
+        if (MODIFIER_KEYS.has(keyEvt.key) && wrapper.style.display !== 'none' && currentSelection) {
+          return;
+        }
+      }
+
+      // 2. 마우스 좌표 계속 추적 (드래그 끝점 및 클릭 위치 보존)
+      if (e instanceof MouseEvent) {
+        recordPointerCoords(e);
+      }
 
       // 버블 메뉴 내부 클릭(문장 다듬기 드롭다운 등)이면 선택 변경 처리 건너뜀
       if (e) {
@@ -628,14 +938,29 @@ export function createSelectionBubble(
         // DOM 선택이 없고 본문작성 에디터(WebHWP) 환경이면 WebHWP 비동기 선택 조회
         if (!sel && e && (e.type === 'mouseup' || e.type === 'pointerup' || e.type === 'selectionchange' || e.type === 'keyup')) {
           const mouseEvent = (e instanceof MouseEvent) ? e : undefined;
+          const mouseCoords = mouseEvent
+            ? { clientX: mouseEvent.clientX, clientY: mouseEvent.clientY }
+            : (lastMousePos || undefined);
+
           sel = await captureWebHwpSelection(
             doc,
-            mouseEvent ? { clientX: mouseEvent.clientX, clientY: mouseEvent.clientY } : undefined,
-            targetEl
+            mouseCoords,
+            targetEl,
+            lastValidRect
           );
         }
 
         if (sel) {
+          // 이미 같은 텍스트와 같은 위치에 열려 있다면 불필요한 위치 재계산/깜빡임 방지
+          if (
+            wrapper.style.display !== 'none' &&
+            currentSelection &&
+            currentSelection.text === sel.text &&
+            Math.abs(currentSelection.clientRect.left - sel.clientRect.left) < 5 &&
+            Math.abs(currentSelection.clientRect.top - sel.clientRect.top) < 5
+          ) {
+            return;
+          }
           showAtSelection(sel);
         } else {
           // 프리뷰가 열려있지 않은 상태면 닫기
@@ -647,6 +972,7 @@ export function createSelectionBubble(
     };
 
     const handlePointerDown = (e: MouseEvent | PointerEvent) => {
+      recordPointerCoords(e);
       const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
       const target = e.target as Node;
       if (wrapper.contains(target) || path.includes(wrapper) || path.some((item) => Boolean((item as Node)?.nodeType && wrapper.contains(item as Node)))) return;
@@ -669,34 +995,54 @@ export function createSelectionBubble(
       }
     };
 
+    const handleResize = () => {
+      if (wrapper.style.display !== 'none') {
+        clampBubbleToViewport();
+      }
+    };
+
     const win = doc.defaultView || (typeof window !== 'undefined' ? window : null);
 
     // 한컴 웹기안기(Canvas)의 stopPropagation에 가로채이지 않도록 capture 단계에서 감지
     doc.addEventListener('selectionchange', handleSelectionChange, true);
     doc.addEventListener('mouseup', handleSelectionChange, true);
     doc.addEventListener('pointerup', handleSelectionChange, true);
+    doc.addEventListener('mousemove', recordPointerCoords, { capture: true, passive: true });
+    doc.addEventListener('pointermove', recordPointerCoords, { capture: true, passive: true });
     doc.addEventListener('keyup', handleSelectionChange, true);
     doc.addEventListener('mousedown', handlePointerDown, true);
     doc.addEventListener('pointerdown', handlePointerDown, true);
     doc.addEventListener('keydown', handleKeydown, true);
 
-    if (win && (win as any) !== doc) {
-      win.addEventListener('mouseup', handleSelectionChange, true);
-      win.addEventListener('pointerup', handleSelectionChange, true);
+    if (win) {
+      win.addEventListener('resize', handleResize, { passive: true });
+      if ((win as any) !== doc) {
+        win.addEventListener('mouseup', handleSelectionChange, true);
+        win.addEventListener('pointerup', handleSelectionChange, true);
+        win.addEventListener('mousemove', recordPointerCoords, { capture: true, passive: true });
+        win.addEventListener('pointermove', recordPointerCoords, { capture: true, passive: true });
+      }
     }
 
     return () => {
       doc.removeEventListener('selectionchange', handleSelectionChange, true);
       doc.removeEventListener('mouseup', handleSelectionChange, true);
       doc.removeEventListener('pointerup', handleSelectionChange, true);
+      doc.removeEventListener('mousemove', recordPointerCoords, true);
+      doc.removeEventListener('pointermove', recordPointerCoords, true);
       doc.removeEventListener('keyup', handleSelectionChange, true);
       doc.removeEventListener('mousedown', handlePointerDown, true);
       doc.removeEventListener('pointerdown', handlePointerDown, true);
       doc.removeEventListener('keydown', handleKeydown, true);
 
-      if (win && (win as any) !== doc) {
-        win.removeEventListener('mouseup', handleSelectionChange, true);
-        win.removeEventListener('pointerup', handleSelectionChange, true);
+      if (win) {
+        win.removeEventListener('resize', handleResize);
+        if ((win as any) !== doc) {
+          win.removeEventListener('mouseup', handleSelectionChange, true);
+          win.removeEventListener('pointerup', handleSelectionChange, true);
+          win.removeEventListener('mousemove', recordPointerCoords, true);
+          win.removeEventListener('pointermove', recordPointerCoords, true);
+        }
       }
     };
   }

@@ -146,4 +146,193 @@ describe('selection-bubble', () => {
     para.remove();
     selObj?.removeAllRanges();
   });
+
+  it('AI 작업 실행 중에는 블럭 메뉴에 is-ai-working 클래스와 로딩 취소 버튼이 활성화된다', async () => {
+    const bubble = createSelectionBubble();
+    document.body.appendChild(bubble.element);
+
+    const ta = document.createElement('textarea');
+    ta.value = '기반 마련을 위한 현황 보고를 바탕으로 공유하고자 함';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.selectionStart = 0;
+    ta.selectionEnd = ta.value.length;
+
+    const cardBtn = document.createElement('button');
+    cardBtn.textContent = '문서카드';
+    const saveBtn = document.createElement('button');
+    saveBtn.textContent = '본문저장';
+    document.body.appendChild(cardBtn);
+    document.body.appendChild(saveBtn);
+
+    const unbind = bubble.bindEvents(document);
+    document.dispatchEvent(new Event('selectionchange'));
+    await new Promise(r => setTimeout(r, 220));
+
+    expect(bubble.element.style.display).toBe('block');
+
+    const bubbleBar = bubble.element.querySelector<HTMLElement>('.saide-bubble-bar')!;
+    const btnPolish = bubble.element.querySelector<HTMLButtonElement>('#btnPolishMenu')!;
+    const dropdown = bubble.element.querySelector<HTMLElement>('#dropdownPolish')!;
+
+    // 다듬기 메뉴 오픈
+    btnPolish.click();
+    expect(dropdown.style.display).toBe('flex');
+
+    // '내용 줄이기' 모드 버튼 클릭
+    const shortenItem = dropdown.querySelector<HTMLButtonElement>('button[data-mode="shorten"]')!;
+    expect(shortenItem).not.toBeNull();
+
+    // AI 변환 트리거
+    shortenItem.click();
+
+    // AI 실행 중 상태 확인: 툴바와 버튼에 옅은 애니메이션 클래스 부여
+    expect(bubbleBar.classList.contains('is-ai-working')).toBe(true);
+    expect(btnPolish.classList.contains('is-ai-active')).toBe(true);
+
+    const loadingBox = bubble.element.querySelector<HTMLElement>('#bubbleLoading')!;
+    expect(loadingBox.style.display).toBe('flex');
+
+    const btnCancel = bubble.element.querySelector<HTMLButtonElement>('#btnLoadingCancel')!;
+    expect(btnCancel).not.toBeNull();
+
+    // 취소 클릭 시 로딩 및 애니메이션 해제 확인
+    btnCancel.click();
+    expect(bubbleBar.classList.contains('is-ai-working')).toBe(false);
+    expect(btnPolish.classList.contains('is-ai-active')).toBe(false);
+    expect(loadingBox.style.display).toBe('none');
+
+    unbind();
+    bubble.destroy();
+    ta.remove();
+    cardBtn.remove();
+    saveBtn.remove();
+  });
+
+  it('화면 오른쪽 가장자리에 블럭 지정 시 버블 메뉴가 뷰포트 내로 클램프되어 잘리지 않고 노출된다', async () => {
+    window.innerWidth = 1200;
+    window.innerHeight = 800;
+
+    const bubble = createSelectionBubble();
+    document.body.appendChild(bubble.element);
+
+    const cardBtn = document.createElement('button');
+    cardBtn.textContent = '문서카드';
+    const saveBtn = document.createElement('button');
+    saveBtn.textContent = '본문저장';
+    document.body.appendChild(cardBtn);
+    document.body.appendChild(saveBtn);
+
+    const para = document.createElement('p');
+    para.textContent = '1. 추진 배경 및 필요성 - 화면 우측 끝 텍스트 블록 지정 테스트 내용';
+    document.body.appendChild(para);
+
+    const textNode = para.firstChild!;
+    const range = document.createRange();
+    range.setStart(textNode, 15);
+    range.setEnd(textNode, 35);
+    const selObj = window.getSelection();
+    selObj?.removeAllRanges();
+    selObj?.addRange(range);
+
+    // 화면 우측 끝(left: 1100, width: 90 -> right: 1190)의 위치 반환 모의
+    range.getBoundingClientRect = () => ({
+      width: 90,
+      height: 22,
+      top: 200,
+      left: 1100,
+      right: 1190,
+      bottom: 222,
+      x: 1100,
+      y: 200,
+      toJSON: () => ({}),
+    });
+
+    const unbind = bubble.bindEvents(document);
+    document.dispatchEvent(new Event('selectionchange'));
+    await new Promise((r) => setTimeout(r, 220));
+
+    expect(bubble.element.style.display).toBe('block');
+
+    const bubbleWrapper = bubble.element.querySelector<HTMLElement>('#saideBubbleWrapper')!;
+    const leftPx = parseInt(bubbleWrapper.style.left || '0', 10);
+
+    // 버블 메뉴의 left가 화면 우측을 벗어나지 않도록 클램프되어 있어야 함 (1200 - 580 - 12 = 608px 근처)
+    expect(leftPx).toBeLessThanOrEqual(1200 - 580 - 12);
+    expect(leftPx).toBeGreaterThanOrEqual(12);
+
+    unbind();
+    bubble.destroy();
+    cardBtn.remove();
+    saveBtn.remove();
+    para.remove();
+    selObj?.removeAllRanges();
+  });
+
+  it('블럭 지정 후 Alt 등 수식키(Modifier Key) 입력 시 버블 메뉴가 화면 중앙으로 점프하지 않고 위치를 유지한다', async () => {
+    window.innerWidth = 1200;
+    window.innerHeight = 800;
+
+    const bubble = createSelectionBubble();
+    document.body.appendChild(bubble.element);
+
+    const cardBtn = document.createElement('button');
+    cardBtn.textContent = '문서카드';
+    const saveBtn = document.createElement('button');
+    saveBtn.textContent = '본문저장';
+    document.body.appendChild(cardBtn);
+    document.body.appendChild(saveBtn);
+
+    const para = document.createElement('p');
+    para.textContent = '1. 추진 배경 및 필요성 - 키보드 수식키 입력 시 위치 안정성 보장';
+    document.body.appendChild(para);
+
+    const textNode = para.firstChild!;
+    const range = document.createRange();
+    range.setStart(textNode, 5);
+    range.setEnd(textNode, 20);
+    const selObj = window.getSelection();
+    selObj?.removeAllRanges();
+    selObj?.addRange(range);
+
+    range.getBoundingClientRect = () => ({
+      width: 100,
+      height: 20,
+      top: 200,
+      left: 700,
+      right: 800,
+      bottom: 220,
+      x: 700,
+      y: 200,
+      toJSON: () => ({}),
+    });
+
+    const unbind = bubble.bindEvents(document);
+    document.dispatchEvent(new Event('selectionchange'));
+    await new Promise((r) => setTimeout(r, 220));
+
+    expect(bubble.element.style.display).toBe('block');
+
+    const bubbleWrapper = bubble.element.querySelector<HTMLElement>('#saideBubbleWrapper')!;
+    const initialLeft = bubbleWrapper.style.left;
+    const initialTop = bubbleWrapper.style.top;
+
+    // Alt 키의 keyup 이벤트 발생
+    const altEvent = new KeyboardEvent('keyup', { key: 'Alt', bubbles: true });
+    document.dispatchEvent(altEvent);
+    await new Promise((r) => setTimeout(r, 220));
+
+    // Alt 키를 눌렀다 떼어도 버블의 위치가 변하지 않고 그대로 유지되어야 함!
+    expect(bubbleWrapper.style.left).toBe(initialLeft);
+    expect(bubbleWrapper.style.top).toBe(initialTop);
+
+    unbind();
+    bubble.destroy();
+    cardBtn.remove();
+    saveBtn.remove();
+    para.remove();
+    selObj?.removeAllRanges();
+  });
 });
+
+

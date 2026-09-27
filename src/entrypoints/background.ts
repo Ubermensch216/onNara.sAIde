@@ -1159,14 +1159,24 @@ export default defineBackground(() => {
           const response = await fetch(`${endpoint}/api/chat`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body),
+            body: JSON.stringify({
+              think: false,
+              keep_alive: '10m',
+              ...body,
+            }),
           });
           if (!response.ok) {
             sendResponse({ error: `Ollama 통신 오류 (${response.status})` });
             return;
           }
           const json = await response.json();
-          sendResponse({ result: json.message?.content || '' });
+          let rawOutput = json.message?.content || json.message?.thinking || '';
+          rawOutput = rawOutput.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+          if (!rawOutput) {
+            sendResponse({ error: 'AI 변환 결과를 생성하지 못했습니다. 다시 시도해 주세요.' });
+            return;
+          }
+          sendResponse({ result: rawOutput });
         } catch (err: any) {
           sendResponse({ error: err?.message || 'AI 변환 요청 실패' });
         }
