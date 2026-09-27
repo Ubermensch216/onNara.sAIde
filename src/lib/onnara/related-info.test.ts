@@ -1,9 +1,12 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   parseRelatedDocText,
+  parseInfoDesSource,
   parseReferenceDocument,
   extractRelatedDocuments,
+  findRelatedDocumentOpener,
+  analyzeReferenceForDraft,
   fitReferenceText,
   buildReferencePrompt,
   generateRuleBasedSummary,
@@ -12,6 +15,44 @@ import {
 } from './related-info';
 
 describe('related-info', () => {
+  it('관련정보에서 선택한 문서의 링크만 찾아 연다', () => {
+    const doc = document.implementation.createHTMLDocument();
+    doc.body.innerHTML = `<table><tr><th>관련정보</th><td><span onclick="void(0)">[문서] 첫째 문서</span><span onclick="void(0)">[문서] 둘째 문서</span></td></tr></table>`;
+    expect(findRelatedDocumentOpener(doc, '둘째 문서')?.textContent).toBe('[문서] 둘째 문서');
+    expect(findRelatedDocumentOpener(doc, '없는 문서')).toBeNull();
+  });
+  it('문서관리카드 infodessource의 DCT 식별자를 관련정보 문서에 연결한다', () => {
+    const id = 'DCTEF3F599DC9712EE4BC1EC15B8716FA9B';
+    const doc = document.implementation.createHTMLDocument();
+    doc.body.innerHTML = `<div class="tbl_input_wrap"><input type="hidden" name="infodessource" id="infodessource-100" value="${id}|보고문서「2026년 감사위원회 역량강화 워크숍」" /><table><tr><th>관련정보</th><td><span>[보고문서] 2026년 감사위원회 역량강화 워크숍</span></td></tr></table></div>`;
+    expect(parseInfoDesSource((doc.querySelector('input') as HTMLInputElement).value)).toEqual([{ id, label: '보고문서「2026년 감사위원회 역량강화 워크숍」' }]);
+    expect(extractRelatedDocuments(doc)[0]?.id).toBe(id);
+  });
+  it('관련정보 원문 링크를 문서 식별자와 함께 수집한다', () => {
+    const doc = document.implementation.createHTMLDocument();
+    doc.body.innerHTML = '<table><tr><th>관련정보</th><td><a href="https://onnara.test/bms/dct/view.do?docId=11099" data-docid="11099">[문서] 행사 개최계획 알림</a></td></tr></table>';
+    const [related] = extractRelatedDocuments(doc);
+    expect(related?.id).toBe('11099');
+    expect(related?.url).toBe('https://onnara.test/bms/dct/view.do?docId=11099');
+  });
+  it('javascript 링크의 원문 열기 함수에서 문서 식별자를 수집한다', () => {
+    const doc = document.implementation.createHTMLDocument();
+    doc.body.innerHTML = '<table><tr><th>관련정보</th><td><a href="javascript:fn_viewDoc(\'11099\')">[문서] 행사 개최계획 알림</a></td></tr></table>';
+    expect(extractRelatedDocuments(doc)[0]?.id).toBe('11099');
+    expect(extractRelatedDocuments(doc)[0]?.openFunction).toBe('fn_viewDoc');
+  });
+  it('긴 참고문서는 모든 구간을 분석하고, 짧은 문서는 원문 그대로 반환한다', async () => {
+    const fetcher = vi.fn(async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body));
+      return { ok: true, json: async () => ({ message: { content: body.messages[1].content.slice(-20) } }) } as Response;
+    }) as unknown as typeof fetch;
+    const longContent = '가'.repeat(12_001) + '마지막 사실';
+    const result = await analyzeReferenceForDraft(longContent, '행사 개최계획', { endpoint: 'http://localhost:11434', model: 'test' }, fetcher);
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    expect(result).toContain('마지막 사실');
+    expect(await analyzeReferenceForDraft('원문 전체', '제목', { endpoint: '', model: '' }, fetcher)).toBe('원문 전체');
+    expect(fetcher).toHaveBeenCalledTimes(3);
+  });
   it('공문 PDF에서 제목, 본문, 붙임 파일명을 분리하고 화면 메뉴는 거부한다', () => {
     const title = '2026 부산국제공연예술마켓(BPAM) 개최계획 알림';
     const pdfText = `발주는 부산기업으로\n부 산 광 역 시\n수신 수신자 참조\n제목 ${title}\n1. 국내외 우수공연작품 유통 및 시민 문화관람 기회 확대를 위한 행사가 10월 1일부터 10월 7일까지 개최됩니다.\n2. 관련 부서는 행사 추진을 위하여 적극 협조하여 주시기 바랍니다.\n□ 행사 개요\n○ 기 간 : 2026. 10. 1.(목) ~ 10. 7.(수)\n붙임 : 1. 2026 부산국제공연예술마켓 개최계획 1부\n2. 공연일정표 1부. 끝.\n부 산 광 역 시 장\n시행 문화예술과-13954`;
@@ -147,6 +188,15 @@ describe('related-info', () => {
   });
 
   describe('buildReferencePrompt', () => {
+    it('초안 프롬프트에 3,200자 이후의 원문도 누락 없이 넣는다', () => {
+      const content = '본문'.repeat(2000) + '\n마지막 필수 요구사항: 현장 안전 점검';
+      const prompt = buildReferencePrompt({
+        userPrompt: '협조 공문 작성',
+        referenceDoc: { title: '개최계획 알림', rawText: '', content },
+      });
+      expect(prompt).toContain('마지막 필수 요구사항: 현장 안전 점검');
+      expect(prompt).not.toContain('[... 중략 ...]');
+    });
     it('참고 문서가 없으면 기본 프롬프트를 생성한다', () => {
       const prompt = buildReferencePrompt({
         userPrompt: '추진계획 작성',

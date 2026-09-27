@@ -8,6 +8,7 @@ import {
 } from '@/lib/onnara/draft-title';
 import {
   buildReferencePrompt,
+  analyzeReferenceForDraft,
   generateDocSummary,
   generateRuleBasedSummary,
   type RelatedDocInfo,
@@ -21,6 +22,7 @@ import {
 } from '@/lib/storage/draft-templates';
 import { TemplateManager } from './components/TemplateManager';
 import { MaterialIcon } from './components/MaterialIcon';
+import { estimateTokens } from '@/lib/extract/budget';
 
 export function DrawerApp() {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
@@ -291,11 +293,25 @@ export function DrawerApp() {
         }
       : null;
 
+    let referenceAnalysis: string | undefined;
+    try {
+      if (effectiveRefDoc?.content) {
+        setStatusMsg('참고문서 전체 내용을 분석하고 있습니다...');
+        referenceAnalysis = await analyzeReferenceForDraft(effectiveRefDoc.content, effectiveRefDoc.title, settings);
+        setStatusMsg('');
+      }
+    } catch (error) {
+      setGenerationError(error instanceof Error ? error.message : String(error));
+      setLoading(false);
+      return;
+    }
+
     // 참고 문서 및 지정 서식(Template) 반영 프롬프트 생성
     const userMessageContent = buildReferencePrompt({
       userPrompt: prompt,
       docTitle: docTitle || '기안문',
       referenceDoc: effectiveRefDoc,
+      referenceAnalysis,
       template: selectedTemplate,
     });
 
@@ -314,8 +330,16 @@ export function DrawerApp() {
     // 추천 제목 지침 추가
     systemPrompt = buildDraftTitleSystemPrompt(systemPrompt);
 
+    const requiredContext = estimateTokens(systemPrompt + userMessageContent) + 4096;
+    if (requiredContext > 32768) {
+      setGenerationError('참고문서 전체 분석 결과가 모델의 32K 컨텍스트 한도를 넘었습니다. 일부 내용을 누락한 초안을 생성하지 않았습니다.');
+      setLoading(false);
+      return;
+    }
+
     const requestBody = {
       model: settings.model,
+      options: { num_ctx: Math.max(8192, Math.ceil(requiredContext / 1024) * 1024) },
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userMessageContent },
@@ -753,10 +777,10 @@ export function DrawerApp() {
                                 <div className="p-2.5 bg-amber-50 border border-amber-200 rounded text-xs text-amber-800 space-y-1">
                                   <p className="font-semibold flex items-center gap-1.5">
                                     <MaterialIcon name="warning" size={13} className="text-amber-600" />
-                                    <span>본문이 아직 열려 있지 않습니다.</span>
+                                    <span>참고문서 본문을 읽지 못했습니다.</span>
                                   </p>
                                   <p className="text-[11px] text-amber-700 leading-normal">
-                                    온나라 화면의 <strong>[관련정보]</strong>에서 해당 문서를 열고 [내용]을 다시 눌러 본문을 읽어주세요.
+                                    {selectedRelatedDoc.errorMessage || '관련정보의 원문을 열 수 없습니다. 문서 열기 상태를 확인한 뒤 [내용]을 다시 눌러주세요.'}
                                   </p>
                                 </div>
                               )}

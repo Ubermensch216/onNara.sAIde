@@ -284,6 +284,7 @@ export type SWToContent = (
   | { type: 'CANCEL' }
   | { type: 'EXTRACT'; budgetTokens: number; purpose?: 'page' | 'document-detail'; preferredFrameId?: number; targetTitle?: string }
   | { type: 'OPEN_DOCUMENT'; title: string }
+  | { type: 'OPEN_RELATED_DOCUMENT'; title: string }
   | { type: 'LOCATE_DOCUMENT'; title: string }
   | { type: 'RESTORE_DOCUMENT_LIST'; location: DocumentListLocation }
   | { type: 'SCAN_ATTACHMENTS' }
@@ -308,6 +309,7 @@ export type ContentToSW =
   | { type: 'BODY_PDF'; pdf: PdfSource | null }
   /** target: 실제로 누른 요소 설명. 열기에 반응이 없을 때 원인을 알리는 데 쓴다. */
   | { type: 'OPENING_DOCUMENT'; title: string; target?: string }
+  | { type: 'OPENING_RELATED_DOCUMENT'; title: string }
   | { type: 'DOCUMENT_LOCATED'; location: DocumentListLocation }
   | { type: 'INBOX_LOCATED'; location: DocumentListLocation; listName: string }
   | { type: 'INBOX_PAGE'; list: StructuredDocumentList; next: DocumentListLocation | null }

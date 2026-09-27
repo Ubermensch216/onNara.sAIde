@@ -983,63 +983,21 @@ export default defineUnlistedScript(() => {
     } else if (msg.type === 'DRAFT_FETCH_RELATED_DOC' && msg.doc) {
       // 선택한 문서의 제목 행과 본문을 검증한 background 응답만 사용한다.
       if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
-        chrome.runtime.sendMessage(
-          {
-            type: 'DRAFT_FETCH_RELATED_DOC',
-            doc: msg.doc,
-          },
-          (response) => {
-            const content = response?.content || '';
-
-            // 탭에서 못 찾았으나 현재 화면 DOM에 이 문서를 여는 링크/버튼이 있는 경우, 클릭 후 재조회 시도
-            if (!content && typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
-              const docTitle = msg.doc.title?.trim();
-              if (docTitle) {
-                const clickable = Array.from(document.querySelectorAll<HTMLElement>('a, button, span, tr'))
-                  .find(el => (el.textContent || '').includes(docTitle) && (el.tagName === 'A' || el.tagName === 'BUTTON' || el.onclick || el.getAttribute('onclick')));
-                if (clickable) {
-                  try {
-                    clickable.click();
-                    setTimeout(() => {
-                      chrome.runtime.sendMessage(
-                        { type: 'DRAFT_FETCH_RELATED_DOC', doc: msg.doc },
-                        (retryRes) => {
-                          const retryContent = retryRes?.content || '';
-                          iframe.contentWindow?.postMessage(
-                            {
-                              type: 'DRAFT_RELATED_DOC_CONTENT',
-                              title: msg.doc.title,
-                              docId: msg.doc.id,
-                              content: retryContent,
-                              documentTitle: retryRes?.title,
-                              attachments: retryRes?.attachments,
-                              error: retryContent ? undefined : retryRes?.error,
-                            },
-                            '*'
-                          );
-                        }
-                      );
-                    }, 1500);
-                    return;
-                  } catch {}
-                }
-              }
-            }
-
-            iframe.contentWindow?.postMessage(
-              {
-                type: 'DRAFT_RELATED_DOC_CONTENT',
-                title: msg.doc.title,
-                docId: msg.doc.id,
-                content,
-                documentTitle: response?.title,
-                attachments: response?.attachments,
-                error: content ? undefined : response?.error,
-              },
-              '*'
-            );
-          }
-        );
+        const request = () => new Promise<{ content?: string; title?: string; attachments?: string[]; error?: string }>((resolve) => {
+          chrome.runtime.sendMessage({ type: 'DRAFT_FETCH_RELATED_DOC', doc: msg.doc }, response => {
+            resolve(response || { error: chrome.runtime.lastError?.message || '문서 조회 응답이 없습니다.' });
+          });
+        });
+        const response = await request();
+        iframe.contentWindow?.postMessage({
+          type: 'DRAFT_RELATED_DOC_CONTENT',
+          title: msg.doc.title,
+          docId: msg.doc.id,
+          content: response.content || '',
+          documentTitle: response.title,
+          attachments: response.attachments,
+          error: response.content ? undefined : response.error,
+        }, '*');
       } else {
         iframe.contentWindow?.postMessage(
           {

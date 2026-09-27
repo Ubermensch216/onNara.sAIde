@@ -13,6 +13,7 @@ import { firstInboxPage } from '@/lib/onnara/inbox-pages';
 import { isWorkTabBusy, runExclusive } from '@/lib/browser/sw-lock';
 import { fitToBudget } from '@/lib/extract/budget';
 import { generatePdfFromText, pdfText, withPdfSections } from '@/lib/extract/pdf-offscreen';
+import { PDF_MAX_PAGES } from '@/lib/extract/pdf-text';
 import type { DocumentListLocation } from '@/lib/onnara/document-navigation';
 /**
  * Service Worker — 계획서 §3 설계 결정 ①
@@ -813,9 +814,117 @@ async function handleMainWorldHwpReplaceSelection(
   }
 }
 
-/**
- * 기안기에서 참고 문서로 지정된 '관련정보' 문서의 본문 텍스트를 열린 탭이나 백그라운드에서 조회
- */
+type ReferenceContent = { content: string; title?: string; attachments?: string[]; error?: string };
+
+/** 원본 기안기 화면을 건드리지 않고 비활성 작업 탭에서 관련정보 원문을 읽는다. */
+async function readRelatedDocInBackground(
+  docInfo: { title: string; url?: string; id?: string; openFunction?: string },
+  callerTabId: number,
+  timeoutMs = 35_000,
+  mode: 'link-or-chip' | 'report-form' = 'link-or-chip',
+): Promise<ReferenceContent | null> {
+  const source = await chrome.tabs.get(callerTabId).catch(() => null);
+  if (!source?.url) return null;
+  if (docInfo.url && sameOrigin(docInfo.url, source.url)) {
+    const pdf = await pdfText({ url: docInfo.url });
+    const parsed = parseReferenceDocument(pdf.text, docInfo.title);
+    if (parsed && pdf.pages <= PDF_MAX_PAGES) return { content: parsed.body, title: parsed.title, attachments: parsed.attachments };
+  }
+  let workTabId: number | undefined;
+  try {
+    if (mode === 'link-or-chip' && docInfo.url && sameOrigin(docInfo.url, source.url) && typeof chrome.tabs.create === 'function') {
+      const tab = await chrome.tabs.create({ url: docInfo.url, active: false });
+      workTabId = tab.id;
+      if (workTabId !== undefined) workTabs.add(workTabId);
+    } else if (typeof chrome.tabs.duplicate === 'function') {
+      const tab = await duplicateWorkTab(callerTabId);
+      workTabId = tab.id;
+      if (workTabId !== undefined) await keepBackground(workTabId, source);
+    }
+    if (workTabId === undefined) return null;
+
+    const deadline = Date.now() + timeoutMs;
+    const control: RequestControl = { id: crypto.randomUUID(), deadline, expectedUrl: undefined };
+    if (mode === 'report-form') {
+      if (!docInfo.id || !/^DCT[A-F0-9]{32}$/i.test(docInfo.id)) return null;
+      const submitted = await chrome.scripting.executeScript({
+        target: { tabId: workTabId, frameIds: [0] }, world: 'MAIN',
+        func: (documentId: string) => {
+          const form = document.createElement('form');
+          form.method = 'POST';
+          form.action = new URL('/bms/dct/viewreport.do', location.origin).href;
+          form.target = '_self';
+          form.style.display = 'none';
+          const input = document.createElement('input');
+          input.type = 'hidden'; input.name = 'docid'; input.value = documentId;
+          form.appendChild(input);
+          document.body.appendChild(form);
+          form.submit();
+          return true;
+        },
+        args: [docInfo.id],
+      }).catch(() => []);
+      if (!submitted.some(result => result.result === true)) return null;
+    } else if (!docInfo.url) {
+      let opened = false;
+      while (Date.now() < deadline - 15_000 && !opened) {
+        const frames = await chrome.webNavigation.getAllFrames({ tabId: workTabId }).catch(() => null);
+        for (const frame of frames?.length ? frames : [{ frameId: 0 }]) {
+          const reply = await sendToFrame(workTabId, frame.frameId, { type: 'OPEN_RELATED_DOCUMENT', title: docInfo.title, control });
+          if (reply.type === 'OPENING_RELATED_DOCUMENT') { opened = true; break; }
+        }
+        if (!opened && docInfo.openFunction && docInfo.id &&
+          /^(?:fn_view|fn_open|openDoc|viewReport|openReport)[\w]*$/i.test(docInfo.openFunction) &&
+          /^[\w-]{1,80}$/.test(docInfo.id)) {
+          const results = await chrome.scripting.executeScript({
+            target: { tabId: workTabId, allFrames: true }, world: 'MAIN',
+            func: (name: string, id: string) => {
+              const fn = (window as unknown as Record<string, unknown>)[name];
+              if (typeof fn !== 'function') return false;
+              (fn as (documentId: string) => void)(id);
+              return true;
+            },
+            args: [docInfo.openFunction, docInfo.id],
+          }).catch(() => []);
+          opened = results.some(result => result.result === true);
+        }
+        if (!opened) await delay(500);
+      }
+      if (!opened) return null;
+    }
+
+    while (Date.now() < deadline) {
+      await delay(600);
+      const currentTabs = await chrome.tabs.query({});
+      const popupIds = [...new Set([
+        ...tabsSpawnedBy(workTabId),
+        ...currentTabs.filter(tab => tab.openerTabId === workTabId && typeof tab.id === 'number').map(tab => tab.id!),
+      ])];
+      for (const tabId of [...popupIds.reverse(), workTabId]) {
+        const tab = currentTabs.find(item => item.id === tabId);
+        if (!tab?.url || isRestrictedUrl(tab.url)) continue;
+        const result = await dispatchContent(tabId, {
+          type: 'EXTRACT', purpose: 'document-detail', budgetTokens: 100_000,
+          targetTitle: docInfo.title, control,
+        });
+        if (result.type !== 'EXTRACTED') continue;
+        const parsed = parseReferenceDocument(result.payload.text, docInfo.title);
+        if (parsed && !result.payload.truncated && !result.payload.text.includes(`앞 ${PDF_MAX_PAGES}쪽만 읽음`)) {
+          return { content: parsed.body, title: parsed.title, attachments: parsed.attachments };
+        }
+      }
+    }
+    return null;
+  } finally {
+    if (workTabId !== undefined) {
+      const children = tabsSpawnedBy(workTabId);
+      await chrome.tabs.remove([workTabId, ...children]).catch(() => undefined);
+      for (const id of [workTabId, ...children]) forgetWorkTab(id);
+    }
+  }
+}
+
+/** 기안기에서 선택한 관련정보 문서의 전체 본문을 조회한다. */
 export async function handleFetchRelatedDocContent(
   docInfo: any,
   callerTabId?: number
@@ -849,12 +958,29 @@ export async function handleFetchRelatedDocContent(
     } catch {}
   }
 
+  // 원문 URL 또는 작업용 복제 탭을 사용한다. 사용자가 직접 문서를 열 필요가 없다.
+  if (callerTabId && (docInfo.url || typeof chrome.tabs?.duplicate === 'function')) {
+    if (docInfo.url) {
+      const linkedResult = await readRelatedDocInBackground(docInfo, callerTabId, 15_000).catch(() => null);
+      if (linkedResult?.content) return linkedResult;
+    }
+    if (/^DCT[A-F0-9]{32}$/i.test(String(docInfo.id || '')) && typeof chrome.tabs?.duplicate === 'function') {
+      const formResult = await readRelatedDocInBackground({ title: rawTitle, id: docInfo.id }, callerTabId, 25_000, 'report-form').catch(() => null);
+      if (formResult?.content) return formResult;
+    }
+    if (typeof chrome.tabs?.duplicate === 'function') {
+      const duplicatedResult = await readRelatedDocInBackground({ title: rawTitle, id: docInfo.id, openFunction: docInfo.openFunction }, callerTabId).catch(() => null);
+      if (duplicatedResult?.content) return duplicatedResult;
+    }
+  }
+
+  // 이미 열려 있는 상세 문서도 읽을 수 있게 유지한다.
   // 1. 이미 열려 있는 탭 목록 조회 및 후보 탭 스코어링
   const allTabs = await chrome.tabs.query({}).catch(() => []);
   const scoredCandidates: Array<{ tab: chrome.tabs.Tab; score: number }> = [];
 
   for (const tab of allTabs) {
-    if (!tab.id || tab.id === callerTabId) continue;
+    if (!tab.id) continue;
     const tabUrl = (tab.url || '').toLowerCase();
     const tabTitle = (tab.title || '').toLowerCase();
 
@@ -880,7 +1006,7 @@ export async function handleFetchRelatedDocContent(
       score += 80;
     }
 
-    scoredCandidates.push({ tab, score });
+    if (score >= 40) scoredCandidates.push({ tab, score });
   }
 
   scoredCandidates.sort((a, b) => b.score - a.score);
@@ -897,7 +1023,7 @@ export async function handleFetchRelatedDocContent(
       const extracted = await withContentScript(tab.id, {
         type: 'EXTRACT',
         purpose: 'document-detail',
-        budgetTokens: 4000,
+        budgetTokens: 100_000,
         targetTitle: rawTitle,
         control,
       }).catch(() => null);
@@ -954,7 +1080,10 @@ export async function handleFetchRelatedDocContent(
 
         if (titleDirectMatched || keywordMatched) {
           const parsed = parseReferenceDocument(text, rawTitle);
-          if (parsed) return { content: parsed.body, title: parsed.title, attachments: parsed.attachments };
+          if (parsed && extracted?.type === 'EXTRACTED' && !extracted.payload.truncated &&
+            !extracted.payload.text.includes(`앞 ${PDF_MAX_PAGES}쪽만 읽음`)) {
+            return { content: parsed.body, title: parsed.title, attachments: parsed.attachments };
+          }
         }
       }
     } catch {
@@ -964,7 +1093,7 @@ export async function handleFetchRelatedDocContent(
 
   return {
     content: '',
-    error: '열린 탭에서 참고 문서를 찾지 못했습니다. 온나라 화면의 [관련정보]에서 문서를 클릭하여 창을 띄워두신 후 [본문읽기]를 누르시거나, 아래 메모장에 핵심 내용을 직접 입력해 주세요.',
+    error: '선택한 참고문서의 원문 본문을 백그라운드에서 확인하지 못했습니다. 관련정보 항목의 원문 링크 또는 문서 식별자를 확인해 주세요.',
   };
 }
 

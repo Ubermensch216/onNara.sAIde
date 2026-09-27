@@ -1010,6 +1010,113 @@ it('탭 제목이 일반적인 온나라시스템이어도 본문 추출 내용�
   expect(res.error).toBeUndefined();
 });
 
+it('원문 링크가 있으면 사용자가 문서를 열지 않아도 비활성 작업 탭에서 전체 본문을 읽고 닫는다', async () => {
+  const title = '행사 개최계획 알림';
+  const sourceUrl = 'https://onnara.test/bms/dct/draft.do';
+  const referenceUrl = 'https://onnara.test/bms/dct/view.do?docId=11099';
+  const create = vi.fn(async () => ({ id: 3, url: referenceUrl, active: false }));
+  const remove = vi.fn(async () => undefined);
+  vi.stubGlobal('chrome', {
+    tabs: {
+      get: vi.fn(async (id: number) => ({ id, url: id === 3 ? referenceUrl : sourceUrl, active: id === 1 })),
+      create, remove,
+      query: vi.fn(async () => [{ id: 1, url: sourceUrl }, { id: 3, url: referenceUrl }]),
+      sendMessage: vi.fn(async (_id: number, msg: any) => msg.type === 'EXTRACT' ? ({
+        type: 'EXTRACTED', payload: {
+          url: referenceUrl, title, text: `제목 ${title}\n1. 10월 1일부터 7일까지 행사를 개최합니다.\n붙임 : 1. 개최계획 1부. 끝.`,
+          charCount: 70, truncated: false, keptRatio: 1, estimatedTokens: 40, method: 'innerText', extractedAt: Date.now(),
+        },
+      }) : { type: 'FAILED' }),
+    },
+    scripting: { executeScript: vi.fn(async () => []) },
+    webNavigation: { getAllFrames: vi.fn(async () => [{ frameId: 0, parentFrameId: -1, url: referenceUrl }]) },
+  });
+  const result = await handleFetchRelatedDocContent({ title, url: referenceUrl }, 1);
+  expect(create).toHaveBeenCalledWith({ url: referenceUrl, active: false });
+  expect(result.content).toContain('10월 1일부터 7일까지');
+  expect(result.attachments).toEqual(['1. 개최계획 1부.']);
+  expect(remove).toHaveBeenCalled();
+});
+
+it('원문 링크가 없어도 작업용 복제 탭에서 관련정보 항목을 열어 읽는다', async () => {
+  const title = '행사 개최계획 알림';
+  const url = 'https://onnara.test/bms/dct/draft.do';
+  const duplicate = vi.fn(async () => ({ id: 3, url, active: false }));
+  const remove = vi.fn(async () => undefined);
+  const sendMessage = vi.fn(async (_id: number, msg: any) => {
+    if (msg.type === 'OPEN_RELATED_DOCUMENT') return { type: 'OPENING_RELATED_DOCUMENT', title };
+    if (msg.type === 'EXTRACT') return { type: 'EXTRACTED', payload: {
+      url, title, text: `제목 ${title}\n1. 행사 추진 협조를 요청합니다. 행사 일정은 10월 1일부터 7일까지입니다.`,
+      charCount: 70, truncated: false, keptRatio: 1, estimatedTokens: 40, method: 'innerText', extractedAt: Date.now(),
+    } };
+    return { type: 'FAILED' };
+  });
+  vi.stubGlobal('chrome', {
+    tabs: {
+      get: vi.fn(async (id: number) => ({ id, url, active: id === 1, windowId: 1 })),
+      duplicate, remove, query: vi.fn(async () => [{ id: 1, url }, { id: 3, url }]), sendMessage,
+    },
+    scripting: { executeScript: vi.fn(async () => []) },
+    webNavigation: { getAllFrames: vi.fn(async () => [{ frameId: 0, parentFrameId: -1, url }]) },
+  });
+  const result = await handleFetchRelatedDocContent({ title }, 1);
+  expect(duplicate).toHaveBeenCalledWith(1);
+  expect(sendMessage.mock.calls.some(([, msg]) => msg.type === 'OPEN_RELATED_DOCUMENT')).toBe(true);
+  expect(result.content).toContain('10월 1일부터 7일까지');
+  expect(remove).toHaveBeenCalled();
+});
+
+it('복제 탭에 임시 관련정보 칩이 없어도 확인된 열기 함수를 문서 ID로 실행한다', async () => {
+  const title = '행사 개최계획 알림';
+  const url = 'https://onnara.test/bms/dct/draft.do';
+  const executeScript = vi.fn(async (options: any) => options.world === 'MAIN' ? [{ result: true }] : []);
+  vi.stubGlobal('chrome', {
+    tabs: {
+      get: vi.fn(async (id: number) => ({ id, url, active: id === 1, windowId: 1 })),
+      duplicate: vi.fn(async () => ({ id: 3, url, active: false })),
+      remove: vi.fn(async () => undefined),
+      query: vi.fn(async () => [{ id: 1, url }, { id: 3, url }]),
+      sendMessage: vi.fn(async (_id: number, msg: any) => msg.type === 'EXTRACT' ? ({
+        type: 'EXTRACTED', payload: {
+          url, title, text: `제목 ${title}\n1. 행사 추진 협조와 안전 점검을 요청합니다.`,
+          charCount: 45, truncated: false, keptRatio: 1, estimatedTokens: 25, method: 'innerText', extractedAt: Date.now(),
+        },
+      }) : { type: 'FAILED', error: { code: 'UNKNOWN', message: '칩 없음' } }),
+    },
+    scripting: { executeScript },
+    webNavigation: { getAllFrames: vi.fn(async () => [{ frameId: 0, parentFrameId: -1, url }]) },
+  });
+  const result = await handleFetchRelatedDocContent({ title, id: '11099', openFunction: 'fn_viewDoc' }, 1);
+  expect(executeScript.mock.calls.some(([options]) => options.world === 'MAIN' && options.args?.[1] === '11099')).toBe(true);
+  expect(result.content).toContain('안전 점검');
+});
+
+it('infodessource DCT ID는 비활성 복제 탭에서 viewreport.do로 제출한다', async () => {
+  const id = 'DCTEF3F599DC9712EE4BC1EC15B8716FA9B';
+  const title = '행사 개최계획 알림';
+  const url = 'http://99.1.2.134/bms/dct/draft.do';
+  const executeScript = vi.fn(async (options: any) => options.world === 'MAIN' ? [{ result: true }] : []);
+  vi.stubGlobal('chrome', {
+    tabs: {
+      get: vi.fn(async (tabId: number) => ({ id: tabId, url: tabId === 3 ? 'http://99.1.2.134/bms/dct/viewreport.do' : url, active: tabId === 1, windowId: 1 })),
+      duplicate: vi.fn(async () => ({ id: 3, url, active: false })),
+      remove: vi.fn(async () => undefined),
+      query: vi.fn(async () => [{ id: 1, url }, { id: 3, url: 'http://99.1.2.134/bms/dct/viewreport.do' }]),
+      sendMessage: vi.fn(async (_tabId: number, msg: any) => msg.type === 'EXTRACT' ? ({
+        type: 'EXTRACTED', payload: {
+          url: 'http://99.1.2.134/bms/dct/viewreport.do', title, text: `제목 ${title}\n1. 10월 1일부터 7일까지 행사를 개최합니다.`,
+          charCount: 60, truncated: false, keptRatio: 1, estimatedTokens: 30, method: 'innerText', extractedAt: Date.now(),
+        },
+      }) : { type: 'FAILED' }),
+    },
+    scripting: { executeScript },
+    webNavigation: { getAllFrames: vi.fn(async () => [{ frameId: 0, parentFrameId: -1, url }]) },
+  });
+  const result = await handleFetchRelatedDocContent({ title, id }, 1);
+  expect(executeScript.mock.calls.some(([options]) => options.world === 'MAIN' && options.args?.[0] === id)).toBe(true);
+  expect(result.content).toContain('10월 1일부터 7일까지');
+});
+
 it('관련 문서 탭을 찾지 못하면 친절한 안내 메시지를 반환한다', async () => {
   vi.stubGlobal('chrome', {
     tabs: {
@@ -1025,7 +1132,7 @@ it('관련 문서 탭을 찾지 못하면 친절한 안내 메시지를 반환�
   );
 
   expect(res.content).toBe('');
-  expect(res.error).toContain('온나라 화면의 [관련정보]에서 문서를 클릭하여 창을 띄워두신 후');
+  expect(res.error).toContain('원문 본문을 백그라운드에서 확인하지 못했습니다');
 });
 
 it('유일한 다른 온나라 탭이 대시보드이면 참고문서 본문으로 사용하지 않는다', async () => {
@@ -1046,5 +1153,5 @@ it('유일한 다른 온나라 탭이 대시보드이면 참고문서 본문으�
   });
   const result = await handleFetchRelatedDocContent({ title }, 1);
   expect(result.content).toBe('');
-  expect(result.error).toContain('참고 문서를 찾지 못했습니다');
+  expect(result.error).toContain('원문 본문을 백그라운드에서 확인하지 못했습니다');
 });
