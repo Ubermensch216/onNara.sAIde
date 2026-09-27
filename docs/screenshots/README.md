@@ -1,13 +1,21 @@
 # 사용자 매뉴얼 화면 캡처 자산 가이드
 
-기준일: **2026-09-26**. 이 디렉터리의 11개 스크린샷은 온나라 sAIde 사용자 매뉴얼([`README.md`](../../README.md))에 싣는 공식 문서용 UI 캡처입니다.
+기준일: **2026-09-27**. 이 디렉터리의 14개 스크린샷은 온나라 sAIde 사용자 매뉴얼([`README.md`](../../README.md))에 싣는 공식 문서용 UI 캡처입니다.
 
-실제 소스 코드의 React 컴포넌트와 행정 블루 디자인 토큰을 독립된 미리보기 환경(`docs/preview/`)에서 렌더링하고 Headless Edge/Chromium으로 캡처했습니다. **AI 생성 이미지나 외부 목업이 아니라 실제 프런트엔드 컴포넌트의 렌더링 결과**이며, 담긴 공문 자료만 샘플입니다.
+실제 소스 코드의 React 컴포넌트와 행정 블루 디자인 토큰을 독립된 미리보기 환경(`docs/preview/`)에서 렌더링하고 Headless Edge/Chromium으로 캡처했습니다. **특히 온나라 전자문서시스템 2.0 웹 화면(접수대기함, 기안기, 공유/공람)과 우측 sAIde 사이드패널·사이드카가 나란히 연동되어 작동하는 전체 화면 캡처(1560 × 980)**를 포함하여, 처음 보는 사용자도 온나라와의 실제 연동 구조를 한눈에 직관적으로 이해할 수 있도록 구성했습니다.
 
 ---
 
 ## 1. 캡처 자산 목록
 
+### 🌟 온나라 2.0 시스템 통합 연동 캡처 (와이드 데스크톱 화면)
+| 파일명 | 해상도 | 매뉴얼 설명 영역 | 화면 구성 및 주요 연동 컴포넌트 |
+|---|---|---|---|
+| [**00-onnara-main-sidepanel.png**](00-onnara-main-sidepanel.png) | 1560 × 980 | 시스템 소개 / AI 사이드패널 연동 | Edge 브라우저 프레임, 온나라 2.0 접수대기함(GNB 헤더·LNB 메뉴·체크박스 목록 선택·`일괄다운로드` 버튼), 우측 sAIde AI 패널(`/요약` 대화·핵심 조치사항 카드·원문 확인·일정 등록 연동) |
+| [**00-onnara-drafter-sidecar.png**](00-onnara-drafter-sidecar.png) | 1560 × 980 | 온나라 기안 도우미 연동 | 온나라 공문서 기안기(웹기안기 결재정보·제목 필드·본문 에디터·텍스트 선택 버블), 우측 온나라 sAIde 사이드카 드로어(`DrawerApp` 표준 서식·참고문서 자동 요약·표준 초안·클릭 위치 삽입) |
+| [**00-onnara-inbox-sidepanel.png**](00-onnara-inbox-sidepanel.png) | 1560 × 980 | 공유/공람 탭 (아침 브리핑 연동) | 온나라 2.0 공유/공람 받은문서(미열람 공람 공문 목록), 우측 sAIde 사이드패널 공유/공람 탭(3분할 자동 브리핑: 기한 임박 / 내 업무 / 단순 공람 분류 및 `일정 등록`) |
+
+### 🔍 컴포넌트별 상세 UI 캡처
 | 파일명 | 해상도 | 매뉴얼 설명 영역 | 렌더링된 주요 컴포넌트 |
 |---|---|---|---|
 | [**01-chat.png**](01-chat.png) | 520 × 940 | AI 탭 대화 및 공문 요약 | `App`, 4개 탭 막대(공유/공람·AI·일정·도구)와 배지, `ModelChip`(`내 PC · gemma4:e2b`), `원문 확인` 배지, `TaskRegisterCard`, `FeedbackButtons`, `PageContextChip`, `Composer` |
@@ -30,7 +38,7 @@ README 상단의 [**infographic.png**](../infographic.png)(1200 × 1360)은 위�
 
 ## 2. 화면 캡처 재생성 절차
 
-UI를 고친 뒤에는 아래 순서대로 11장을 다시 만듭니다.
+UI를 고친 뒤에는 아래 순서대로 14장을 다시 만듭니다.
 
 ### 1단계: 미리보기 서버 실행 (첫 번째 터미널)
 ```powershell
@@ -45,7 +53,7 @@ node scripts/docs-preview.mjs
 ./scripts/capture-docs.ps1
 ```
 * 시스템의 Chrome 또는 Edge를 자동 탐지합니다(`-ChromePath`로 지정 가능).
-* 각 뷰(`panel`, `inbox`, `approval`, `schedule`, `automation`, `options`, `memory`, `presets`, `briefing`, `drafter`, `templates`)를 헤드리스로 렌더링해 `docs/screenshots/`의 PNG 11장을 덮어씁니다.
+* 온나라 2.0 메인 연동 뷰 3종(`onnara-main-sidepanel`, `onnara-drafter-sidecar`, `onnara-inbox-sidepanel`)과 각 기능별 뷰 11종(`panel`, `inbox`, `approval`, `schedule`, `automation`, `options`, `memory`, `presets`, `briefing`, `drafter`, `templates`)을 헤드리스로 렌더링해 `docs/screenshots/`의 PNG 14장을 덮어씁니다.
 * 캡처가 끝나면 첫 번째 터미널에서 `Ctrl + C`로 서버를 종료합니다.
 
 ### 3단계: 소개 인포그래픽 재생성 (UI가 크게 바뀐 경우)

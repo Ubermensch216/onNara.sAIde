@@ -231,13 +231,15 @@ window.fetch = async (input) => {
   throw new Error('문서 미리보기에서는 모델 호출과 외부 요청을 지원하지 않습니다.');
 };
 
-const badge = document.createElement('div');
-badge.textContent = '사용 설명용 예시 · 온나라 sAIde 실제 UI / 샘플 데이터';
-badge.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:#0d2f81;color:#fff;text-align:center;font:12px sans-serif;padding:7px;z-index:9999;box-shadow:0 -1px 3px rgba(0,0,0,0.3)';
-document.body.append(badge);
+if (!mode.startsWith('onnara-')) {
+  const badge = document.createElement('div');
+  badge.textContent = '사용 설명용 예시 · 온나라 sAIde 실제 UI / 샘플 데이터';
+  badge.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:#0d2f81;color:#fff;text-align:center;font:12px sans-serif;padding:7px;z-index:9999;box-shadow:0 -1px 3px rgba(0,0,0,0.3)';
+  document.body.append(badge);
+}
 
 const OPTION_VIEWS = ['memory', 'presets', 'briefing'];
-if (!mode.startsWith('options') && !OPTION_VIEWS.includes(mode)) {
+if (!mode.startsWith('options') && !OPTION_VIEWS.includes(mode) && !mode.startsWith('onnara-')) {
   document.getElementById('root')!.style.height = 'calc(100% - 30px)';
 }
 
@@ -275,7 +277,7 @@ if (mode.startsWith('options') || OPTION_VIEWS.includes(mode)) {
     createRoot(document.getElementById('root')!).render(<OptionsApp />);
   }
 
-} else if (['drafter', 'drawer', 'templates'].includes(mode)) {
+} else if (['drafter', 'drawer', 'templates', 'onnara-drafter-sidecar'].includes(mode)) {
   await import('@/entrypoints/drawer-page/style.css');
   const { DrawerApp } = await import('@/entrypoints/drawer-page/DrawerApp');
 
@@ -340,7 +342,16 @@ if (mode.startsWith('options') || OPTION_VIEWS.includes(mode)) {
     }
   });
 
-  createRoot(document.getElementById('root')!).render(<DrawerApp />);
+  if (mode === 'onnara-drafter-sidecar') {
+    const { OnnaraMockFrame } = await import('./OnnaraMockFrame');
+    createRoot(document.getElementById('root')!).render(
+      <OnnaraMockFrame variant="drafter">
+        <DrawerApp />
+      </OnnaraMockFrame>
+    );
+  } else {
+    createRoot(document.getElementById('root')!).render(<DrawerApp />);
+  }
 
 } else {
   await import('@/entrypoints/sidepanel/style.css');
@@ -495,7 +506,7 @@ if (mode.startsWith('options') || OPTION_VIEWS.includes(mode)) {
   } else if (mode === 'schedule') {
     localStorage.setItem('saide.view', 'schedule');
     localStorage.setItem('saide.scheduleMode', 'month');
-  } else if (mode === 'inbox') {
+  } else if (mode === 'inbox' || mode === 'onnara-inbox-sidepanel') {
     localStorage.setItem('saide.view', 'inbox');
   } else {
     localStorage.setItem('saide.view', 'ai');
@@ -615,13 +626,31 @@ if (mode.startsWith('options') || OPTION_VIEWS.includes(mode)) {
 
   useChat.setState({ openForTab: async () => { useChat.setState({ messages }); } });
   const { default: App } = await import('@/entrypoints/sidepanel/App');
-  createRoot(document.getElementById('root')!).render(<App />);
+
+  if (mode === 'onnara-main-sidepanel') {
+    const { OnnaraMockFrame } = await import('./OnnaraMockFrame');
+    createRoot(document.getElementById('root')!).render(
+      <OnnaraMockFrame variant="list">
+        <App />
+      </OnnaraMockFrame>
+    );
+  } else if (mode === 'onnara-inbox-sidepanel') {
+    const { OnnaraMockFrame } = await import('./OnnaraMockFrame');
+    createRoot(document.getElementById('root')!).render(
+      <OnnaraMockFrame variant="inbox">
+        <App />
+      </OnnaraMockFrame>
+    );
+  } else {
+    createRoot(document.getElementById('root')!).render(<App />);
+  }
 
   setTimeout(() => {
+    const isMainDoc = mode === 'onnara-main-sidepanel';
     useChat.setState({
       page: {
         ...sampleTab,
-        title: '2026년도 인공지능 행정업무 시범사업 추진계획 알림',
+        title: isMainDoc ? '온나라 2.0 접수대기함 (2건 선택됨)' : '2026년도 인공지능 행정업무 시범사업 추진계획 알림',
         text: '행정안전부 디지털정부혁신과 공문 본문 텍스트 예시입니다.',
         charCount: 3450,
         truncated: false,
