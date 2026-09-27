@@ -64,6 +64,8 @@ export type DraftResponse =
       type: 'DRAFT_RELATED_DOC_CONTENT';
       title: string;
       content: string;
+      documentTitle?: string;
+      attachments?: string[];
       docId?: string;
       error?: string;
     }

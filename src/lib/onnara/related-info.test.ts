@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   parseRelatedDocText,
+  parseReferenceDocument,
   extractRelatedDocuments,
   fitReferenceText,
   buildReferencePrompt,
@@ -11,6 +12,17 @@ import {
 } from './related-info';
 
 describe('related-info', () => {
+  it('공문 PDF에서 제목, 본문, 붙임 파일명을 분리하고 화면 메뉴는 거부한다', () => {
+    const title = '2026 부산국제공연예술마켓(BPAM) 개최계획 알림';
+    const pdfText = `발주는 부산기업으로\n부 산 광 역 시\n수신 수신자 참조\n제목 ${title}\n1. 국내외 우수공연작품 유통 및 시민 문화관람 기회 확대를 위한 행사가 10월 1일부터 10월 7일까지 개최됩니다.\n2. 관련 부서는 행사 추진을 위하여 적극 협조하여 주시기 바랍니다.\n□ 행사 개요\n○ 기 간 : 2026. 10. 1.(목) ~ 10. 7.(수)\n붙임 : 1. 2026 부산국제공연예술마켓 개최계획 1부\n2. 공연일정표 1부. 끝.\n부 산 광 역 시 장\n시행 문화예술과-13954`;
+    const parsed = parseReferenceDocument(pdfText, title);
+    expect(parsed?.title).toBe(title);
+    expect(parsed?.body).toContain('10월 1일부터 10월 7일까지');
+    expect(parsed?.body).toContain('행사 개요');
+    expect(parsed?.body).not.toContain('시행 문화예술과');
+    expect(parsed?.attachments).toEqual(['1. 2026 부산국제공연예술마켓 개최계획 1부', '2. 공연일정표 1부.']);
+    expect(parseReferenceDocument('본문 바로가기 주메뉴 바로가기 결재대기함 해당 문서가 없습니다.', title)).toBeNull();
+  });
   describe('parseRelatedDocText', () => {
     it('[문서] 제목 형태를 정확히 파싱한다', () => {
       const res = parseRelatedDocText('[문서] 공유재산관리계획 수립 대상사업 안건 제출 안내');
@@ -152,6 +164,7 @@ describe('related-info', () => {
         docNumber: '11099',
         rawText: '[문서] 공유재산관리계획 수립 대상사업 안건 제출 안내',
         content: '제출기한: 2026년 10월 15일(목) 18:00까지. 제출서식: 별첨 1 서식 작성.',
+        attachments: ['1. 사업계획서 서식 1부', '2. 부서장 확인서 1부'],
       };
 
       const prompt = buildReferencePrompt({
@@ -164,6 +177,8 @@ describe('related-info', () => {
       expect(prompt).toContain('공유재산관리계획 수립 대상사업 안건 제출 안내');
       expect(prompt).toContain('문서번호: 11099');
       expect(prompt).toContain('제출기한: 2026년 10월 15일');
+      expect(prompt).toContain('사업계획서 서식 1부');
+      expect(prompt).toContain('부서장 확인서 1부');
       expect(prompt).toContain('대한민국 행정업무운영편람의 표준 서식');
       expect(prompt).toContain('우리 과 소관 사업 안건 제출 공문 작성해줘');
     });

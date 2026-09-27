@@ -1027,3 +1027,24 @@ it('관련 문서 탭을 찾지 못하면 친절한 안내 메시지를 반환�
   expect(res.content).toBe('');
   expect(res.error).toContain('온나라 화면의 [관련정보]에서 문서를 클릭하여 창을 띄워두신 후');
 });
+
+it('유일한 다른 온나라 탭이 대시보드이면 참고문서 본문으로 사용하지 않는다', async () => {
+  const title = '2026 부산국제공연예술마켓(BPAM) 개최계획 알림';
+  vi.stubGlobal('chrome', {
+    tabs: {
+      get: vi.fn(async (id: number) => ({ id, url: id === 1 ? 'https://onnara.test/bms/dct/draft.do' : 'https://onnara.test/main.do' })),
+      query: vi.fn(async () => [
+        { id: 1, url: 'https://onnara.test/bms/dct/draft.do', title: '기안기' },
+        { id: 2, url: 'https://onnara.test/main.do', title: '온나라시스템' },
+      ]),
+      sendMessage: vi.fn(async () => ({
+        type: 'EXTRACTED',
+        payload: { url: 'https://onnara.test/main.do', title: '온나라시스템', text: '본문 바로가기 주메뉴 바로가기 결재대기함 해당 문서가 없습니다. 처리 중 입니다...', charCount: 60, method: 'innerText' },
+      })),
+    },
+    scripting: { executeScript: vi.fn(async () => []) },
+  });
+  const result = await handleFetchRelatedDocContent({ title }, 1);
+  expect(result.content).toBe('');
+  expect(result.error).toContain('참고 문서를 찾지 못했습니다');
+});

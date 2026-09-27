@@ -95,6 +95,43 @@ describe('DrawerApp UI/UX 개선 검증', () => {
     expect(settingsToggle?.getAttribute('aria-expanded')).toBe('false');
   });
 
+  it('AI 응답이 완료되면 작성 요청이 접히고 다시 펼쳐 수정할 수 있다', async () => {
+    let completeGeneration: () => void = () => {};
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      await new Promise<void>((resolve) => { completeGeneration = resolve; });
+      return { ok: true, json: async () => ({ message: { content: '1. 추진 배경\n  가. 업무 효율화' } }) };
+    }));
+    await act(() => root.render(createElement(DrawerApp)));
+    await settle();
+
+    const requestToggle = document.querySelector<HTMLButtonElement>('[aria-controls="section-request-content"]');
+    const requestContent = document.getElementById('section-request-content');
+    expect(requestToggle?.getAttribute('aria-expanded')).toBe('true');
+    expect(requestContent?.hidden).toBe(false);
+
+    window.postMessage({ type: 'SAIDE_SET_DRAFT_PREVIEW', prompt: '업무 효율화 계획' }, '*');
+    await settle();
+    const generateButton = [...document.querySelectorAll('button')].find(
+      (button) => button.textContent?.includes('공문서 초안 생성')
+    );
+    await act(async () => generateButton?.click());
+    await settle();
+    expect(requestContent?.hidden).toBe(false);
+    expect(requestToggle?.getAttribute('aria-expanded')).toBe('true');
+
+    await act(async () => completeGeneration());
+    await settle();
+    expect(document.body.textContent).toContain('생성 결과');
+    expect(requestContent?.hidden).toBe(true);
+    expect(requestToggle?.getAttribute('aria-expanded')).toBe('false');
+
+    await act(async () => requestToggle?.click());
+    expect(requestContent?.hidden).toBe(false);
+    expect((document.getElementById('draft-prompt-textarea') as HTMLTextAreaElement).value).toBe('업무 효율화 계획');
+    await act(async () => requestToggle?.click());
+    expect(requestContent?.hidden).toBe(true);
+  });
+
   it('서식 선택 시 선택 상태가 간결하게 표시되며 불필요한 골격 추가 버튼은 노출되지 않는다', async () => {
     await act(() => root.render(createElement(DrawerApp)));
     await settle();
@@ -227,6 +264,21 @@ describe('DrawerApp UI/UX 개선 검증', () => {
     expect(document.body.textContent).toContain('참고문서 본문 텍스트입니다. 제출 기한: 2026-10-15.');
   });
 
+  it('선택한 참고문서 본문을 읽기 전에는 초안을 생성하지 않는다', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    await act(() => root.render(createElement(DrawerApp)));
+    await settle();
+    window.postMessage({ type: 'DRAFT_CONTEXT_RESPONSE', relatedDocs: [{ title: '행사 개최계획 알림', rawText: '', status: 'idle' }] }, '*');
+    await settle();
+    window.postMessage({ type: 'SAIDE_SET_DRAFT_PREVIEW', prompt: '행사 협조 공문 작성' }, '*');
+    await settle();
+    const generate = [...document.querySelectorAll('button')].find(button => button.textContent?.includes('공문서 초안 생성'));
+    await act(async () => generate?.click());
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(document.body.textContent).toContain('본문을 읽은 뒤 초안을 작성할 수 있습니다');
+  });
+
   it('작성 요청 영역: 서식 상태 배지가 중복 표시되지 않으며, 도움말과 생성 버튼이 올바르게 렌더링된다', async () => {
     await act(() => root.render(createElement(DrawerApp)));
     await settle();
@@ -287,6 +339,32 @@ describe('DrawerApp UI/UX 개선 검증', () => {
     // 오류 문구가 생성된 초안으로 취급되지 않아 하단 '초안 복사'나 '본문에 삽입' 버튼이 나타나지 않음
     expect(document.body.textContent).not.toContain('초안 복사');
     expect(document.body.textContent).not.toContain('본문에 삽입');
+  });
+
+  it('생성 결과는 기본으로 펼쳐지고 사용자가 접었다 다시 펼칠 수 있다', async () => {
+    await act(() => root.render(createElement(DrawerApp)));
+    await settle();
+
+    window.postMessage({
+      type: 'SAIDE_SET_DRAFT_PREVIEW',
+      recommendedTitle: '업무 혁신 계획',
+      draft: '1. 추진 배경\n  가. 업무 효율화',
+    }, '*');
+    await settle();
+
+    const resultToggle = document.querySelector<HTMLButtonElement>('[aria-controls="section-result-content"]');
+    const resultContent = document.getElementById('section-result-content');
+    expect(resultToggle?.getAttribute('aria-expanded')).toBe('true');
+    expect(resultContent?.hidden).toBe(false);
+
+    await act(async () => resultToggle?.click());
+    expect(resultToggle?.getAttribute('aria-expanded')).toBe('false');
+    expect(resultContent?.hidden).toBe(true);
+
+    await act(async () => resultToggle?.click());
+    expect(resultToggle?.getAttribute('aria-expanded')).toBe('true');
+    expect(resultContent?.hidden).toBe(false);
+    expect((document.getElementById('recommended-title-input') as HTMLInputElement).value).toBe('업무 혁신 계획');
   });
 
   it('결과 생성 상태: 추천 제목 그룹(입력창+반영버튼), 14px 초안 본문, 하단 고정 액션 바가 노출된다', async () => {

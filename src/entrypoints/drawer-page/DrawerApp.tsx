@@ -64,9 +64,12 @@ export function DrawerApp() {
   const [isSummarizing, setIsSummarizing] = useState<boolean>(false);
   const [showRawContent, setShowRawContent] = useState<boolean>(false);
   const [isSettingsFolded, setIsSettingsFolded] = useState<boolean>(false);
+  const [isRequestFolded, setIsRequestFolded] = useState<boolean>(false);
+  const [isResultFolded, setIsResultFolded] = useState<boolean>(false);
 
   const resultSectionRef = useRef<HTMLElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const requestedReferenceTitles = useRef<Set<string>>(new Set());
 
   // 초안 결과가 생성되거나 주입되면 결과 영역으로 매끄럽게 자동 스크롤
   useEffect(() => {
@@ -111,17 +114,17 @@ export function DrawerApp() {
         }
       } else if (data.type === 'DRAFT_RELATED_DOC_CONTENT') {
         setIsFetchingRefDoc(false);
-        const { title, content, error } = data;
+        const { title, content, error, documentTitle, attachments } = data;
         setRelatedDocs((prev) =>
           prev.map((d) =>
             d.title === title
-              ? { ...d, content, status: content ? 'loaded' : 'error', errorMessage: error }
+              ? { ...d, content, documentTitle, attachments, status: content ? 'loaded' : 'error', errorMessage: error }
               : d
           )
         );
         setSelectedRelatedDoc((prev) =>
           prev && prev.title === title
-            ? { ...prev, content, status: content ? 'loaded' : 'error', errorMessage: error }
+            ? { ...prev, content, documentTitle, attachments, status: content ? 'loaded' : 'error', errorMessage: error }
             : prev
         );
         if (content) {
@@ -170,6 +173,8 @@ export function DrawerApp() {
         if (data.draft !== undefined) {
           setGeneratedDraft(data.draft);
           setGenerationError(null);
+          setIsRequestFolded(Boolean(data.draft.trim()));
+          if (data.draft.trim()) setIsResultFolded(false);
         }
         if (data.templateId !== undefined) setSelectedTemplateId(data.templateId);
         if (data.activeTab !== undefined) setActiveTab(data.activeTab);
@@ -231,11 +236,17 @@ export function DrawerApp() {
 
   // 참고 문서 본문 조회 요청
   const handleFetchRefContent = (doc: RelatedDocInfo) => {
+    requestedReferenceTitles.current.add(doc.title);
     setIsFetchingRefDoc(true);
-    setIsReferenceExpanded(true);
     window.parent.postMessage({ type: 'DRAFT_FETCH_RELATED_DOC', doc }, '*');
     setStatusMsg(`'${doc.title}' 본문을 조회하는 중입니다...`);
   };
+
+  useEffect(() => {
+    if (selectedRelatedDoc && !selectedRelatedDoc.content && !requestedReferenceTitles.current.has(selectedRelatedDoc.title)) {
+      handleFetchRefContent(selectedRelatedDoc);
+    }
+  }, [selectedRelatedDoc]);
 
   // '내용' 버튼 클릭 토글 (펼칠 때 본문이 없으면 자동으로 본문 읽기 호출)
   const handleToggleExpand = (doc: RelatedDocInfo) => {
@@ -258,7 +269,13 @@ export function DrawerApp() {
   // 초안 생성 실행 (로컬 Ollama)
   const handleGenerate = async () => {
     if (!prompt.trim()) return;
+    if (selectedRelatedDoc && !selectedRelatedDoc.content?.trim()) {
+      if (!isFetchingRefDoc) handleFetchRefContent(selectedRelatedDoc);
+      setGenerationError(`'${selectedRelatedDoc.title}'의 본문을 읽은 뒤 초안을 작성할 수 있습니다.`);
+      return;
+    }
     setIsSettingsFolded(true);
+    setIsRequestFolded(false);
     setLoading(true);
     setGenerationError(null);
     setGeneratedDraft('');
@@ -323,6 +340,10 @@ export function DrawerApp() {
       );
       setRecommendedTitle(recTitle);
       setGeneratedDraft(cleanDraft);
+      if (cleanDraft.trim()) {
+        setIsRequestFolded(true);
+        setIsResultFolded(false);
+      }
     } catch (e: any) {
       setGenerationError(e?.message ? `로컬 AI 모델(Ollama) 통신 실패: ${e.message}` : '로컬 AI 모델(Ollama)과 통신하지 못했습니다.');
       setGeneratedDraft('');
@@ -735,10 +756,17 @@ export function DrawerApp() {
                                     <span>본문이 아직 열려 있지 않습니다.</span>
                                   </p>
                                   <p className="text-[11px] text-amber-700 leading-normal">
-                                    온나라 화면의 <strong>[관련정보]</strong>에서 문서를 클릭해 창을 띄워두신 후 [내용]을 다시 누르시거나, 아래 메모장에 핵심 내용을 직접 적어주세요.
+                                    온나라 화면의 <strong>[관련정보]</strong>에서 해당 문서를 열고 [내용]을 다시 눌러 본문을 읽어주세요.
                                   </p>
                                 </div>
                               )}
+
+                              {selectedRelatedDoc.attachments?.length ? (
+                                <div className="p-2.5 bg-white border border-slate-200 rounded text-xs text-slate-800">
+                                  <div className="font-semibold mb-1">원문 붙임 파일명</div>
+                                  {selectedRelatedDoc.attachments.map((name) => <div key={name}>{name}</div>)}
+                                </div>
+                              ) : null}
 
                               {/* 사용자 추가 첨언 메모 */}
                               <div>
@@ -769,17 +797,27 @@ export function DrawerApp() {
                 (선택된 서식의 상태 배지는 제목 옆에 중복 표시하지 않음)
                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */}
             <section aria-labelledby="section-request-title" className="space-y-3">
-              <div className="flex items-center justify-between pb-1 border-b border-slate-200">
+              <div className="flex items-center justify-between gap-2 pb-1 border-b border-slate-200">
                 <h2 id="section-request-title" className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
                   <span className="w-5 h-5 rounded-full bg-slate-100 text-slate-700 font-bold text-xs flex items-center justify-center border border-slate-300">
                     2
                   </span>
                   <span>작성 요청</span>
                 </h2>
-                <span className="text-xs text-slate-500">핵심 내용 및 요구사항</span>
+                <button
+                  type="button"
+                  aria-expanded={!isRequestFolded}
+                  aria-controls="section-request-content"
+                  onClick={() => setIsRequestFolded((folded) => !folded)}
+                  className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-800 rounded px-1 py-0.5 cursor-pointer focus-visible:ring-2 focus-visible:ring-blue-500"
+                >
+                  <span>핵심 내용 및 요구사항</span>
+                  <MaterialIcon name={isRequestFolded ? 'arrowDown' : 'arrowUp'} size={14} />
+                  <span className="sr-only">{isRequestFolded ? '펼치기' : '접기'}</span>
+                </button>
               </div>
 
-              <div className="p-3 bg-white border border-slate-200 rounded-lg space-y-2.5 shadow-2xs">
+              <div id="section-request-content" hidden={isRequestFolded} className="p-3 bg-white border border-slate-200 rounded-lg space-y-2.5 shadow-2xs">
                 <div>
                   <label htmlFor="draft-prompt-textarea" className="font-semibold text-xs sm:text-[13px] text-slate-800 block mb-1">
                     기안할 공문서의 핵심 내용이나 개요
@@ -901,16 +939,27 @@ export function DrawerApp() {
                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */}
             {(generatedDraft || recommendedTitle) && !loading && !generationError && (
               <section ref={resultSectionRef} aria-labelledby="section-result-title" className="space-y-3">
-                <div className="flex items-center justify-between pb-1 border-b border-slate-200">
+                <div className="flex items-center justify-between gap-2 pb-1 border-b border-slate-200">
                   <h2 id="section-result-title" className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
                     <span className="w-5 h-5 rounded-full bg-blue-100 text-blue-700 font-bold text-xs flex items-center justify-center border border-blue-300">
                       3
                     </span>
                     <span>생성 결과</span>
                   </h2>
-                  <span className="text-xs text-slate-500">제목 반영 및 본문 확인</span>
+                  <button
+                    type="button"
+                    aria-expanded={!isResultFolded}
+                    aria-controls="section-result-content"
+                    onClick={() => setIsResultFolded((folded) => !folded)}
+                    className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-800 rounded px-1 py-0.5 cursor-pointer focus-visible:ring-2 focus-visible:ring-blue-500"
+                  >
+                    <span>제목 반영 및 본문 확인</span>
+                    <MaterialIcon name={isResultFolded ? 'arrowDown' : 'arrowUp'} size={14} />
+                    <span className="sr-only">{isResultFolded ? '펼치기' : '접기'}</span>
+                  </button>
                 </div>
 
+                <div id="section-result-content" hidden={isResultFolded} className="space-y-3">
                 {/* 3-A. 추천 공문 제목 그룹 (입력창 + 제목 반영 버튼 + 상태 표시) */}
                 <div className="p-3 bg-white border border-slate-200 rounded-lg shadow-2xs space-y-2">
                   <div className="flex items-center justify-between">
@@ -990,6 +1039,7 @@ export function DrawerApp() {
                     </div>
                   </div>
                 )}
+                </div>
               </section>
             )}
 

@@ -981,20 +981,7 @@ export default defineUnlistedScript(() => {
     } else if (msg.type === 'SAIDE_CANCEL_CLICK_TARGET') {
       stopTargetPicker();
     } else if (msg.type === 'DRAFT_FETCH_RELATED_DOC' && msg.doc) {
-      // 1. 문서요지(summary) 등 DOM에 존재하는 본문/요약 텍스트 우선 탐색
-      let foundContent = '';
-      try {
-        const summaryEl = document.querySelector<HTMLTextAreaElement | HTMLElement>(
-          'textarea[name*="summary"], textarea[name*="docSummary"], textarea#summary, textarea#docSummary, #txtSummary'
-        );
-        if (summaryEl && (summaryEl as HTMLTextAreaElement).value?.trim()) {
-          foundContent = (summaryEl as HTMLTextAreaElement).value.trim();
-        }
-      } catch {
-        // ignore
-      }
-
-      // 2. background script에 열린 탭 또는 문서 조회 요청
+      // 선택한 문서의 제목 행과 본문을 검증한 background 응답만 사용한다.
       if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
         chrome.runtime.sendMessage(
           {
@@ -1002,7 +989,7 @@ export default defineUnlistedScript(() => {
             doc: msg.doc,
           },
           (response) => {
-            const content = response?.content || foundContent;
+            const content = response?.content || '';
 
             // 탭에서 못 찾았으나 현재 화면 DOM에 이 문서를 여는 링크/버튼이 있는 경우, 클릭 후 재조회 시도
             if (!content && typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
@@ -1017,13 +1004,15 @@ export default defineUnlistedScript(() => {
                       chrome.runtime.sendMessage(
                         { type: 'DRAFT_FETCH_RELATED_DOC', doc: msg.doc },
                         (retryRes) => {
-                          const retryContent = retryRes?.content || foundContent;
+                          const retryContent = retryRes?.content || '';
                           iframe.contentWindow?.postMessage(
                             {
                               type: 'DRAFT_RELATED_DOC_CONTENT',
                               title: msg.doc.title,
                               docId: msg.doc.id,
                               content: retryContent,
+                              documentTitle: retryRes?.title,
+                              attachments: retryRes?.attachments,
                               error: retryContent ? undefined : retryRes?.error,
                             },
                             '*'
@@ -1043,6 +1032,8 @@ export default defineUnlistedScript(() => {
                 title: msg.doc.title,
                 docId: msg.doc.id,
                 content,
+                documentTitle: response?.title,
+                attachments: response?.attachments,
                 error: content ? undefined : response?.error,
               },
               '*'
@@ -1055,7 +1046,8 @@ export default defineUnlistedScript(() => {
             type: 'DRAFT_RELATED_DOC_CONTENT',
             title: msg.doc.title,
             docId: msg.doc.id,
-            content: foundContent,
+            content: '',
+            error: '참고 문서 본문 조회 기능을 사용할 수 없습니다.',
           },
           '*'
         );

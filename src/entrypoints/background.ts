@@ -39,6 +39,7 @@ import {
 } from '@/lib/messaging/protocol';
 
 import { isExactDraftPath } from '@/lib/onnara/draft-route';
+import { parseReferenceDocument } from '@/lib/onnara/related-info';
 
 const INJECTED_SCRIPT = 'injected.js';
 const DRAWER_SCRIPT = 'drawer.js';
@@ -818,7 +819,7 @@ async function handleMainWorldHwpReplaceSelection(
 export async function handleFetchRelatedDocContent(
   docInfo: any,
   callerTabId?: number
-): Promise<{ content: string; error?: string }> {
+): Promise<{ content: string; title?: string; attachments?: string[]; error?: string }> {
   if (!docInfo || !docInfo.title) {
     return { content: '', error: '문서 정보가 없습니다.' };
   }
@@ -951,11 +952,9 @@ export async function handleFetchRelatedDocContent(
         const matchedKw = keywords.filter(kw => textNorm.includes(kw.toLowerCase()) || pageTitleNorm.includes(kw.toLowerCase()));
         const keywordMatched = keywords.length > 0 && (matchedKw.length >= Math.min(2, Math.ceil(keywords.length * 0.5)));
 
-        // 3) 같은 도메인/온나라에서 열려 있는 유일한 다른 탭인 경우
-        const isOnlyOnnaraTab = scoredCandidates.length === 1 || (scoredCandidates.filter(c => c.score >= 30).length === 1 && scoredCandidates[0]?.tab.id === tab.id);
-
-        if (titleDirectMatched || keywordMatched || isOnlyOnnaraTab) {
-          return { content: text };
+        if (titleDirectMatched || keywordMatched) {
+          const parsed = parseReferenceDocument(text, rawTitle);
+          if (parsed) return { content: parsed.body, title: parsed.title, attachments: parsed.attachments };
         }
       }
     } catch {

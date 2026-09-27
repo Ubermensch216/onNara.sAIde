@@ -11,13 +11,48 @@ export interface RelatedDocInfo {
   id?: string;
   docNumber?: string;
   title: string;
+  documentTitle?: string; // 원문 제목 행에서 검증한 제목
   type?: string; // '문서' | '보고문서' | '메모보고' | '직접입력' | '정책점검' 등
   rawText: string;
   content?: string; // 추출된 본문 텍스트
+  attachments?: string[]; // 본문 끝의 붙임 목록
   summary?: string; // 본문 핵심 요약
   source?: 'dom' | 'background' | 'manual';
   status?: 'idle' | 'loading' | 'loaded' | 'error';
   errorMessage?: string;
+}
+
+/** 온나라 공문 PDF의 제목 행부터 본문과 붙임 목록을 분리한다. */
+export function parseReferenceDocument(text: string, expectedTitle: string): { title: string; body: string; attachments: string[] } | null {
+  const lines = text.replace(/\r/g, '').split('\n').map(line => line.trim()).filter(Boolean);
+  const compact = (value: string) => value.replace(/[^0-9a-zA-Z가-힣]/g, '').toLowerCase();
+  const expected = compact(expectedTitle);
+  const titleIndex = lines.findIndex(line => {
+    const match = line.match(/^제\s*목\s*[:：]?\s*(.+)$/);
+    return expected.length >= 4 && (match?.[1] ? compact(match[1]).includes(expected) : compact(line) === expected);
+  });
+  if (titleIndex < 0) return null;
+  const title = lines[titleIndex]!.replace(/^제\s*목\s*[:：]?\s*/, '').trim();
+  const bodyLines: string[] = [];
+  const attachments: string[] = [];
+  let inAttachments = false;
+  for (const line of lines.slice(titleIndex + 1)) {
+    if (/^(?:부\s*임|붙\s*임)\s*[:：]/.test(line)) {
+      inAttachments = true;
+      const first = line.replace(/^(?:부\s*임|붙\s*임)\s*[:：]\s*/, '').replace(/\s*끝\.$/, '').trim();
+      if (first) attachments.push(first);
+      continue;
+    }
+    if (inAttachments) {
+      if (/^(?:\d+[.．]\s*)/.test(line)) attachments.push(line.replace(/\s*끝\.$/, '').trim());
+      else break;
+      continue;
+    }
+    if (/^(?:수신자|전결|시행|협조자|우\s*\d{5}|전화번호)\b/.test(line) || /^끝\.$/.test(line)) break;
+    bodyLines.push(line);
+  }
+  const body = bodyLines.join('\n').trim();
+  return body.length >= 20 ? { title, body, attachments } : null;
 }
 
 /** 텍스트에서 불필요한 공백 및 버튼 문구(삭제, 검색, 닫기 등) 제거 */
@@ -237,7 +272,7 @@ export function extractRelatedDocuments(rootDoc: Document = document): RelatedDo
 
 /** 참고 문서 본문 텍스트를 적정 토큰 예산(기본 약 3,000자)으로 정돈 */
 export function fitReferenceText(content: string, maxChars = 3200): string {
-  const clean = content.replace(/\s+/g, ' ').trim();
+  const clean = content.replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
   if (clean.length <= maxChars) return clean;
 
   // 앞부분(배경/목적/개요: 약 70%) + 뒷부분(조치/기한/서식: 약 30%) 보존
@@ -291,16 +326,19 @@ export function buildReferencePrompt(options: {
     const hasContent = Boolean(referenceDoc.content && referenceDoc.content.trim());
     const refBody = hasContent
       ? fitReferenceText(referenceDoc.content!)
-      : '(원문 본문 텍스트가 전달되지 않았습니다. 문서 제목 및 업무 취지를 바탕으로 초안을 구성하십시오.)';
+      : '(원문 본문을 읽지 못했습니다.)';
 
     parts.push(
       ``,
       `[참고 문서 (관련정보)]`,
       `- 문서 구분: [${docType}]`,
-      `- 문서 제목: ${referenceDoc.title}${referenceDoc.docNumber ? ` (문서번호: ${referenceDoc.docNumber})` : ''}`,
+      `- 문서 제목: ${referenceDoc.documentTitle || referenceDoc.title}${referenceDoc.docNumber ? ` (문서번호: ${referenceDoc.docNumber})` : ''}`,
       `- 참고 문서 내용:`,
       refBody,
     );
+    if (referenceDoc.attachments?.length) {
+      parts.push(`- 참고 문서 붙임 파일명:`, ...referenceDoc.attachments.map(name => `  * ${name}`));
+    }
   }
 
   parts.push(
