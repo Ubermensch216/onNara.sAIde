@@ -14,15 +14,42 @@ import {
   type RelatedDocInfo,
 } from '@/lib/onnara/related-info';
 import {
+  buildReferenceContext,
+  findUnsupportedFacts,
+  MAX_SELECTED_REFS,
+  type ReferenceSource,
+  type UnsupportedFact,
+} from '@/lib/onnara/reference-context';
+import { extractCodeFacts, isAnalysisComplete } from '@/lib/onnara/reference-analysis';
+import {
   type DraftTemplate,
 } from '@/lib/onnara/draft-templates';
 import {
   loadDraftTemplates,
   onDraftTemplatesChanged,
 } from '@/lib/storage/draft-templates';
+import type { UserRef } from '@/lib/storage/user-refs';
 import { TemplateManager } from './components/TemplateManager';
 import { MaterialIcon } from './components/MaterialIcon';
+import { ReferencePicker, onnaraKey, uploadKey } from './components/ReferencePicker';
+import { needsAnalysis, useUserReferences } from './hooks/useUserReferences';
 import { estimateTokens } from '@/lib/extract/budget';
+
+/** 모델 문맥 한도(num_ctx 상한)와 초안 출력 몫. */
+const CONTEXT_LIMIT = 32768;
+const OUTPUT_TOKENS = 4096;
+/**
+ * 참고자료 묶음에 쓰는 토큰 상한.
+ * ★ CPU에서 입력 처리는 초당 ~131토큰이다. 16K면 입력만 2분 남짓이라, 이보다 크게 잡으면
+ *   정확도보다 기다림이 먼저 문제가 된다. 넘치는 분량은 관련 구간 발췌로 줄인다.
+ */
+const REFERENCE_BUDGET_MAX = 16000;
+/** 이보다 긴 관련정보 원문은 구간별 사실 노트를 만들어 함께 넣는다(analyzeReferenceForDraft). */
+const LONG_REFERENCE_CHARS = 12_000;
+
+function formatLabel(ref: UserRef): string {
+  return { pdf: 'PDF', hwpx: 'HWPX', docx: 'DOCX', xlsx: 'XLSX', text: 'TXT' }[ref.format];
+}
 
 export function DrawerApp() {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
@@ -56,15 +83,19 @@ export function DrawerApp() {
   const [templates, setTemplates] = useState<DraftTemplate[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>('');
 
-  // 관련정보 참고 문서 상태
+  // 참고문서 상태 — 온나라 관련정보와 내 참고자료를 합쳐 최대 3건
   const [relatedDocs, setRelatedDocs] = useState<RelatedDocInfo[]>([]);
-  const [selectedRelatedDoc, setSelectedRelatedDoc] = useState<RelatedDocInfo | null>(null);
-  const [isReferenceExpanded, setIsReferenceExpanded] = useState<boolean>(false);
-  const [customRefNotes, setCustomRefNotes] = useState<string>('');
-  const [isFetchingRefDoc, setIsFetchingRefDoc] = useState<boolean>(false);
+  const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
+  const [expandedKey, setExpandedKey] = useState<string | null>(null);
+  const [onnaraMemos, setOnnaraMemos] = useState<Record<string, string>>({});
+  const [fetchingTitle, setFetchingTitle] = useState<string | null>(null);
   const [refDocSummaries, setRefDocSummaries] = useState<Record<string, string>>({});
-  const [isSummarizing, setIsSummarizing] = useState<boolean>(false);
-  const [showRawContent, setShowRawContent] = useState<boolean>(false);
+  const [summarizingTitle, setSummarizingTitle] = useState<string | null>(null);
+  /** 선택한 내 참고자료의 분석이 끝나지 않았을 때 사용자에게 물을 자료 이름. */
+  const [analysisGate, setAnalysisGate] = useState<string[] | null>(null);
+  const [generateWhenReady, setGenerateWhenReady] = useState<boolean>(false);
+  const [unsupportedFacts, setUnsupportedFacts] = useState<UnsupportedFact[]>([]);
+  const [partialRefs, setPartialRefs] = useState<string[]>([]);
   const [isSettingsFolded, setIsSettingsFolded] = useState<boolean>(false);
   const [isRequestFolded, setIsRequestFolded] = useState<boolean>(false);
   const [isResultFolded, setIsResultFolded] = useState<boolean>(false);
@@ -72,6 +103,13 @@ export function DrawerApp() {
   const resultSectionRef = useRef<HTMLElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const requestedReferenceTitles = useRef<Set<string>>(new Set());
+  const summaryRequested = useRef<Set<string>>(new Set());
+  const autoSelected = useRef(false);
+  /** 긴 관련정보 원문의 구간 노트. 초안을 다시 만들 때마다 같은 원문을 다시 분석하지 않는다. */
+  const onnaraNotes = useRef<Map<string, string>>(new Map());
+
+  const userRefsApi = useUserReferences({ endpoint: settings.endpoint, model: settings.model, paused: loading });
+  const userRefs = userRefsApi.refs;
 
   // 초안 결과가 생성되거나 주입되면 결과 영역으로 매끄럽게 자동 스크롤
   useEffect(() => {
@@ -99,6 +137,22 @@ export function DrawerApp() {
 
   const selectedTemplate = templates.find((t) => t.id === selectedTemplateId) || null;
 
+  const selectedOnnara = relatedDocs.filter((doc) => selectedKeys.includes(onnaraKey(doc)));
+  const selectedUploads = selectedKeys
+    .map((key) => userRefs.find((ref) => uploadKey(ref) === key))
+    .filter((ref): ref is UserRef => Boolean(ref));
+  const firstSelectedTitle = selectedKeys
+    .map((key) => relatedDocs.find((doc) => onnaraKey(doc) === key)?.title ?? userRefs.find((ref) => uploadKey(ref) === key)?.name)
+    .find(Boolean);
+
+  // 지워진 자료는 선택에서도 뺀다.
+  useEffect(() => {
+    setSelectedKeys((prev) => {
+      const next = prev.filter((key) => !key.startsWith('upload:') || userRefs.some((ref) => uploadKey(ref) === key));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [userRefs]);
+
   // 부모 윈도우와 통신 리스너
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
@@ -112,10 +166,14 @@ export function DrawerApp() {
         setHasWriteBodyBtn(Boolean(data.hasWriteBodyBtn));
         if (Array.isArray(data.relatedDocs) && data.relatedDocs.length > 0) {
           setRelatedDocs(data.relatedDocs);
-          setSelectedRelatedDoc((prev) => prev ?? data.relatedDocs[0]);
+          // 처음 한 번만 첫 관련정보를 골라 둔다(이전 동작 유지).
+          if (!autoSelected.current) {
+            autoSelected.current = true;
+            setSelectedKeys((prev) => (prev.length ? prev : [onnaraKey(data.relatedDocs[0])]));
+          }
         }
       } else if (data.type === 'DRAFT_RELATED_DOC_CONTENT') {
-        setIsFetchingRefDoc(false);
+        setFetchingTitle(null);
         const { title, content, error, documentTitle, attachments } = data;
         setRelatedDocs((prev) =>
           prev.map((d) =>
@@ -124,15 +182,9 @@ export function DrawerApp() {
               : d
           )
         );
-        setSelectedRelatedDoc((prev) =>
-          prev && prev.title === title
-            ? { ...prev, content, documentTitle, attachments, status: content ? 'loaded' : 'error', errorMessage: error }
-            : prev
-        );
         if (content) {
           setStatusMsg(`'${title}' 본문을 성공적으로 불러왔습니다. (${content.length}자)`);
           setTimeout(() => setStatusMsg(''), 3000);
-          triggerDocSummary(title, content);
         } else if (error) {
           setStatusMsg(error);
           setTimeout(() => setStatusMsg(''), 4500);
@@ -212,53 +264,71 @@ export function DrawerApp() {
     }
   };
 
-  const triggerDocSummary = (title: string, content: string) => {
-    if (!content || !content.trim()) return;
-    // 1. 규칙 기반 요약 즉시 반영
-    const initialSummary = generateRuleBasedSummary(content, title);
-    setRefDocSummaries((prev) => ({ ...prev, [title]: initialSummary }));
-
-    // 2. Ollama AI 요약 비동기 호출
-    setIsSummarizing(true);
-    generateDocSummary(content, title, settings)
+  // 선택한 관련정보 문서의 요약을 하나씩 만든다(규칙 기반 즉시 → AI 요약으로 교체).
+  useEffect(() => {
+    if (summarizingTitle || loading) return;
+    const doc = selectedOnnara.find((d) => d.content?.trim() && !summaryRequested.current.has(d.title));
+    if (!doc?.content) return;
+    summaryRequested.current.add(doc.title);
+    setRefDocSummaries((prev) => ({ ...prev, [doc.title]: generateRuleBasedSummary(doc.content!, doc.title) }));
+    setSummarizingTitle(doc.title);
+    generateDocSummary(doc.content, doc.title, settings)
       .then((aiSummary) => {
         if (aiSummary && aiSummary.trim()) {
-          setRefDocSummaries((prev) => ({ ...prev, [title]: aiSummary.trim() }));
+          setRefDocSummaries((prev) => ({ ...prev, [doc.title]: aiSummary.trim() }));
         }
       })
       .catch(() => {})
-      .finally(() => setIsSummarizing(false));
-  };
-
-  useEffect(() => {
-    if (selectedRelatedDoc?.content && selectedRelatedDoc.title && !refDocSummaries[selectedRelatedDoc.title]) {
-      triggerDocSummary(selectedRelatedDoc.title, selectedRelatedDoc.content);
-    }
-  }, [selectedRelatedDoc, refDocSummaries]);
+      .finally(() => setSummarizingTitle(null));
+  }, [selectedOnnara, summarizingTitle, loading, settings]);
 
   // 참고 문서 본문 조회 요청
   const handleFetchRefContent = (doc: RelatedDocInfo) => {
     requestedReferenceTitles.current.add(doc.title);
-    setIsFetchingRefDoc(true);
+    setFetchingTitle(doc.title);
     window.parent.postMessage({ type: 'DRAFT_FETCH_RELATED_DOC', doc }, '*');
     setStatusMsg(`'${doc.title}' 본문을 조회하는 중입니다...`);
   };
 
+  // 선택한 관련정보 중 본문이 없는 것을 하나씩 읽어 온다(백그라운드 작업 탭을 겹쳐 열지 않는다).
   useEffect(() => {
-    if (selectedRelatedDoc && !selectedRelatedDoc.content && !requestedReferenceTitles.current.has(selectedRelatedDoc.title)) {
-      handleFetchRefContent(selectedRelatedDoc);
-    }
-  }, [selectedRelatedDoc]);
+    if (fetchingTitle) return;
+    const doc = selectedOnnara.find((d) => !d.content && !requestedReferenceTitles.current.has(d.title));
+    if (doc) handleFetchRefContent(doc);
+  }, [selectedOnnara, fetchingTitle]);
 
-  // '내용' 버튼 클릭 토글 (펼칠 때 본문이 없으면 자동으로 본문 읽기 호출)
-  const handleToggleExpand = (doc: RelatedDocInfo) => {
-    const next = !isReferenceExpanded;
-    setIsReferenceExpanded(next);
-    if (next && !doc.content && !isFetchingRefDoc) {
-      handleFetchRefContent(doc);
-    }
+  const handleToggleSelect = (key: string) => {
+    setSelectedKeys((prev) => {
+      if (prev.includes(key)) return prev.filter((k) => k !== key);
+      if (prev.length >= MAX_SELECTED_REFS) return prev;
+      return [...prev, key];
+    });
+    if (expandedKey === key && key.startsWith('onnara:')) setExpandedKey(null);
   };
 
+  // '내용'·'분석' 버튼 (펼칠 때 관련정보 본문이 없으면 다시 읽어 온다)
+  const handleToggleExpand = (key: string) => {
+    const next = expandedKey === key ? null : key;
+    setExpandedKey(next);
+    const doc = relatedDocs.find((d) => onnaraKey(d) === key);
+    if (next && doc && !doc.content && !fetchingTitle) handleFetchRefContent(doc);
+  };
+
+  const handleUpload = async (files: File[]) => {
+    const ids = await userRefsApi.upload(files);
+    if (!ids.length) return;
+    // 올린 자료를 자리가 남는 만큼 바로 고른다.
+    setSelectedKeys((prev) => {
+      const next = [...prev];
+      for (const id of ids) {
+        const key = `upload:${id}`;
+        if (!next.includes(key) && next.length < MAX_SELECTED_REFS) next.push(key);
+      }
+      return next;
+    });
+    setStatusMsg(`${ids.length}건을 내 참고자료에 보관했습니다. 원문 분석은 뒤에서 이어집니다.`);
+    setTimeout(() => setStatusMsg(''), 3500);
+  };
 
   // 서식관리 탭에서 서식을 선택하여 초안 작성으로 전환
   const handleSelectTemplateFromManager = (template: DraftTemplate) => {
@@ -268,14 +338,58 @@ export function DrawerApp() {
     setTimeout(() => setStatusMsg(''), 2500);
   };
 
+  /** 선택 순서대로 초안 프롬프트용 자료를 만든다. */
+  const buildSources = (): ReferenceSource[] =>
+    selectedKeys.flatMap((key): ReferenceSource[] => {
+      const doc = relatedDocs.find((d) => onnaraKey(d) === key);
+      if (doc?.content) {
+        return [{
+          key,
+          origin: 'onnara',
+          role: 'fact',
+          title: doc.documentTitle || doc.title,
+          docType: doc.type,
+          docNumber: doc.docNumber,
+          text: doc.content,
+          memo: onnaraMemos[doc.title],
+          attachments: doc.attachments,
+          codeFacts: extractCodeFacts(doc.content),
+          notes: onnaraNotes.current.get(`${doc.title}#${doc.content.length}`),
+        }];
+      }
+      const ref = userRefs.find((r) => uploadKey(r) === key);
+      if (!ref) return [];
+      const complete = isAnalysisComplete(ref.analysis, ref.role, settings.model);
+      return [{
+        key,
+        origin: 'upload',
+        role: ref.role,
+        title: ref.name,
+        docType: formatLabel(ref),
+        text: ref.text,
+        memo: ref.memo,
+        codeFacts: ref.codeFacts,
+        fact: complete ? ref.analysis?.fact : undefined,
+        example: complete ? ref.analysis?.example : undefined,
+      }];
+    });
+
   // 초안 생성 실행 (로컬 Ollama)
-  const handleGenerate = async () => {
+  const handleGenerate = async (force = false) => {
     if (!prompt.trim()) return;
-    if (selectedRelatedDoc && !selectedRelatedDoc.content?.trim()) {
-      if (!isFetchingRefDoc) handleFetchRefContent(selectedRelatedDoc);
-      setGenerationError(`'${selectedRelatedDoc.title}'의 본문을 읽은 뒤 초안을 작성할 수 있습니다.`);
+    const unread = selectedOnnara.find((doc) => !doc.content?.trim());
+    if (unread) {
+      if (!fetchingTitle) handleFetchRefContent(unread);
+      setGenerationError(`'${unread.title}'의 본문을 읽은 뒤 초안을 작성할 수 있습니다.`);
       return;
     }
+    const pending = selectedUploads.filter((ref) => needsAnalysis(ref, settings.model));
+    if (!force && pending.length) {
+      setAnalysisGate(pending.map((ref) => ref.name));
+      return;
+    }
+    setAnalysisGate(null);
+    setGenerateWhenReady(false);
     setIsSettingsFolded(true);
     setIsRequestFolded(false);
     setLoading(true);
@@ -283,37 +397,29 @@ export function DrawerApp() {
     setGeneratedDraft('');
     setHasAppliedTitle(false);
     setTitleApplyError(null);
+    setUnsupportedFacts([]);
+    setPartialRefs([]);
 
-    const effectiveRefDoc = selectedRelatedDoc
-      ? {
-          ...selectedRelatedDoc,
-          content: customRefNotes.trim()
-            ? (selectedRelatedDoc.content ? `${selectedRelatedDoc.content}\n\n[추가 참고 메모]\n${customRefNotes.trim()}` : customRefNotes.trim())
-            : selectedRelatedDoc.content,
-        }
-      : null;
-
-    let referenceAnalysis: string | undefined;
+    // 긴 관련정보 원문은 모든 구간을 읽힌 사실 노트를 함께 넣는다(한 번 만든 노트는 다시 쓰지 않는다).
     try {
-      if (effectiveRefDoc?.content) {
-        setStatusMsg('참고문서 전체 내용을 분석하고 있습니다...');
-        referenceAnalysis = await analyzeReferenceForDraft(effectiveRefDoc.content, effectiveRefDoc.title, settings);
-        setStatusMsg('');
+      for (const doc of selectedOnnara) {
+        const cacheKey = `${doc.title}#${doc.content!.length}`;
+        if (doc.content!.length > LONG_REFERENCE_CHARS && !onnaraNotes.current.has(cacheKey)) {
+          setStatusMsg(`'${doc.title}' 전체 내용을 분석하고 있습니다...`);
+          onnaraNotes.current.set(cacheKey, await analyzeReferenceForDraft(doc.content!, doc.title, settings));
+          setStatusMsg('');
+        }
       }
     } catch (error) {
+      setStatusMsg('');
       setGenerationError(error instanceof Error ? error.message : String(error));
       setLoading(false);
       return;
     }
 
-    // 참고 문서 및 지정 서식(Template) 반영 프롬프트 생성
-    const userMessageContent = buildReferencePrompt({
-      userPrompt: prompt,
-      docTitle: docTitle || '기안문',
-      referenceDoc: effectiveRefDoc,
-      referenceAnalysis,
-      template: selectedTemplate,
-    });
+    const sources = buildSources();
+    const hasFact = sources.some((source) => source.role === 'fact');
+    const hasExample = sources.some((source) => source.role === 'example');
 
     let systemPrompt =
       '당신은 대한민국 정부 공문서 작성 전문가 AI입니다. 마크다운 특수기호(##, **, *, _, `, > 등)를 절대 사용하지 마십시오. 대한민국 행정업무운영편람의 표준 서식(1. -> 가. -> (1) -> 1) -> 가) -> (가)) 및 개조식 기호(-, ·)만을 사용하여 정형화된 공문서 어투(~코자 함, ~바람)로 명확하고 간결하게 작성하십시오.';
@@ -325,14 +431,33 @@ export function DrawerApp() {
       }
     }
 
-    systemPrompt += ' 제공된 참고 문서(관련정보)의 추진 배경, 지침, 제출 기한, 서식명, 소관 부서 등의 사실관계를 충실히 반영하고, 사실이 불확실한 날짜나 금액은 [확인 필요: 내용]으로 표시하십시오.';
+    if (hasFact || !sources.length) {
+      systemPrompt += ' 제공된 참고 문서(관련정보)의 추진 배경, 지침, 제출 기한, 서식명, 소관 부서 등의 사실관계를 충실히 반영하고, 사실이 불확실한 날짜나 금액은 [확인 필요: 내용]으로 표시하십시오.';
+    }
+    if (hasExample) {
+      systemPrompt += ' 작성 예시로 제공된 문서는 구성·번호 체계·문체만 본뜨고, 그 문서의 날짜·금액·기관·사업 내용은 새 공문에 옮기지 마십시오.';
+    }
 
     // 추천 제목 지침 추가
     systemPrompt = buildDraftTitleSystemPrompt(systemPrompt);
 
-    const requiredContext = estimateTokens(systemPrompt + userMessageContent) + 4096;
-    if (requiredContext > 32768) {
-      setGenerationError('참고문서 전체 분석 결과가 모델의 32K 컨텍스트 한도를 넘었습니다. 일부 내용을 누락한 초안을 생성하지 않았습니다.');
+    // 참고자료 묶음이 쓸 수 있는 토큰: 한도 − 출력 − 시스템 − 참고자료를 뺀 프롬프트 − 여유
+    const basePrompt = buildReferencePrompt({ userPrompt: prompt, docTitle: docTitle || '기안문', template: selectedTemplate });
+    const available = CONTEXT_LIMIT - OUTPUT_TOKENS - estimateTokens(systemPrompt + basePrompt) - 800;
+    const referenceContext = sources.length
+      ? buildReferenceContext(sources, prompt, Math.min(REFERENCE_BUDGET_MAX, available))
+      : null;
+
+    const userMessageContent = buildReferencePrompt({
+      userPrompt: prompt,
+      docTitle: docTitle || '기안문',
+      template: selectedTemplate,
+      referenceContext,
+    });
+
+    const requiredContext = estimateTokens(systemPrompt + userMessageContent) + OUTPUT_TOKENS;
+    if (requiredContext > CONTEXT_LIMIT) {
+      setGenerationError('작성 요청과 서식만으로 모델의 32K 컨텍스트 한도를 넘었습니다. 요청 내용을 줄여 주세요.');
       setLoading(false);
       return;
     }
@@ -364,6 +489,11 @@ export function DrawerApp() {
       );
       setRecommendedTitle(recTitle);
       setGeneratedDraft(cleanDraft);
+      if (sources.length) {
+        setUnsupportedFacts(findUnsupportedFacts(cleanDraft, sources, prompt));
+        setPartialRefs(referenceContext?.partial ?? []);
+        void userRefsApi.touch(selectedUploads.map((ref) => ref.id));
+      }
       if (cleanDraft.trim()) {
         setIsRequestFolded(true);
         setIsResultFolded(false);
@@ -375,6 +505,15 @@ export function DrawerApp() {
       setLoading(false);
     }
   };
+
+  // '분석 끝나면 생성'을 고른 경우: 선택한 자료의 분석이 모두 끝나면 초안을 만든다.
+  useEffect(() => {
+    if (!generateWhenReady || loading) return;
+    if (selectedUploads.every((ref) => !needsAnalysis(ref, settings.model))) {
+      setGenerateWhenReady(false);
+      void handleGenerate(true);
+    }
+  });
 
   // 공문 본 화면의 '제목' 필드에 추천 제목 반영
   const handleApplyTitle = () => {
@@ -433,41 +572,6 @@ export function DrawerApp() {
       }
     }
   };
-
-  /** 참고문서의 실제 데이터 상태를 정확히 구분 */
-  const getRefDocContentStatus = (doc: RelatedDocInfo, isSelected: boolean) => {
-    if (doc.status === 'error' || doc.errorMessage) {
-      return {
-        key: 'error' as const,
-        label: '오류',
-        badgeClass: 'bg-rose-50 text-rose-700 border-rose-200',
-        detail: doc.errorMessage || '본문을 불러오지 못했습니다.',
-      };
-    }
-    if ((isFetchingRefDoc && isSelected) || doc.status === 'loading') {
-      return {
-        key: 'loading' as const,
-        label: '본문 불러오는 중',
-        badgeClass: 'bg-amber-50 text-amber-700 border-amber-200',
-        detail: '온나라 열린 창에서 본문을 추출하고 있습니다.',
-      };
-    }
-    if (doc.content && doc.content.trim()) {
-      return {
-        key: 'ready' as const,
-        label: `본문 준비됨 (${doc.content.length.toLocaleString()}자)`,
-        badgeClass: 'bg-emerald-50 text-emerald-700 border-emerald-200',
-        detail: '본문이 준비되어 AI 작성 시 참고자료로 반영됩니다.',
-      };
-    }
-    return {
-      key: 'empty' as const,
-      label: '본문 없음',
-      badgeClass: 'bg-slate-100 text-slate-600 border-slate-200',
-      detail: '본문이 아직 추출되지 않았습니다. [본문 읽어오기]를 눌러주세요.',
-    };
-  };
-
   return (
     <div className="flex flex-col h-full bg-slate-50 text-slate-800 text-[13.5px]">
       {/* ── 상단 헤더: 온나라 sAIde 브랜드 + 기안 코파일럿 시스템 명칭 ── */}
@@ -648,171 +752,31 @@ export function DrawerApp() {
                 </div>
               </div>
 
-              {/* 1-B. 참고문서 선택 카드 */}
-              <div className="p-3 bg-white border border-slate-200 rounded-lg shadow-2xs space-y-2">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1.5 font-bold text-slate-900 text-xs sm:text-[13px]">
-                    <MaterialIcon name="attachFile" size={15} className="text-blue-600" />
-                    <span>참고문서 선택</span>
-                    {relatedDocs.length > 0 && (
-                      <span className="text-xs font-normal text-slate-500">
-                        ({relatedDocs.length}건 감지됨)
-                      </span>
-                    )}
-                  </div>
-                  {selectedRelatedDoc && (
-                    <button
-                      type="button"
-                      onClick={() => setSelectedRelatedDoc(null)}
-                      className="text-xs text-slate-500 hover:text-slate-800 underline transition cursor-pointer"
-                      title="선택된 참고문서 해제"
-                    >
-                      참고 해제
-                    </button>
-                  )}
-                </div>
-
-                {relatedDocs.length === 0 ? (
-                  <div className="p-2.5 bg-slate-50 border border-dashed border-slate-200 rounded-lg text-center text-xs text-slate-500 leading-relaxed">
-                    현재 화면에서 감지된 관련정보 참고문서가 없습니다.
-                  </div>
-                ) : (
-                  <div className="space-y-1.5">
-                    {relatedDocs.map((doc, idx) => {
-                      const isSelected = selectedRelatedDoc?.title === doc.title;
-
-                      return (
-                        <div
-                          key={doc.title || idx}
-                          className={`p-2 rounded-lg border transition ${
-                            isSelected
-                              ? 'bg-blue-50/40 border-blue-300 shadow-2xs'
-                              : 'bg-white border-slate-200 hover:border-slate-300'
-                          }`}
-                        >
-                          {/* 1행: 라디오 + 구분 태그 + 문서 제목 + 체크 아이콘(선택 시) + [내용] 버튼(선택 시) */}
-                          <div className="flex items-center justify-between gap-2">
-                            <label
-                              htmlFor={`refdoc-${idx}`}
-                              className="flex-1 min-w-0 cursor-pointer flex items-center gap-1.5"
-                            >
-                              <input
-                                type="radio"
-                                id={`refdoc-${idx}`}
-                                name="relatedDocChoice"
-                                checked={isSelected}
-                                onChange={() => setSelectedRelatedDoc(isSelected ? null : doc)}
-                                className="accent-blue-600 h-4 w-4 cursor-pointer shrink-0 focus-visible:ring-2 focus-visible:ring-blue-500"
-                              />
-                              <span className="text-[11px] font-bold text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200 shrink-0">
-                                {doc.type || '문서'}
-                              </span>
-                              <span
-                                className="text-xs sm:text-[13px] font-medium text-slate-900 truncate flex-1"
-                                title={doc.title}
-                              >
-                                {doc.title}
-                              </span>
-                            </label>
-
-                            {/* 우측: 선택 표시(체크 아이콘) & 내용 확인 버튼 */}
-                            {isSelected && (
-                              <div className="flex items-center gap-1.5 shrink-0">
-                                <span className="text-blue-600 flex items-center" title="참고문서 선택됨">
-                                  <MaterialIcon name="checkCircle" size={16} />
-                                </span>
-                                <button
-                                  type="button"
-                                  onClick={() => handleToggleExpand(doc)}
-                                  className="px-2 py-0.5 bg-white hover:bg-slate-50 border border-slate-300 text-slate-700 rounded text-xs font-medium transition flex items-center gap-1 cursor-pointer focus-visible:ring-2 focus-visible:ring-blue-500"
-                                  title="참고문서 내용 요약 보기"
-                                >
-                                  <MaterialIcon name={isReferenceExpanded ? 'arrowUp' : 'arrowDown'} size={13} />
-                                  <span>{isReferenceExpanded ? '접기' : '내용'}</span>
-                                </button>
-                              </div>
-                            )}
-                          </div>
-
-                          {/* 펼침 영역: 요약 및 추가 메모 (내용 버튼 클릭 시 유지) */}
-                          {isSelected && isReferenceExpanded && (
-                            <div className="mt-2 pt-2 border-t border-slate-200 space-y-2 text-xs bg-slate-50/70 p-2.5 rounded-lg">
-                              <div className="flex items-center justify-between text-slate-700">
-                                <span className="font-bold text-xs flex items-center gap-1.5">
-                                  <MaterialIcon name="assignment" size={14} className="text-blue-600" />
-                                  <span>참고문서 핵심 요약</span>
-                                  {isSummarizing && (
-                                    <span className="text-[11px] text-blue-600 font-normal animate-pulse">
-                                      (AI 요약 정리 중...)
-                                    </span>
-                                  )}
-                                </span>
-                                {selectedRelatedDoc.content && (
-                                  <button
-                                    type="button"
-                                    onClick={() => setShowRawContent(!showRawContent)}
-                                    className="text-xs text-blue-600 hover:text-blue-800 underline font-medium cursor-pointer"
-                                  >
-                                    {showRawContent ? '요약 보기' : '원문 전체 보기'}
-                                  </button>
-                                )}
-                              </div>
-
-                              {selectedRelatedDoc.content ? (
-                                showRawContent ? (
-                                  <div className="p-2.5 bg-white border border-slate-200 rounded max-h-36 overflow-y-auto font-mono text-[11px] leading-relaxed text-slate-700 whitespace-pre-wrap select-text">
-                                    {selectedRelatedDoc.content}
-                                  </div>
-                                ) : (
-                                  <div className="p-2.5 bg-white border border-slate-200 rounded max-h-36 overflow-y-auto text-xs leading-relaxed text-slate-800 whitespace-pre-wrap select-text shadow-2xs font-sans">
-                                    {refDocSummaries[selectedRelatedDoc.title] ||
-                                      generateRuleBasedSummary(selectedRelatedDoc.content, selectedRelatedDoc.title)}
-                                  </div>
-                                )
-                              ) : isFetchingRefDoc ? (
-                                <div className="p-3 bg-white border border-slate-200 rounded text-center text-blue-700 text-xs">
-                                  <span className="animate-pulse font-medium">열린 탭에서 본문을 조회하고 요약하는 중입니다...</span>
-                                </div>
-                              ) : (
-                                <div className="p-2.5 bg-amber-50 border border-amber-200 rounded text-xs text-amber-800 space-y-1">
-                                  <p className="font-semibold flex items-center gap-1.5">
-                                    <MaterialIcon name="warning" size={13} className="text-amber-600" />
-                                    <span>참고문서 본문을 읽지 못했습니다.</span>
-                                  </p>
-                                  <p className="text-[11px] text-amber-700 leading-normal">
-                                    {selectedRelatedDoc.errorMessage || '관련정보의 원문을 열 수 없습니다. 문서 열기 상태를 확인한 뒤 [내용]을 다시 눌러주세요.'}
-                                  </p>
-                                </div>
-                              )}
-
-                              {selectedRelatedDoc.attachments?.length ? (
-                                <div className="p-2.5 bg-white border border-slate-200 rounded text-xs text-slate-800">
-                                  <div className="font-semibold mb-1">원문 붙임 파일명</div>
-                                  {selectedRelatedDoc.attachments.map((name) => <div key={name}>{name}</div>)}
-                                </div>
-                              ) : null}
-
-                              {/* 사용자 추가 첨언 메모 */}
-                              <div>
-                                <label htmlFor="ref-doc-custom-notes" className="text-xs text-slate-700 font-semibold block mb-1">
-                                  참고문서 관련 추가 요구사항 또는 핵심 메모 (선택사항):
-                                </label>
-                                <textarea
-                                  id="ref-doc-custom-notes"
-                                  value={customRefNotes}
-                                  onChange={(e) => setCustomRefNotes(e.target.value)}
-                                  placeholder="위 내용을 확인하고, 우리 과 상황에 맞게 반영할 변경사항이나 강조할 내용을 적어주세요. (예: 우리 부서 제출 기한은 10월 12일까지로 변경하여 반영할 것)"
-                                  className="w-full h-18 p-2 border border-slate-300 rounded bg-white text-xs resize-none focus:outline-none focus:ring-1 focus:ring-blue-500 leading-relaxed"
-                                />
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
+              {/* 1-B. 참고문서 선택 카드 (온나라 관련정보 + 내 참고자료, 최대 3건) */}
+              <ReferencePicker
+                selectedKeys={selectedKeys}
+                expandedKey={expandedKey}
+                onToggleSelect={handleToggleSelect}
+                onClearAll={() => { setSelectedKeys([]); setExpandedKey(null); }}
+                onToggleExpand={handleToggleExpand}
+                relatedDocs={relatedDocs}
+                fetchingTitle={fetchingTitle}
+                refDocSummaries={refDocSummaries}
+                summarizingTitle={summarizingTitle}
+                onnaraMemos={onnaraMemos}
+                onOnnaraMemo={(title, memo) => setOnnaraMemos((prev) => ({ ...prev, [title]: memo }))}
+                model={settings.model}
+                userRefs={userRefs}
+                uploads={userRefsApi.uploads}
+                analyzing={userRefsApi.analyzing}
+                loadError={userRefsApi.loadError}
+                onUpload={(files) => void handleUpload(files)}
+                onDismissUpload={userRefsApi.dismissUpload}
+                onRole={(id, role) => void userRefsApi.setRole(id, role)}
+                onMemo={(id, memo) => void userRefsApi.setMemo(id, memo)}
+                onReanalyze={(id) => void userRefsApi.reanalyze(id)}
+                onDelete={(id) => void userRefsApi.remove(id)}
+              />
               </div>
             </section>
 
@@ -854,8 +818,8 @@ export function DrawerApp() {
                     placeholder={
                       selectedTemplate
                         ? `[${selectedTemplate.title}] 서식에 맞추어 작성할 핵심 메모나 요구사항을 입력하세요. (AI가 서식 항목 순서와 표준 공문 어투에 맞춰 완성합니다.)`
-                        : selectedRelatedDoc
-                        ? `예: 위 참고문서 [${selectedRelatedDoc.title}]의 지침에 따라 우리 과 사업 안건 제출 공문 초안 작성해줘.`
+                        : firstSelectedTitle
+                        ? `예: 위 참고문서 [${firstSelectedTitle}]의 지침에 따라 우리 과 사업 안건 제출 공문 초안 작성해줘.`
                         : '예: 2026년 공공 AI 업무혁신 추진계획. 추진배경과 3대 전략을 개조식으로 작성해줘.'
                     }
                     className="w-full h-28 min-h-[7rem] p-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-xs sm:text-sm resize-y bg-white leading-relaxed placeholder:text-slate-400"
@@ -869,7 +833,7 @@ export function DrawerApp() {
 
                 <button
                   type="button"
-                  onClick={handleGenerate}
+                  onClick={() => void handleGenerate()}
                   disabled={loading || !prompt.trim()}
                   className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 text-white rounded-lg font-semibold text-sm transition flex items-center justify-center gap-2 shadow-xs cursor-pointer disabled:cursor-not-allowed focus-visible:ring-2 focus-visible:ring-blue-500"
                 >
@@ -884,13 +848,32 @@ export function DrawerApp() {
                       <span>
                         {selectedTemplate
                           ? `[${selectedTemplate.title}] 서식으로 초안 생성`
-                          : selectedRelatedDoc
-                          ? '참고문서 반영하여 공문서 초안 생성'
+                          : selectedKeys.length
+                          ? `참고문서 ${selectedKeys.length}건 반영하여 공문서 초안 생성`
                           : '공문서 초안 생성'}
                       </span>
                     </span>
                   )}
                 </button>
+
+                {/* 선택한 내 참고자료의 분석이 끝나지 않았을 때: 기다릴지, 코드 추출 사실만으로 지금 만들지 묻는다 */}
+                {generateWhenReady ? (
+                  <div className="p-2.5 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-900 flex items-center justify-between gap-2" role="status">
+                    <span className="animate-pulse">내 참고자료 분석이 끝나면 초안을 자동으로 생성합니다...</span>
+                    <button type="button" onClick={() => setGenerateWhenReady(false)} className="shrink-0 px-2 py-1 bg-white border border-blue-300 text-blue-700 rounded font-semibold cursor-pointer">대기 취소</button>
+                  </div>
+                ) : analysisGate ? (
+                  <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-900 space-y-2" role="alert">
+                    <p className="leading-relaxed">
+                      선택한 내 참고자료 <strong>{analysisGate.join(', ')}</strong>의 정밀 분석이 아직 끝나지 않았습니다.
+                    </p>
+                    <div className="flex flex-wrap gap-1.5 justify-end">
+                      <button type="button" onClick={() => setAnalysisGate(null)} className="px-2 py-1 border border-amber-300 bg-white text-amber-800 rounded cursor-pointer">취소</button>
+                      <button type="button" onClick={() => void handleGenerate(true)} className="px-2 py-1 border border-amber-300 bg-white text-amber-800 rounded font-semibold cursor-pointer" title="코드가 원문에서 찾은 날짜·금액·법령과 원문 발췌만으로 작성합니다">지금 생성</button>
+                      <button type="button" onClick={() => { setAnalysisGate(null); setGenerateWhenReady(true); }} className="px-2 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded font-semibold cursor-pointer">분석 끝나면 생성</button>
+                    </div>
+                  </div>
+                ) : null}
               </div>
             </section>
 
@@ -905,8 +888,8 @@ export function DrawerApp() {
                   <span>
                     {selectedTemplate
                       ? `AI가 [${selectedTemplate.title}] 서식의 ${selectedTemplate.sections.length}개 주요 항목에 맞추어 작성 중입니다...`
-                      : selectedRelatedDoc
-                      ? `AI가 참고문서 [${selectedRelatedDoc.title}]를 반영하여 초안을 작성 중입니다...`
+                      : selectedKeys.length
+                      ? `AI가 참고문서 ${selectedKeys.length}건을 반영하여 초안을 작성 중입니다...`
                       : 'AI가 공문서 추천 제목과 표준 서식 초안을 작성 중입니다...'}
                   </span>
                 </div>
@@ -945,7 +928,7 @@ export function DrawerApp() {
                   </span>
                   <button
                     type="button"
-                    onClick={handleGenerate}
+                    onClick={() => void handleGenerate()}
                     disabled={loading || !prompt.trim()}
                     className="px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded text-xs font-semibold transition cursor-pointer"
                   >
@@ -1061,6 +1044,25 @@ export function DrawerApp() {
                     >
                       {generatedDraft}
                     </div>
+                  </div>
+                )}
+
+                {/* 3-C. 생성 후 사실 대조: 참고자료·작성 요청에 없는 날짜·금액 */}
+                {generatedDraft && (unsupportedFacts.length > 0 || partialRefs.length > 0) && (
+                  <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-900 space-y-1.5" role="note">
+                    {unsupportedFacts.length > 0 && (
+                      <div>
+                        <p className="font-bold flex items-center gap-1.5">
+                          <MaterialIcon name="warning" size={14} className="text-amber-600" />
+                          <span>[확인 필요] 참고자료와 작성 요청에서 찾지 못한 날짜·금액</span>
+                        </p>
+                        <p className="mt-1 leading-relaxed">{unsupportedFacts.map((f) => f.text).join(', ')}</p>
+                        <p className="text-[11px] text-amber-700">모델이 지어냈거나 작성 예시에서 옮겨 적었을 수 있습니다. 삽입 전에 확인하세요.</p>
+                      </div>
+                    )}
+                    {partialRefs.length > 0 && (
+                      <p className="text-[11px] text-amber-800">분량이 많아 관련 구간만 반영한 참고자료: {partialRefs.join(', ')}</p>
+                    )}
                   </div>
                 )}
                 </div>

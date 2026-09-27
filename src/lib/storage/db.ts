@@ -13,6 +13,7 @@ import type { TaskCandidate } from '@/lib/schedule/candidates';
 import type { DocResult } from '@/lib/cache/doc-results';
 import type { FeedbackEntry } from '@/lib/feedback/store';
 import type { InboxDoc, InboxRun } from '@/lib/inbox/types';
+import type { UserRef } from '@/lib/storage/user-refs';
 import { sameDocument } from '@/lib/messaging/protocol';
 
 export interface Conversation {
@@ -92,6 +93,8 @@ class SaideDB extends Dexie {
   inboxDocs!: EntityTable<InboxDoc, 'key'>;
   /** 브리핑 실행 기록(N1). 건너뛴 실행도 남긴다. */
   inboxRuns!: EntityTable<InboxRun, 'id'>;
+  /** 기안 코파일럿 '내 참고자료'(사용자가 올린 파일의 글자와 분석). 대화·캐시와 수명이 다르다. */
+  userRefs!: EntityTable<UserRef, 'id'>;
 
   /**
    * 스키마 판본. **사용자 데이터가 살아남는 규칙이 여기에 있다.**
@@ -158,6 +161,14 @@ class SaideDB extends Dexie {
       inboxDocs: 'key, group, firstSeenAt, briefedAt, category',
       inboxRuns: '++id, at',
     });
+    /**
+     * v6 — 기안 코파일럿 '내 참고자료'.
+     *
+     * ★ 원본 파일은 담지 않는다. 뽑은 글자와 분석만 담는다(용량·개인정보).
+     * ★ contentHash를 색인한다. 같은 파일을 다시 올리면 새로 만들지 않고 기존 항목을 쓴다.
+     * ★ 계획서 §7 업무 지식 저장소(personal 컬렉션)의 전 단계다. 그때는 upgrade()로 옮겨 담는다.
+     */
+    this.version(6).stores({ userRefs: 'id, contentHash, createdAt, lastUsedAt' });
   }
 }
 

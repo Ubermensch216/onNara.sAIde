@@ -1257,6 +1257,21 @@ export default defineBackground(() => {
         .catch(err => sendResponse({ content: '', error: String(err) }));
       return true;
     }
+    // 기안 코파일럿이 사용자가 올린 PDF를 오프스크린 pdf.js로 읽는다.
+    // ★ 확장 페이지(드로어)에서 온 요청만 받는다. 온나라 페이지의 콘텐츠 스크립트를 거치지 않는다.
+    if (msg && typeof msg === 'object' && (msg as any).type === 'PARSE_UPLOADED_PDF') {
+      const base64 = (msg as any).base64;
+      if (sender.id !== chrome.runtime.id || !sender.url?.startsWith(chrome.runtime.getURL('')) || typeof base64 !== 'string') {
+        sendResponse({ text: '', pages: 0, error: '허용되지 않은 요청입니다' });
+        return false;
+      }
+      // pdfText는 주소#크기로 결과를 기억한다. 이름이 같은 다른 파일이 섞이지 않게 내용 지문을 주소로 쓴다.
+      const key = String((msg as any).hash || `${Date.now()}`);
+      pdfText({ url: `upload:${key}`, base64, bytes: Number((msg as any).bytes) || base64.length })
+        .then(res => sendResponse(res))
+        .catch(err => sendResponse({ text: '', pages: 0, error: String(err) }));
+      return true;
+    }
     if (msg && typeof msg === 'object' && (msg as any).type === 'EXPAND_WINDOW_FOR_DRAWER') {
       const tabId = sender.tab?.id;
       if (tabId) {

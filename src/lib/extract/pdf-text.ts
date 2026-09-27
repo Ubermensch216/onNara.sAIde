@@ -28,6 +28,8 @@ export interface PdfSource {
 export interface PdfTextResult {
   text: string;
   pages: number;
+  /** 쪽별 글자. 올린 파일 분석에서 근거 위치(쪽)를 표시하는 데 쓴다. */
+  pageTexts?: string[];
   error?: string;
 }
 
@@ -63,7 +65,8 @@ export async function extractPdfText(getDocument: GetPdfDocument, data: Uint8Arr
       pages.push(joinTextItems(content.items));
       page.cleanup();
     }
-    return { text: pages.map(normalizeText).filter(Boolean).join('\n\n'), pages: doc.numPages };
+    const pageTexts = pages.map(normalizeText);
+    return { text: pageTexts.filter(Boolean).join('\n\n'), pages: doc.numPages, pageTexts };
   } catch (error) {
     return { text: '', pages: 0, error: describePdfError(error) };
   } finally {

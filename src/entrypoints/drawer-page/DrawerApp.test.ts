@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
+import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { DrawerApp } from './DrawerApp';
+import { db } from '@/lib/storage/db';
 
 let root: Root;
 
@@ -33,6 +35,7 @@ beforeEach(() => {
 afterEach(async () => {
   await act(() => root.unmount());
   vi.unstubAllGlobals();
+  await db.userRefs.clear();
 });
 
 async function settle() {
@@ -457,5 +460,133 @@ describe('DrawerApp UI/UX 개선 검증', () => {
     await settle();
 
     expect(document.body.textContent).not.toContain('본문 삽입 사전 확인');
+  });
+});
+
+describe('내 참고자료 업로드', () => {
+  type Call = { url: string; body: any };
+  function ollama(options: { holdAnalysis?: boolean } = {}) {
+    const calls: Call[] = [];
+    const fetchMock = vi.fn(async (url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body));
+      calls.push({ url, body });
+      if (body.format) {
+        if (options.holdAnalysis) await new Promise(() => {});
+        const example = Boolean(body.format.properties?.docType);
+        const content = example
+          ? { docType: '자료 제출 요청', structure: [], numbering: '1.→가.', toneFeatures: ['~바랍니다'], sampleSentences: [] }
+          : { summary: '공공데이터 목록 제출 요청', purpose: '', requirements: [{ item: '목록 제출', evidence: '가. 개방 대상 목록을 2026. 10. 15.(목)까지 제출' }], schedule: [], legalBasis: [], targets: [], submissions: [], contacts: [], keyTerms: [] };
+        return { ok: true, json: async () => ({ message: { content: JSON.stringify(content) } }) };
+      }
+      if (String(url).endsWith('/api/generate')) return { ok: true, json: async () => ({ response: '- 요약' }) };
+      return { ok: true, json: async () => ({ message: { content: '1. 관련\n가. 목록을 2026. 10. 15.까지 제출하여 주시기 바랍니다.' } }) };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    return calls;
+  }
+
+  async function upload(name: string, text: string) {
+    const input = document.querySelector<HTMLInputElement>('[data-testid="user-ref-file-input"]')!;
+    const file = new File([text], name, { type: 'text/plain' });
+    Object.defineProperty(input, 'files', { value: [file], configurable: true });
+    await act(async () => { input.dispatchEvent(new Event('change', { bubbles: true })); });
+    await settle();
+  }
+
+  const GUIDE = '공공데이터 개방 지침\n1. 제출 요청\n가. 개방 대상 목록을 2026. 10. 15.(목)까지 제출\n나. 사업비 12,500천원';
+
+  it('파일을 올리면 보관·선택되고, 원문과 대조한 분석 결과를 펼쳐 볼 수 있다', async () => {
+    ollama();
+    await act(() => root.render(createElement(DrawerApp)));
+    await settle();
+    expect(document.body.textContent).toContain('내 참고자료');
+    await upload('지침.txt', GUIDE);
+    await settle();
+
+    expect(document.body.textContent).toContain('지침.txt');
+    expect(document.body.textContent).toContain('(1/3건 선택)');
+    expect(document.body.textContent).toContain('분석 완료');
+    expect(await db.userRefs.count()).toBe(1);
+
+    const analysisBtn = [...document.querySelectorAll('button')].find((b) => b.textContent?.trim() === '분석');
+    await act(async () => analysisBtn?.click());
+    expect(document.body.textContent).toContain('목록 제출');
+    expect(document.body.textContent).toContain('원문 확인');
+    // 모델이 비운 기한을 코드가 채운다
+    expect(document.body.textContent).toContain('코드 보완');
+    expect(document.body.textContent).toContain('12,500천원');
+  });
+
+  it('구형 HWP는 올리지 않고 변환 방법을 안내한다', async () => {
+    ollama();
+    await act(() => root.render(createElement(DrawerApp)));
+    await settle();
+    await upload('옛문서.hwp', 'x');
+    expect(document.body.textContent).toMatch(/HWPX.*PDF/);
+    expect(await db.userRefs.count()).toBe(0);
+  });
+
+  it('최대 3건까지만 고를 수 있다', async () => {
+    ollama();
+    await act(() => root.render(createElement(DrawerApp)));
+    await settle();
+    for (const n of [1, 2, 3, 4]) await upload(`자료${n}.txt`, `${GUIDE}\n${n}번 자료`);
+    expect(document.body.textContent).toContain('(3/3건 선택)');
+    const boxes = [...document.querySelectorAll<HTMLInputElement>('input[type="checkbox"][id^="userref-"]')];
+    expect(boxes).toHaveLength(4);
+    expect(boxes.filter((box) => box.checked)).toHaveLength(3);
+    expect(boxes.find((box) => !box.checked)?.disabled).toBe(true);
+  });
+
+  it('용도를 작성 예시로 바꾸면 다시 분석하고, 초안 프롬프트에 근거·예시 블록이 나뉘어 들어간다', async () => {
+    const calls = ollama();
+    await act(() => root.render(createElement(DrawerApp)));
+    await settle();
+    await upload('지침.txt', GUIDE);
+    await upload('예전공문.txt', '1. 관련\n2. 추진 개요\n가. 협조하여 주시기 바랍니다.\n2025. 3. 2.까지 제출');
+    const item = document.querySelector('span[title="예전공문.txt"]')!.closest('div.p-2.rounded-lg')!;
+    const exampleToggle = [...item.querySelectorAll('button')].find((b) => b.textContent === '작성 예시');
+    await act(async () => exampleToggle?.click());
+    await settle();
+    expect(exampleToggle?.getAttribute('aria-pressed')).toBe('true');
+    expect(calls.some((call) => call.body.format?.properties?.docType)).toBe(true);
+
+    window.postMessage({ type: 'SAIDE_SET_DRAFT_PREVIEW', prompt: '공공데이터 목록 제출 요청 공문' }, '*');
+    await settle();
+    const generate = [...document.querySelectorAll('button')].find((b) => b.textContent?.includes('참고문서 2건 반영하여 공문서 초안 생성'));
+    expect(generate).toBeDefined();
+    await act(async () => generate?.click());
+    await settle();
+
+    const draftCall = calls.find((call) => !call.body.format && String(call.url).endsWith('/api/chat'));
+    const user = draftCall?.body.messages[1].content as string;
+    expect(user).toContain('[참고 문서 1] 지침.txt');
+    expect(user).toContain('· 목록 제출');
+    expect(user).toMatch(/\[작성 예시 1 — .*인용하지 말 것\] 예전공문\.txt/);
+    expect(draftCall?.body.messages[0].content).toContain('작성 예시로 제공된 문서는 구성·번호 체계·문체만');
+    expect(document.body.textContent).toContain('생성 결과');
+  });
+
+  it('분석이 끝나지 않은 자료를 고르고 생성하면 기다릴지 묻고, [지금 생성]은 코드 추출 사실로 작성한다', async () => {
+    const calls = ollama({ holdAnalysis: true });
+    await act(() => root.render(createElement(DrawerApp)));
+    await settle();
+    await upload('지침.txt', GUIDE);
+    expect(document.body.textContent).toMatch(/분석 (준비 )?중/);
+
+    window.postMessage({ type: 'SAIDE_SET_DRAFT_PREVIEW', prompt: '목록 제출 공문' }, '*');
+    await settle();
+    const generate = [...document.querySelectorAll('button')].find((b) => b.textContent?.includes('공문서 초안 생성'));
+    await act(async () => generate?.click());
+    expect(document.body.textContent).toContain('정밀 분석이 아직 끝나지 않았습니다');
+    expect(calls.some((call) => !call.body.format)).toBe(false);
+
+    const now = [...document.querySelectorAll('button')].find((b) => b.textContent === '지금 생성');
+    await act(async () => now?.click());
+    await settle();
+    const draftCall = calls.find((call) => !call.body.format && String(call.url).endsWith('/api/chat'));
+    const user = draftCall?.body.messages[1].content as string;
+    expect(user).toContain('기한이 적힌 원문 문장');
+    expect(user).toContain('2026. 10. 15.(목)까지 제출');
   });
 });
