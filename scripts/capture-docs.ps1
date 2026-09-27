@@ -23,9 +23,6 @@ $captureRoot = Join-Path $projectRoot ('.output\docs-captures-' + (Get-Date -For
 New-Item -ItemType Directory -Force $screenshotRoot, $captureRoot | Out-Null
 
 $views = @(
-  @('onnara-main-sidepanel', '00-onnara-main-sidepanel.png', '1560,980'),
-  @('onnara-drafter-sidecar', '00-onnara-drafter-sidecar.png', '1560,980'),
-  @('onnara-inbox-sidepanel', '00-onnara-inbox-sidepanel.png', '1560,980'),
   @('panel', '01-chat.png', '520,940'),
   @('inbox', '08-inbox.png', '520,940'),
   @('approval', '02-approval.png', '520,940'),
