@@ -277,9 +277,96 @@ if (mode.startsWith('options') || OPTION_VIEWS.includes(mode)) {
     createRoot(document.getElementById('root')!).render(<OptionsApp />);
   }
 
-} else if (['drafter', 'drawer', 'templates', 'onnara-drafter-sidecar'].includes(mode)) {
+} else if (['drafter', 'drawer', 'templates', 'drafter-refs', 'onnara-drafter-sidecar'].includes(mode)) {
   await import('@/entrypoints/drawer-page/style.css');
   const { DrawerApp } = await import('@/entrypoints/drawer-page/DrawerApp');
+  const { db } = await import('@/lib/storage/db');
+
+  const sampleUserRefs = [
+    {
+      id: 'ref-docx-01',
+      name: '2026_지자체_정보화예산_편성지침.docx',
+      format: 'docx' as const,
+      size: 480000,
+      contentHash: 'hash-docx-sample-1',
+      role: 'fact' as const,
+      text: '[1쪽]\n2026년도 지자체 정보화예산 편성 및 집행지침\n제3조(소요예산)...',
+      pages: 4,
+      warnings: [],
+      memo: '예산 집행 가이드라인 및 관련 법령 조항 반영',
+      codeFacts: {
+        dates: [{ text: '2026-10-15', sentence: '예산 편성 의견 제출: 2026년 10월 15일까지', due: true, page: 2 }],
+        amounts: [{ text: '1억 5천만원', sentence: '시범사업 지자체별 매칭 예산 1억 5천만원 이내', page: 3 }],
+        laws: [{ text: '「전자정부법」 제35조', sentence: '근거: 「전자정부법」 제35조 및 지침 제4조', page: 1 }],
+        docNumbers: ['행정안전부-2048'],
+        attachments: ['편성 가이드 1부'],
+        contacts: ['044-205-1111'],
+        outline: ['1. 총칙', '2. 정보화 예산 편성 기준', '3. 집행 및 정산 지침'],
+      },
+      analysis: {
+        version: 1,
+        role: 'fact' as const,
+        model: 'gemma4:e2b',
+        analyzedAt: now - 2400000,
+        fact: {
+          purpose: '디지털 플랫폼 정부 구현을 위한 지자체 정보화 예산 효율적 집행 및 클라우드 AI 전환 지원',
+          schedules: [
+            { text: '2026-10-15', due: true, sentence: '예산 편성 의견 제출: 2026년 10월 15일까지', verified: true },
+          ],
+          amounts: [
+            { text: '1억 5천만원', sentence: '시범사업 지자체별 매칭 예산 1억 5천만원 이내', verified: true },
+          ],
+          actions: ['시범사업 예산 매칭 계획 수립 및 3분기 집행 점검표 제출'],
+          laws: [
+            { text: '「전자정부법」 제35조', sentence: '근거: 「전자정부법」 제35조 및 지침 제4조', verified: true },
+          ],
+          summary: '지자체별 시범사업 매칭 예산 기준 및 10월 15일까지의 의견 제출 일정 지침.',
+        },
+      },
+      createdAt: now - 4000000,
+      lastUsedAt: now - 2400000,
+    },
+    {
+      id: 'ref-hwpx-02',
+      name: '붙임2_시범사업_수요조사서_양식.hwpx',
+      format: 'hwpx' as const,
+      size: 345000,
+      contentHash: 'hash-hwpx-sample-2',
+      role: 'example' as const,
+      text: '[1쪽]\n2026년도 인공지능 행정업무 시범사업 수요조사서 양식\n1. 추진 목적...',
+      pages: 2,
+      warnings: [],
+      memo: '행정안전부 권장 표준 양식 구성 및 항목 번호 체계를 준용할 것',
+      codeFacts: {
+        dates: [{ text: '2026-09-22', sentence: '제출기한: 2026. 9. 22.(화) 18:00한', due: true, page: 1 }],
+        amounts: [],
+        laws: [],
+        docNumbers: ['행정안전부-1024'],
+        attachments: ['수요조사서 1부', '보안서약서 1부'],
+        contacts: ['044-205-0000'],
+        outline: ['1. 기관 개요', '2. 사업 추진 배경 및 필요성', '3. 세부 추진 계획', '4. 소요 예산'],
+      },
+      analysis: {
+        version: 1,
+        role: 'example' as const,
+        model: 'gemma4:e2b',
+        analyzedAt: now - 1800000,
+        example: {
+          structure: '기관 개요 -> 사업 배경 -> 세부 계획 -> 예산의 4단계 표준 구조',
+          outline: ['1. 기관 개요', '2. 사업 추진 배경 및 필요성', '3. 세부 추진 계획', '4. 소요 예산'],
+          numberingStyle: '1. -> 가. -> (1) -> 1)',
+          tone: '공식 행정문서 개조식 어조 (~함, ~임, ~바람)',
+          guidance: '항목 번호 체계와 들여쓰기 2타 규칙을 엄격히 준수',
+        },
+      },
+      createdAt: now - 3600000,
+      lastUsedAt: now - 1800000,
+    },
+  ];
+
+  Object.defineProperty(db.userRefs, 'toArray', {
+    value: async () => sampleUserRefs,
+  });
 
   window.addEventListener('message', (event) => {
     if (event.data?.type === 'DRAFT_GET_CONTEXT') {
@@ -314,6 +401,23 @@ if (mode.startsWith('options') || OPTION_VIEWS.includes(mode)) {
             type: 'SAIDE_SET_DRAFT_PREVIEW',
             activeTab: 'templates',
           }, '*');
+        } else if (mode === 'drafter-refs') {
+          window.postMessage({
+            type: 'SAIDE_SET_DRAFT_PREVIEW',
+            templateId: 'builtin-work-report',
+            prompt: '수신 공문 지침 및 참고자료에 따라 2026년도 인공지능 행정업무 시범사업 추진계획 업무보고 초안을 작성해줘.',
+          }, '*');
+          setTimeout(() => {
+            const checkboxes = [...document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')];
+            checkboxes.forEach((cb) => {
+              if (!cb.checked) cb.click();
+            });
+            setTimeout(() => {
+              const expandBtns = [...document.querySelectorAll<HTMLButtonElement>('button')];
+              const analyzeBtn = expandBtns.find((b) => b.textContent?.trim() === '분석');
+              analyzeBtn?.click();
+            }, 100);
+          }, 180);
         } else if (new URLSearchParams(location.search).get('state') === 'init') {
           window.postMessage({
             type: 'SAIDE_SET_DRAFT_PREVIEW',
