@@ -495,6 +495,28 @@ describe('내 참고자료 업로드', () => {
 
   const GUIDE = '공공데이터 개방 지침\n1. 제출 요청\n가. 개방 대상 목록을 2026. 10. 15.(목)까지 제출\n나. 사업비 12,500천원';
 
+  it('업로드 박스: 안내 문구 없이 구글 아이콘과 첨부 가능 확장자 배지만 깔끔하게 노출된다', async () => {
+    ollama();
+    await act(() => root.render(createElement(DrawerApp)));
+    await settle();
+
+    // 불필요한 안내문구 및 중복 '파일 올리기' 버튼이 제거되었는지 검증
+    expect(document.body.textContent).not.toContain('지침·계획서·예전 공문 파일을 여기에 끌어다 놓거나');
+    expect(document.body.textContent).not.toContain('구형 HWP는 한글에서 HWPX나 PDF로 저장해 올려 주세요');
+    expect(document.body.textContent).not.toContain('파일 올리기');
+
+    // 확장자 배지 노출 확인
+    expect(document.body.textContent).toContain('HWPX');
+    expect(document.body.textContent).toContain('PDF');
+    expect(document.body.textContent).toContain('DOCX');
+    expect(document.body.textContent).toContain('XLSX');
+    expect(document.body.textContent).toContain('TXT');
+
+    // 업로드 박스 및 파일 선택 연동 확인
+    const dropzone = document.querySelector<HTMLElement>('div[role="button"][title*="올리기"]');
+    expect(dropzone).not.toBeNull();
+  });
+
   it('파일을 올리면 보관·선택되고, 원문과 대조한 분석 결과를 펼쳐 볼 수 있다', async () => {
     ollama();
     await act(() => root.render(createElement(DrawerApp)));

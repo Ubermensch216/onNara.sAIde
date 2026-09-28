@@ -7,17 +7,25 @@
  */
 
 import { useRef, useState } from 'react';
-import { MaterialIcon } from './MaterialIcon';
+import { MaterialIcon, type MaterialIconName } from './MaterialIcon';
 import { UserRefItem } from './UserRefItem';
 import { generateRuleBasedSummary, type RelatedDocInfo } from '@/lib/onnara/related-info';
 import { MAX_SELECTED_REFS } from '@/lib/onnara/reference-context';
-import { UPLOAD_ACCEPT, UPLOAD_FORMATS_LABEL } from '@/lib/extract/files';
+import { UPLOAD_ACCEPT } from '@/lib/extract/files';
 import type { RefRole } from '@/lib/onnara/reference-analysis';
-import type { UserRef } from '@/lib/storage/user-refs';
+import { USER_REFS_MAX, type UserRef } from '@/lib/storage/user-refs';
 import type { AnalyzingState, UploadState } from '../hooks/useUserReferences';
 
 export const onnaraKey = (doc: RelatedDocInfo) => `onnara:${doc.title}`;
 export const uploadKey = (ref: UserRef) => `upload:${ref.id}`;
+
+const SUPPORTED_FORMATS: { ext: string; icon: MaterialIconName; iconClass: string }[] = [
+  { ext: 'HWPX', icon: 'description', iconClass: 'text-blue-600' },
+  { ext: 'PDF', icon: 'pictureAsPdf', iconClass: 'text-rose-600' },
+  { ext: 'DOCX', icon: 'description', iconClass: 'text-indigo-600' },
+  { ext: 'XLSX', icon: 'tableChart', iconClass: 'text-emerald-600' },
+  { ext: 'TXT', icon: 'textSnippet', iconClass: 'text-slate-500' },
+];
 
 export interface ReferencePickerProps {
   selectedKeys: string[];
@@ -232,14 +240,6 @@ export function ReferencePicker(props: ReferencePickerProps) {
           <div className="text-[11.5px] font-semibold text-slate-600">
             내 참고자료{userRefs.length > 0 && <span className="font-normal text-slate-500"> ({userRefs.length}건 보관)</span>}
           </div>
-          <button
-            type="button"
-            onClick={() => picker.current?.click()}
-            className="px-2 py-1 bg-white hover:bg-blue-50 border border-blue-300 text-blue-700 rounded text-xs font-semibold transition flex items-center gap-1 cursor-pointer focus-visible:ring-2 focus-visible:ring-blue-500"
-          >
-            <MaterialIcon name="uploadFile" size={14} />
-            <span>파일 올리기</span>
-          </button>
           <input
             ref={picker}
             type="file"
@@ -267,34 +267,67 @@ export function ReferencePicker(props: ReferencePickerProps) {
           </div>
         ))}
 
-        {userRefs.length === 0 && uploads.length === 0 ? (
-          <div className="p-2.5 bg-slate-50 border border-dashed border-slate-300 rounded-lg text-center text-xs text-slate-500 leading-relaxed">
-            지침·계획서·예전 공문 파일을 여기에 끌어다 놓거나 [파일 올리기]를 누르세요.
-            <br />
-            <span className="text-[11px]">{UPLOAD_FORMATS_LABEL} · 구형 HWP는 한글에서 HWPX나 PDF로 저장해 올려 주세요.</span>
+        {userRefs.map((item) => {
+          const key = uploadKey(item);
+          const selected = selectedKeys.includes(key);
+          return (
+            <UserRefItem
+              key={item.id}
+              item={item}
+              model={props.model}
+              selected={selected}
+              selectDisabled={!selected && full}
+              expanded={expandedKey === key}
+              analyzing={props.analyzing}
+              onToggleSelect={() => props.onToggleSelect(key)}
+              onToggleExpand={() => props.onToggleExpand(key)}
+              onRole={(role) => props.onRole(item.id, role)}
+              onMemo={(memo) => props.onMemo(item.id, memo)}
+              onReanalyze={() => props.onReanalyze(item.id)}
+              onDelete={() => props.onDelete(item.id)}
+            />
+          );
+        })}
+
+        {userRefs.length < USER_REFS_MAX && (
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={() => picker.current?.click()}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                picker.current?.click();
+              }
+            }}
+            className={`py-3 px-3 border border-dashed rounded-lg text-center cursor-pointer transition flex flex-col items-center justify-center gap-2 group ${
+              dragging
+                ? 'bg-blue-50/80 border-blue-500'
+                : 'bg-slate-50/80 hover:bg-blue-50/40 border-slate-300 hover:border-blue-400'
+            }`}
+            title="파일을 끌어다 놓거나 클릭하여 올리기"
+          >
+            <div
+              className={`w-8 h-8 rounded-full border flex items-center justify-center transition shadow-2xs ${
+                dragging
+                  ? 'bg-blue-100 border-blue-400 text-blue-600'
+                  : 'bg-white group-hover:bg-blue-100/60 border-slate-200 group-hover:border-blue-300 text-slate-400 group-hover:text-blue-600'
+              }`}
+            >
+              <MaterialIcon name="cloudUpload" size={18} />
+            </div>
+            <div className="flex flex-wrap items-center justify-center gap-1.5">
+              {SUPPORTED_FORMATS.map(({ ext, icon, iconClass }) => (
+                <span
+                  key={ext}
+                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-white border border-slate-200 text-[11px] font-semibold text-slate-700 shadow-2xs"
+                >
+                  <MaterialIcon name={icon} size={12} className={iconClass} />
+                  <span>{ext}</span>
+                </span>
+              ))}
+            </div>
           </div>
-        ) : (
-          userRefs.map((item) => {
-            const key = uploadKey(item);
-            const selected = selectedKeys.includes(key);
-            return (
-              <UserRefItem
-                key={item.id}
-                item={item}
-                model={props.model}
-                selected={selected}
-                selectDisabled={!selected && full}
-                expanded={expandedKey === key}
-                analyzing={props.analyzing}
-                onToggleSelect={() => props.onToggleSelect(key)}
-                onToggleExpand={() => props.onToggleExpand(key)}
-                onRole={(role) => props.onRole(item.id, role)}
-                onMemo={(memo) => props.onMemo(item.id, memo)}
-                onReanalyze={() => props.onReanalyze(item.id)}
-                onDelete={() => props.onDelete(item.id)}
-              />
-            );
-          })
         )}
       </div>
     </div>
