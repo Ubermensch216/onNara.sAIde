@@ -1,6 +1,6 @@
 # onNara.sAIde × TONGDAL.ai 연동 작업계획서
 
-작성: 2026-09-28 · 상태: TG1(TONGDAL 브리지 기반) 구현 — TONGDAL.ai `feat/onnara-bridge` 브랜치, 미커밋 · 나머지 단계 미착수 · 대상 저장소: `D:\Dev\onNara.sAIde`(확장) · `D:\Dev\TONGDAL.ai`(데스크톱 앱)
+작성: 2026-09-28 · 상태: TG1(TONGDAL 브리지 기반) 구현 — TONGDAL.ai `main`(dd47d62) · 나머지 단계 미착수 · 작업은 두 저장소 모두 `main`에서 한다 · 대상 저장소: `D:\Dev\onNara.sAIde`(확장) · `D:\Dev\TONGDAL.ai`(데스크톱 앱)
 상위 계획: [최종 구축 계획서](onnara-saide-final-workplan.md) — 이 문서는 §7 업무 지식 저장소와 4·5단계 일부(P4-1~P4-3, P5-1, P5-3)에 영향을 준다(§11).
 
 온나라 업무 중에 **TONGDAL.ai에 쌓아 둔 개인 자료를 찾아 쓰고(읽기), 온나라 문서·첨부·작성 결과를 TONGDAL에 등록하고(쓰기), 필요 없는 자료를 치우는(삭제)** 기능을 onNara.sAIde 사이드패널과 기안 서랍에서 제공한다.
@@ -290,7 +290,7 @@ TONGDAL 화면: "onNara에서 1건 삭제됨 [되돌리기]" 알림
 
 ## 12. 진행 기록
 
-### 2026-09-28 · TG1 구현 (TONGDAL.ai `feat/onnara-bridge`)
+### 2026-09-28 · TG1 구현 (TONGDAL.ai `main`, dd47d62)
 
 | 작업 | 결과 | 위치 |
 |---|---|---|
