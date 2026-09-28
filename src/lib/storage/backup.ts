@@ -22,6 +22,7 @@ import { t } from '@/lib/i18n';
 import { normalizeInboxLocation } from '@/lib/inbox/location';
 import { db } from './db';
 import { normalizeSettings } from './settings';
+import { TONGDAL_KEY } from '@/lib/tongdal/connection';
 
 export const BACKUP_FORMAT = 'onnara-saide-backup';
 export const BACKUP_VERSION = 1;
@@ -36,6 +37,15 @@ export const MEMORY_TABLE = 'pageVectors';
  * (openInbox), 오늘 몫의 기한 알림이 이미 간 것으로 처리된다(taskAlertOn).
  */
 export const TRANSIENT_KEYS = ['saide.openInbox', 'saide.taskAlertOn'];
+
+/**
+ * 백업 파일에 담지 않는 비밀 키.
+ *
+ * ★ TONGDAL.ai 페어링 토큰은 이 PC의 지식 공간을 읽는 열쇠다. 백업 파일은 사용자가 옮기고 보관하는
+ *   파일이라 거기에 실으면 열쇠가 PC 밖으로 나간다. 복원할 때도 파일에 든 값은 받지 않는다 —
+ *   다른 PC의 백업이 지금 연결을 덮어쓰면 안 된다. 복원 뒤에는 다시 페어링하면 된다.
+ */
+export const SECRET_KEYS = [TONGDAL_KEY];
 
 /**
  * 마지막으로 백업을 내려받은 시각이 담기는 키.
@@ -87,7 +97,7 @@ export async function collectBackup(options: { includeMemory?: boolean } = {}): 
   const stored = await chrome.storage.local.get(null);
   const local: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(stored ?? {})) {
-    if (!TRANSIENT_KEYS.includes(key)) local[key] = value;
+    if (!TRANSIENT_KEYS.includes(key) && !SECRET_KEYS.includes(key)) local[key] = value;
   }
   // 이 파일이 만들어진 시각을 파일 자신에도 적는다. 복원한 쪽의 "마지막 백업"이
   // 그 전 백업의 날짜로 보이면, 맞는 것처럼 생긴 틀린 값이 된다.
@@ -204,7 +214,7 @@ export function parseBackup(text: string): BackupFile {
 function sanitizeLocal(local: Record<string, unknown>): Record<string, unknown> {
   const next: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(local)) {
-    if (TRANSIENT_KEYS.includes(key)) continue;
+    if (TRANSIENT_KEYS.includes(key) || SECRET_KEYS.includes(key)) continue;
     if (key === 'saide.settings') { next[key] = normalizeSettings(value); continue; }
     if (key === 'saide.inboxLocation') {
       const location = normalizeInboxLocation(value);

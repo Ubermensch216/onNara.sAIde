@@ -164,6 +164,38 @@ const data: Record<string, unknown> = {
   ],
 };
 
+/* ── TONGDAL.ai 연동 표본(knowledge 모드) ── */
+const knowledgeMode = mode.startsWith('knowledge') || mode === 'options-tongdal';
+if (knowledgeMode) {
+  data['saide.tongdal'] = { baseUrl: 'http://127.0.0.1:47821', token: 'p'.repeat(43), clientId: 'preview', scopes: ['read'], pairedAt: now - 86400000 };
+}
+const tongdalHits = [
+  {
+    sourceDocumentId: 'doc_plan', title: '2026년 AI 행정 시범사업 추진계획', fileName: '2026_AI시범사업_추진계획.hwpx',
+    relativePath: 'raw/2026/2026_AI시범사업_추진계획.hwpx', sectionPath: 'Ⅲ. 추진 일정', pageStart: 4, pageEnd: 5,
+    text: '수요조사는 9월 22일까지 온나라 회신으로 받는다. 선정 결과는 10월 둘째 주에 통보하며, 선정 기관은 11월부터 3개월간 시범 운영한다. 소요 예산은 기관당 2,000만 원 이내로 한다.',
+    truncated: false, score: 0.0327,
+  },
+  {
+    sourceDocumentId: 'doc_2025', title: '2025년 정보화 시범사업 결과보고', fileName: '2025_시범사업_결과보고.pdf',
+    relativePath: 'raw/2025/2025_시범사업_결과보고.pdf', sectionPath: '2. 추진 실적', pageStart: 2, pageEnd: 2,
+    text: '작년 시범사업은 4개 부서가 참여했으며 수요조사 회신 누락으로 1개 부서가 재접수했다. 보안서약서 누락이 가장 흔한 반려 사유였다.',
+    truncated: false, score: 0.0301,
+  },
+  {
+    sourceDocumentId: 'doc_guide', title: '정보보안 업무 처리지침(2026 개정)', fileName: '정보보안_처리지침_2026.pdf',
+    relativePath: 'raw/지침/정보보안_처리지침_2026.pdf', sectionPath: '제12조 외부 서비스 이용', pageStart: 9, pageEnd: 9,
+    text: '외부 AI 서비스에 업무자료를 입력하려면 사전에 보안성 검토를 거쳐야 하며, 개인정보가 포함된 자료는 입력할 수 없다.',
+    truncated: false, score: 0.0288,
+  },
+  {
+    sourceDocumentId: 'doc_law', title: '공공감사에 관한 법률', fileName: '공공감사에 관한 법률(법률)(제21065호)(20260102).pdf',
+    relativePath: 'raw/공공감사에 관한 법률(법률)(제21065호)(20260102).pdf', sectionPath: '제1조(목적)', pageStart: 1, pageEnd: 1,
+    text: '이 법은 공공기관의 자체감사에 관한 기본적인 사항과 효율적인 감사체계의 확립에 필요한 사항을 규정한다.',
+    truncated: false, score: 0.0271,
+  },
+];
+
 const event = { addListener() {}, removeListener() {} };
 Object.assign(window, { chrome: {
   storage: {
@@ -228,6 +260,52 @@ window.fetch = async (input) => {
   if (url.endsWith('/api/version')) return Response.json({ version: '0.34.1' });
   if (url.endsWith('/api/tags')) return Response.json({ models });
   if (url.endsWith('/api/ps')) return Response.json({ models: [{ name: 'gemma4:e2b', size_vram: 2800000000 }] });
+  if (url.includes('/bridge/v1/')) {
+    const path = new URL(url).pathname;
+    if (path.endsWith('/status')) {
+      return Response.json({
+        apiVersion: 1, app: { name: 'TONGDAL.ai', version: '1.0.0-beta' }, paired: true, scopes: ['read'],
+        knowledgeSpace: { connected: true, name: 'second_brain' }, engine: { state: 'ready', message: null },
+        indexing: { queueLength: 2, isProcessing: true, currentFile: '2026_예산편성지침.pdf' },
+        ollama: { state: 'ready', missingModels: [] }, documents: { total: 128, indexed: 126, failed: 0 },
+      });
+    }
+    if (path.endsWith('/search')) return Response.json({ results: tongdalHits, searchMode: 'hybrid' });
+    if (path.endsWith('/shelves')) {
+      return Response.json({ shelves: [
+        { id: 'cat_ai', parentId: null, name: 'AI·정보화 사업', description: '', documentCount: 24 },
+        { id: 'cat_sec', parentId: null, name: '보안·지침', description: '', documentCount: 11 },
+        { id: 'cat_budget', parentId: null, name: '예산', description: '', documentCount: 17 },
+      ] });
+    }
+    const documentMatch = /\/documents\/([^/]+)$/.exec(path);
+    if (documentMatch) {
+      const hit = tongdalHits.find(item => item.sourceDocumentId === documentMatch[1]) ?? tongdalHits[0]!;
+      return Response.json({
+        document: {
+          id: hit.sourceDocumentId, title: hit.title, shelfId: 'cat_ai', shelfName: 'AI·정보화 사업', documentType: '계획서',
+          status: 'active', createdAt: now / 1000, updatedAt: now / 1000,
+          metadata: { project: 'AI 행정 시범사업', year: 2026, organizations: ['행정안전부'], topics: ['시범사업'], importance: '높음' },
+          versions: [{ versionLabel: 'v2', isCurrent: true, relativePath: hit.relativePath, size: 482133, ext: '.hwpx', contentHash: 'abc', createdAt: now / 1000 }],
+        },
+        text: { content: `${hit.title}
+
+${hit.sectionPath}
+${hit.text}
+
+(이하 생략)`, truncated: true, indexed: true },
+      });
+    }
+    if (path.endsWith('/documents')) {
+      return Response.json({ total: 3, offset: 0, limit: 30, documents: tongdalHits.map(hit => ({
+        id: hit.sourceDocumentId, title: hit.title, shelfId: 'cat_ai', shelfName: 'AI·정보화 사업', documentType: '계획서',
+        status: 'active', updatedAt: now / 1000,
+        metadata: { project: null, year: 2026, organizations: [], topics: [], importance: '보통' },
+        current: { versionLabel: 'v1', relativePath: hit.relativePath, size: 1000, ext: '.pdf' },
+      })) });
+    }
+    if (path.endsWith('/open')) return Response.json({ opened: true });
+  }
   throw new Error('문서 미리보기에서는 모델 호출과 외부 요청을 지원하지 않습니다.');
 };
 
@@ -277,7 +355,7 @@ if (mode.startsWith('options') || OPTION_VIEWS.includes(mode)) {
     createRoot(document.getElementById('root')!).render(<OptionsApp />);
   }
 
-} else if (['drafter', 'drawer', 'templates', 'drafter-refs', 'onnara-drafter-sidecar'].includes(mode)) {
+} else if (['drafter', 'drawer', 'templates', 'drafter-refs', 'onnara-drafter-sidecar', 'knowledge-drafter'].includes(mode)) {
   await import('@/entrypoints/drawer-page/style.css');
   const { DrawerApp } = await import('@/entrypoints/drawer-page/DrawerApp');
   const { db } = await import('@/lib/storage/db');
@@ -629,6 +707,8 @@ if (mode.startsWith('options') || OPTION_VIEWS.includes(mode)) {
     localStorage.setItem('saide.scheduleMode', 'month');
   } else if (mode === 'inbox' || mode === 'onnara-inbox-sidepanel') {
     localStorage.setItem('saide.view', 'inbox');
+  } else if (mode === 'knowledge') {
+    localStorage.setItem('saide.view', 'knowledge');
   } else {
     localStorage.setItem('saide.view', 'ai');
   }
@@ -745,6 +825,20 @@ if (mode.startsWith('options') || OPTION_VIEWS.includes(mode)) {
     },
   ];
 
+  if (mode === 'knowledge-chat') {
+    localStorage.setItem('saide.knowledgeMode', '1');
+    messages.push(
+      { id: 3, conversationId: 1, role: 'user' as const, content: '작년에는 이 시범사업에서 무엇 때문에 반려됐어?', createdAt: now + 2 } as never,
+      {
+        id: 4, conversationId: 1, role: 'assistant' as const, createdAt: now + 3,
+        content: '작년(2025년) 시범사업에서는 **보안서약서 누락**이 가장 흔한 반려 사유였고, 수요조사 회신을 빠뜨려 1개 부서가 재접수했습니다 [2]. 올해도 보안서약서를 함께 제출해야 하므로 [1], 회신 전에 붙임 목록을 확인하세요.',
+        sources: tongdalHits.slice(0, 2).map((hit, index) => ({
+          n: index + 1, documentId: hit.sourceDocumentId, title: hit.title, relativePath: hit.relativePath,
+          sectionPath: hit.sectionPath, pageStart: hit.pageStart, pageEnd: hit.pageEnd,
+        })),
+      } as never,
+    );
+  }
   useChat.setState({ openForTab: async () => { useChat.setState({ messages }); } });
   const { default: App } = await import('@/entrypoints/sidepanel/App');
 

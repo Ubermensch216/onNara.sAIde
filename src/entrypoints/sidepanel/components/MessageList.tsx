@@ -15,6 +15,8 @@ import { loadFeedbackMap } from '@/lib/feedback/store';
 import type { FeedbackVerdict } from '@/lib/feedback/store';
 import { parseDownloadLink, type DownloadLinkAction } from '@/lib/downloads/links';
 import { parsePanelLink, type PanelLink } from '@/lib/panel/links';
+import { locationOf, type KnowledgeSource } from '@/lib/tongdal/evidence';
+import { RelatedKnowledge } from './RelatedKnowledge';
 
 interface Props {
   messages: UiMessage[];
@@ -30,9 +32,11 @@ interface Props {
   onPanelLink?: (link: PanelLink) => void;
   /** 일정을 등록한 뒤 일정 탭으로 넘어가는 길. */
   onOpenSchedule?: () => void;
+  /** "내 지식" 근거 카드의 [TONGDAL에서 열기]. */
+  onOpenSource?: (documentId: string) => void;
 }
 
-export function MessageList({ messages, dark, showThinking, deleteDisabled, model, onDelete, onDownloadLink, onPanelLink, onOpenSchedule }: Props) {
+export function MessageList({ messages, dark, showThinking, deleteDisabled, model, onDelete, onDownloadLink, onPanelLink, onOpenSchedule, onOpenSource }: Props) {
   // 마크다운 HTML 안의 링크에는 React 핸들러를 달 수 없어 목록에서 한 번에 가로챈다.
   const onClick = (event: React.MouseEvent) => {
     const href = (event.target as Element).closest?.('a')?.getAttribute('href');
@@ -84,7 +88,7 @@ export function MessageList({ messages, dark, showThinking, deleteDisabled, mode
     <div className="msgs" ref={scrollerRef} onScroll={onScroll} onClick={onClick}>
       {messages.map((m) => (
         <Message key={String(m.id)} msg={m} dark={dark} showThinking={showThinking} deleteDisabled={deleteDisabled}
-          model={model} verdict={verdicts.get(feedbackKey(m))} onDelete={onDelete} onOpenSchedule={onOpenSchedule} />
+          model={model} verdict={verdicts.get(feedbackKey(m))} onDelete={onDelete} onOpenSchedule={onOpenSchedule} onOpenSource={onOpenSource} />
       ))}
       <div ref={endRef} />
     </div>
@@ -111,6 +115,7 @@ function Message({
   verdict,
   onDelete,
   onOpenSchedule,
+  onOpenSource,
 }: {
   msg: UiMessage;
   dark: boolean;
@@ -120,6 +125,7 @@ function Message({
   verdict?: FeedbackVerdict | undefined;
   onDelete: Props['onDelete'];
   onOpenSchedule?: Props['onOpenSchedule'];
+  onOpenSource?: Props['onOpenSource'];
 }) {
   const t = useT();
   if (msg.role === 'user') {
@@ -176,6 +182,12 @@ function Message({
         />
       ) : null}
 
+      {/* 답변 속 [n]이 가리키는 자료. 번호만 남고 출처가 사라지면 근거를 되짚을 길이 없다. */}
+      {!msg.streaming && msg.sources?.length ? <SourceList sources={msg.sources} onOpen={onOpenSource} /> : null}
+
+      {/* 조치카드의 출처 공문으로 찾은 TONGDAL 자료(연결한 경우에만, 찾은 것이 있을 때만 보인다). */}
+      {!msg.streaming && msg.sourceDoc ? <RelatedKnowledge title={msg.sourceDoc.title} /> : null}
+
       {msg.aborted && <div className="aborted">{t('msg.aborted')}</div>}
       {msg.perf && !msg.streaming && <PerfLine perf={msg.perf} />}
       {/* 평가는 복사·삭제와 성격이 다르다. 같은 줄에 섞지 않고 답변 아래 제 줄을 준다(B4). */}
@@ -184,6 +196,29 @@ function Message({
       )}
       <MessageActions msg={msg} deleteDisabled={deleteDisabled} onDelete={onDelete} />
     </div>
+  );
+}
+
+function SourceList({ sources, onOpen }: { sources: KnowledgeSource[]; onOpen?: ((documentId: string) => void) | undefined }) {
+  const t = useT();
+  return (
+    <section className="kn-sources" aria-label={t('tongdal.sources.h')}>
+      <div className="kn-sources-head">{t('tongdal.sources.h')}</div>
+      <ol className="kn-sources-list">
+        {sources.map(source => (
+          <li key={source.n}>
+            <span className="kn-sources-n">[{source.n}]</span>
+            <span className="kn-sources-body">
+              <span className="kn-sources-title">{source.title}</span>
+              <span className="kn-sources-meta">{locationOf(source)}</span>
+            </span>
+            {source.documentId && onOpen && (
+              <button type="button" className="kn-link" onClick={() => onOpen(source.documentId!)}>{t('kn.openInTongdal')}</button>
+            )}
+          </li>
+        ))}
+      </ol>
+    </section>
   );
 }
 

@@ -68,11 +68,16 @@ import { InboxPanel } from './components/InboxPanel';
 import { urgentCount } from '@/lib/schedule/task';
 import type { DownloadLinkAction } from '@/lib/downloads/links';
 import type { AppError } from '@/lib/messaging/protocol';
+import { KnowledgePanel } from './components/KnowledgePanel';
+import { useTongdal } from '@/lib/tongdal/useTongdal';
+import { openInTongdal } from '@/lib/tongdal/client';
 
-type View = 'inbox' | 'ai' | 'schedule' | 'automation';
+type View = 'inbox' | 'ai' | 'schedule' | 'automation' | 'knowledge';
 const VIEW_KEY = 'saide.view';
 // ★ 공유/공람이 맨 앞이다. 매일 열 이유를 만드는 탭이라 첫 자리에 둔다(N1).
-const VIEWS: View[] = ['inbox', 'ai', 'schedule', 'automation'];
+const VIEWS: View[] = ['inbox', 'ai', 'schedule', 'automation', 'knowledge'];
+/** "내 지식 포함" 선택은 이 브라우저에서만 기억한다(탭 기억과 같은 자리). */
+const KNOWLEDGE_KEY = 'saide.knowledgeMode';
 
 /** 마지막으로 연 탭은 이 브라우저에서만 기억한다. 저장소를 못 쓰면 AI 도우미로 시작한다. */
 function initialView(): View {
@@ -109,6 +114,15 @@ export default function App() {
    */
   const [agentMode, setAgentMode] = useState(false);
   /**
+   * "내 지식 포함"(TONGDAL.ai 연동). 켜면 질문마다 TONGDAL을 검색해 근거를 붙인다.
+   * ★ TONGDAL과 연결되지 않았으면 단추 자체가 보이지 않는다. 켜 둔 채 연결이 끊기면 답변 위에 그 사실이 남는다.
+   */
+  const [knowledgeMode, setKnowledgeMode] = useState(() => {
+    try { return localStorage.getItem(KNOWLEDGE_KEY) === '1'; } catch { return false; }
+  });
+  const tongdal = useTongdal();
+  const tongdalPaired = Boolean(tongdal.connection.token);
+  /**
    * AI 도우미(판단·생성)와 자동화(온나라 화면의 정해진 동작)를 탭으로 나눈다.
    * 결과를 믿는 방식이 다르기 때문이다 — AI는 검토가 필요하고, 자동화는 실행 기록이 남는다.
    */
@@ -132,6 +146,13 @@ export default function App() {
   useEffect(() => {
     try { localStorage.setItem(VIEW_KEY, view); } catch { /* 기억하지 못해도 동작에는 지장 없다 */ }
   }, [view]);
+  useEffect(() => {
+    try { localStorage.setItem(KNOWLEDGE_KEY, knowledgeMode ? '1' : '0'); } catch { /* 기억하지 못해도 동작에는 지장 없다 */ }
+  }, [knowledgeMode]);
+  // 연결을 해제하면 내 지식 탭이 사라진다. 그 탭을 보고 있었다면 AI 탭으로 옮긴다.
+  useEffect(() => {
+    if (!tongdal.loading && !tongdalPaired && view === 'knowledge') setView('ai');
+  }, [tongdal.loading, tongdalPaired, view]);
 
   // 일정 배지는 탭을 열지 않아도 맞아야 한다. 패널을 열 때 한 번 읽어 둔다.
   useEffect(() => { void refreshTasks(); }, []);
@@ -659,6 +680,8 @@ export default function App() {
 
   // 에이전트는 조작할 페이지가 있어야 의미가 있다. chrome:// 에서는 숨긴다.
   const canRunAgent = settings.agentEnabled && agentAllowed(tab);
+  /** 켜 두었어도 연결이 없으면 보내지 않는다. 에이전트 모드와는 함께 쓰지 않는다(도구 스키마와 근거가 같은 예산을 다툰다). */
+  const knowledgeOn = knowledgeMode && tongdalPaired && !agentMode;
 
   return (
     <div className="app">
@@ -722,6 +745,12 @@ export default function App() {
           {/* 배지는 숫자만. 문장을 넣으면 탭이 넓어져 이름이 밀리거나 줄이 바뀐다. */}
           {runningJobs > 0 && <span className="view-tab-count">{runningJobs}</span>}
         </button>
+        {/* TONGDAL.ai와 연결한 사용자에게만 보인다. 쓰지 않는 사용자의 좁은 탭 줄을 차지하지 않는다. */}
+        {tongdalPaired && (
+          <button type="button" role="tab" aria-selected={view === 'knowledge'} className={`view-tab view-tab-kn ${view === 'knowledge' ? 'on' : ''}`} onClick={() => setView('knowledge')}>
+            {t('view.knowledge')}
+          </button>
+        )}
       </nav>
 
       {view === 'inbox' ? (
@@ -731,6 +760,14 @@ export default function App() {
         </main>
       ) : view === 'schedule' ? (
         <main className="app-main"><SchedulePanel /></main>
+      ) : view === 'knowledge' && tongdalPaired ? (
+        <main className="app-main">
+          <KnowledgePanel
+            tongdal={tongdal}
+            onOpenSettings={() => chrome.runtime.openOptionsPage()}
+            onAsk={question => { setKnowledgeMode(true); setAgentMode(false); setDraft(question); setView('ai'); setFocusComposerAt(Date.now()); }}
+          />
+        </main>
       ) : view === 'automation' ? (
         <>
           {automationError && (
@@ -779,6 +816,7 @@ export default function App() {
             onOpenSchedule={() => setView('schedule')}
             onPanelLink={followPanelLink}
             onDownloadLink={(action, downloadId) => openDownload(action, downloadId, chat.setError)}
+            onOpenSource={documentId => openInTongdal(tongdal.connection, documentId).catch(e => chat.setError(e instanceof Error ? e.message : String(e)))}
           />
         )}
       </main>
@@ -835,9 +873,21 @@ export default function App() {
               </button>
             )}
             {showRegen && (
-              <button className="minibtn" onClick={() => chat.regenerate(settings)} title={t('panel.regenerateHint')}>
+              <button className="minibtn" onClick={() => chat.regenerate(settings, { knowledge: knowledgeOn })} title={t('panel.regenerateHint')}>
                 <RetryIcon />
                 {t('panel.regenerate')}
+              </button>
+            )}
+            {tongdalPaired && !agentMode && (
+              <button
+                className={`minibtn knowledge-toggle ${knowledgeMode ? 'on' : ''}`}
+                aria-pressed={knowledgeMode}
+                disabled={blocked}
+                onClick={() => setKnowledgeMode((v) => !v)}
+                title={knowledgeMode ? t('tongdal.toggle.offHint') : t('tongdal.toggle.onHint')}
+              >
+                {t('tongdal.toggle.label')}
+                {knowledgeMode && <span className="cost">{t('tongdal.toggle.on')}</span>}
               </button>
             )}
             {canRunAgent && (
@@ -903,7 +953,7 @@ export default function App() {
           onSend={(t) => {
             setDraft('');
             if (agentMode) void startAgent(t);
-            else void chat.send(t, settings);
+            else void chat.send(t, settings, { knowledge: knowledgeOn });
           }}
           onSlash={runSlash}
           onStop={chat.stop}

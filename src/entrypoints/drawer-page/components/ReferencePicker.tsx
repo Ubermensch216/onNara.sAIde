@@ -1,9 +1,10 @@
 /**
  * 작성 설정 1-B '참고문서 선택' 카드.
  *
- * 두 묶음에서 합쳐 최대 3건까지 고른다.
+ * 세 묶음에서 합쳐 최대 3건까지 고른다.
  *   - 온나라 관련정보: 기안기에 등록된 관련 문서(본문은 백그라운드가 읽어 온다)
  *   - 내 참고자료: 사용자가 올린 파일(확장 DB에 보관, 올리면 자동 분석)
+ *   - TONGDAL 서고: TONGDAL.ai 지식 공간에서 찾은 문서(연결한 사용자에게만 보인다)
  */
 
 import { useRef, useState } from 'react';
@@ -15,6 +16,8 @@ import { UPLOAD_ACCEPT } from '@/lib/extract/files';
 import type { RefRole } from '@/lib/onnara/reference-analysis';
 import { USER_REFS_MAX, type UserRef } from '@/lib/storage/user-refs';
 import type { AnalyzingState, UploadState } from '../hooks/useUserReferences';
+import { TongdalRefGroup, type TongdalRef } from './TongdalRefGroup';
+import type { TongdalSearchHit } from '@/lib/tongdal/types';
 
 export const onnaraKey = (doc: RelatedDocInfo) => `onnara:${doc.title}`;
 export const uploadKey = (ref: UserRef) => `upload:${ref.id}`;
@@ -52,6 +55,9 @@ export interface ReferencePickerProps {
   onMemo: (id: string, memo: string) => void;
   onReanalyze: (id: string) => void;
   onDelete: (id: string) => void;
+  // TONGDAL 서고
+  tongdalRefs: TongdalRef[];
+  onToggleTongdal: (documentId: string, hit?: TongdalSearchHit) => void;
 }
 
 function OnnaraRefItem({
@@ -228,6 +234,9 @@ export function ReferencePicker(props: ReferencePickerProps) {
           })
         )}
       </div>
+
+      {/* TONGDAL 서고 (TONGDAL.ai와 연결한 경우에만) */}
+      <TongdalRefGroup selectedKeys={selectedKeys} full={full} refs={props.tongdalRefs} onToggle={props.onToggleTongdal} />
 
       {/* 내 참고자료 */}
       <div

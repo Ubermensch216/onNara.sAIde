@@ -50,10 +50,16 @@ import {
 } from '@/lib/storage/db';
 import {
   buildContext,
+  contextTokens,
+  PROMPT_BUDGET_RATIO,
   uncachedPrefillSeconds,
   type AttachedPage,
   type Attachment,
+  type ContextInput,
 } from '@/lib/chat/context';
+import { gatherKnowledge } from '@/lib/tongdal/chat-knowledge';
+import type { KnowledgeSource } from '@/lib/tongdal/evidence';
+import { wrapKnowledgeQuestion } from '@/lib/prompts/knowledge';
 import { isRestrictedUrl, sameDocument, sendToSW } from '@/lib/messaging/protocol';
 import { fitToBudget } from '@/lib/extract/budget';
 import type { ApprovalRequest, AppError, ExtractedPage } from '@/lib/messaging/protocol';
@@ -68,6 +74,16 @@ import {
   findDocumentCommand,
   type DocumentCommandId,
 } from '@/lib/onnara/commands';
+
+/**
+ * 일반 대화의 선택 사항.
+ *
+ * `knowledge`: 질문으로 TONGDAL.ai를 검색해 근거를 붙인다("내 지식 포함"). 대화 기록에는
+ * 질문만 남고, 근거는 이번 요청에만 실린다(prompts/knowledge.ts).
+ */
+export interface SendOptions {
+  knowledge?: boolean;
+}
 
 /** 에이전트가 조작할 탭. 제목까지 필요하다 — 승인 카드와 모델 안내에 쓴다. */
 export interface AgentTab {
@@ -187,7 +203,7 @@ export interface ChatState {
   attachScreenshot: (tabId: number) => Promise<string | null>;
   detachPage: () => void;
   detachScreenshot: () => void;
-  send: (text: string, settings: Settings) => Promise<void>;
+  send: (text: string, settings: Settings, options?: SendOptions) => Promise<void>;
   /** 문서등록대장 목록 명령 실행. 무엇을 할지는 문장이 아니라 명령 id가 정한다. */
   runCommand: (text: string, command: DocumentCommandId, args: string, settings: Settings, options?: { bypassCache?: boolean }) => Promise<void>;
   /** 직전 목록 명령을 캐시 없이 다시 실행한다(B1의 `다시 분석`). */
@@ -200,7 +216,7 @@ export interface ChatState {
   sendAgent: (text: string, settings: Settings, tab: AgentTab) => Promise<void>;
   /** 승인 카드의 응답. false면 실행하지 않는다. */
   resolveApproval: (approved: boolean) => void;
-  regenerate: (settings: Settings) => Promise<void>;
+  regenerate: (settings: Settings, options?: SendOptions) => Promise<void>;
   removeMessage: (id: UiMessage['id']) => Promise<void>;
   resetConversation: () => Promise<void>;
   stop: () => void;
@@ -418,10 +434,10 @@ export function createChatSession() {
     detachPage: () => { ++epochs.attachment; set({ page: null, lastContext: null, extracting: false }); void moveContextBoundary(set, get, nextStamp(get())); },
     detachScreenshot: () => { ++epochs.attachment; set({ screenshot: null, lastContext: null, extracting: false }); },
 
-    async send(text, settings) {
+    async send(text, settings, options) {
       // 대화를 갈아끼우는 중이면 그 복원이 끝난 뒤에 보낸다(요청을 조용히 버리지 않는다).
       await settled();
-      await track(submit(set, get, text, settings, epochs));
+      await track(submit(set, get, text, settings, epochs, undefined, options));
     },
     async runCommand(text, command, args, settings, options) {
       await settled();
@@ -486,7 +502,7 @@ export function createChatSession() {
     },
 
     /** 재생성: 마지막 assistant 응답을 걷어내고 같은 입력으로 다시 돌린다. */
-    async regenerate(settings) {
+    async regenerate(settings, options) {
       await track((async () => {
         if (get().streaming || get().loading) return;
         const conv = get().conversation;
@@ -502,7 +518,7 @@ export function createChatSession() {
           await deleteMessagesFrom(conv.id, msgs[index]!.createdAt);
           if (epoch !== epochs.operation) return;
           ownSet({ messages: msgs.slice(0, index) });
-          await runGeneration(ownSet, get, settings);
+          await runGeneration(ownSet, get, settings, options);
         } catch (error) { ownSet({ error: toAppError(null, error) }); }
         finally { ownSet({ streaming: false, abort: null }); }
       })());
@@ -582,7 +598,7 @@ function guardedSet(set: Set, owns: () => boolean): Set {
   return patch => { if (owns()) set(patch); };
 }
 
-async function submit(set: Set, get: Get, text: string, settings: Settings, epochs: SessionEpochs, tab?: AgentTab) {
+async function submit(set: Set, get: Get, text: string, settings: Settings, epochs: SessionEpochs, tab?: AgentTab, options?: SendOptions) {
   const trimmed = text.trim();
   if (!trimmed || get().streaming || get().loading) return;
   const epoch = ++epochs.operation;
@@ -600,7 +616,7 @@ async function submit(set: Set, get: Get, text: string, settings: Settings, epoc
     await requireCapabilities(settings.endpoint, settings.model, [...(tab ? ['tools'] : []), ...(get().screenshot ? ['vision'] : [])], get().abort?.signal);
     if (!owns()) return;
     if (tab) await runAgent(ownSet, get, settings, tab);
-    else await runGeneration(ownSet, get, settings);
+    else await runGeneration(ownSet, get, settings, options);
   } catch (error) { ownSet({ error: toAppError(error instanceof OllamaError ? error : null, error) }); }
   finally { ownSet({ streaming: false, abort: null, startedAt: null, documentProgress: null }); }
 }
@@ -1280,9 +1296,11 @@ async function runActionCard(set: Set, get: Get, settings: Settings, title: stri
     const content = renderActionCard(title, card, page.text);
     // 일정 후보(S07). 등록은 사용자가 확인 카드에서 체크한 것만 — 여기서 저장되는 것은 후보일 뿐이다.
     const candidates = buildTaskCandidates(card, page.text, reference ?? new Date());
-    const extra = candidates.length
-      ? { taskCandidates: candidates, sourceDoc: { title, ...(page.url ? { url: page.url } : {}) } }
-      : {};
+    // 출처 공문은 후보가 없어도 남긴다. "관련 내 자료"(TONGDAL) 추천이 이 제목으로 찾는다.
+    const extra = {
+      sourceDoc: { title, ...(page.url ? { url: page.url } : {}) },
+      ...(candidates.length ? { taskCandidates: candidates } : {}),
+    };
     const id = await addMessage({ conversationId: conv.id, clientId: String(placeholder.id), role: 'assistant', content, perf: perf ?? undefined, ...extra, createdAt: startedAt });
     set(s => ({
       messages: s.messages.map(m => m.id === placeholder.id ? { ...m, id, content, perf: perf ?? undefined, ...extra, streaming: false } : m),
@@ -1297,20 +1315,66 @@ async function runActionCard(set: Set, get: Get, settings: Settings, title: stri
   }
 }
 
-async function runGeneration(set: Set, get: Get, settings: Settings): Promise<DocumentOutcome | null> {
+/**
+ * 마지막 질문에 TONGDAL.ai 근거를 붙인다.
+ *
+ * ★ 근거 예산은 **이미 들어갈 컨텍스트를 뺀 나머지**다. 페이지 본문이 붙은 대화라면 근거 몫이 줄어들고,
+ *   모자라면 근거 없이 답하되 그 사실을 알린다(gatherKnowledge).
+ */
+async function withKnowledge(
+  set: Set,
+  messages: ContextInput[],
+  settings: Settings,
+  attachment: Attachment,
+  signal: AbortSignal,
+): Promise<{ messages: ContextInput[]; sources?: KnowledgeSource[]; notice?: string }> {
+  const index = findLastIndex(messages, m => m.role === 'user');
+  if (index < 0) return { messages };
+  const question = messages[index]!.content;
+  // 질문을 감쌀 안내문(약 120토큰)과 답할 자리 여유를 미리 뺀다.
+  const used = contextTokens(buildContext(messages, settings.numCtx, attachment));
+  const budget = Math.floor(settings.numCtx * PROMPT_BUDGET_RATIO) - used - 150;
+  set({ documentProgress: t('tongdal.chat.searching') });
+  try {
+    let knowledge;
+    try {
+      knowledge = await gatherKnowledge(question, budget, signal);
+    } catch (error) {
+      // 검색 중에 멈춘 것이다. 아래 생성 단계가 같은 신호로 곧 중단 처리를 한다.
+      if (signal.aborted) return { messages };
+      throw error;
+    }
+    if (!knowledge.evidence.length) return { messages, notice: knowledge.notice };
+    const next = messages.slice();
+    next[index] = { ...next[index]!, content: wrapKnowledgeQuestion(question, knowledge.evidence) };
+    return { messages: next, sources: knowledge.sources, notice: knowledge.notice };
+  } finally {
+    set({ documentProgress: null });
+  }
+}
+
+async function runGeneration(set: Set, get: Get, settings: Settings, options?: SendOptions): Promise<DocumentOutcome | null> {
   const conv = get().conversation;
   if (!conv) return null;
 
   const abort = get().abort ?? new AbortController();
-  const startedAt = nextStamp(get());
 
   const { page, screenshot, stale } = freshAttachment(set, get);
+  const attachment = toAttachment(page, screenshot);
 
-  const context = buildContext(
-    contextMessages(get()),
-    settings.numCtx,
-    toAttachment(page, screenshot),
-  );
+  let messages: ContextInput[] = contextMessages(get());
+  let sources: KnowledgeSource[] | undefined;
+  let knowledgeNotice: string | undefined;
+  if (options?.knowledge) {
+    const knowledge = await withKnowledge(set, messages, settings, attachment, abort.signal);
+    messages = knowledge.messages;
+    sources = knowledge.sources;
+    knowledgeNotice = knowledge.notice;
+  }
+  // 검색이 끝난 뒤에 찍는다. 답변 자리의 시각이 검색 시간만큼 질문보다 앞서면 순서가 뒤집힌다.
+  const startedAt = nextStamp(get());
+
+  const context = buildContext(messages, settings.numCtx, attachment);
   // 캐시 적중분을 뺀 예상 대기시간. 페이지를 붙인 후속 질문은 이 값이 거의 0이다.
   const expectedPrefillSec = uncachedPrefillSeconds(get().lastContext, context);
 
@@ -1367,7 +1431,7 @@ async function runGeneration(set: Set, get: Get, settings: Settings): Promise<Do
       ? `본문이 길어 앞부분 ${Math.round(page.keptRatio * 100)}%만 참조했습니다.`
       : undefined;
 
-  const notice = staleNotice ?? truncNotice;
+  const notice = [knowledgeNotice, staleNotice ?? truncNotice].filter(Boolean).join(' ') || undefined;
 
   try {
     perf = await abortable(streamChat(
@@ -1406,6 +1470,7 @@ async function runGeneration(set: Set, get: Get, settings: Settings): Promise<Do
       thinking: thinking || undefined,
       notice,
       perf: perf ?? undefined,
+      sources,
       createdAt: startedAt,
     });
 
@@ -1419,6 +1484,7 @@ async function runGeneration(set: Set, get: Get, settings: Settings): Promise<Do
               thinking: thinking || undefined,
               notice,
               perf: perf ?? undefined,
+              sources,
               streaming: false,
             }
           : m,
@@ -1444,13 +1510,14 @@ async function runGeneration(set: Set, get: Get, settings: Settings): Promise<Do
         content,
         thinking: thinking || undefined,
         notice,
+        sources,
         aborted: true,
         createdAt: startedAt,
       });
       set((s) => ({
         messages: s.messages.map((m) =>
           m.id === placeholder.id
-            ? { ...m, id, content, notice, aborted: true, streaming: false }
+            ? { ...m, id, content, notice, sources, aborted: true, streaming: false }
             : m,
         ),
         streaming: false,

@@ -33,9 +33,9 @@ const PASSAGE_CHARS = 900;
 const EXAMPLE_EXCERPT_TOKENS = 1500;
 
 export interface ReferenceSource {
-  /** 'onnara:제목' 또는 'upload:id'. */
+  /** 'onnara:제목', 'upload:id' 또는 'tongdal:문서ID'. */
   key: string;
-  origin: 'onnara' | 'upload';
+  origin: 'onnara' | 'upload' | 'tongdal';
   role: RefRole;
   title: string;
   /** 온나라 구분('문서', '보고문서') 또는 파일 형식('HWPX'). */
@@ -146,7 +146,7 @@ export function selectExcerpt(source: ReferenceSource, userPrompt: string, budge
 }
 
 function heading(source: ReferenceSource, index: number): string {
-  const origin = source.origin === 'onnara' ? '온나라 관련정보' : '내 참고자료';
+  const origin = source.origin === 'onnara' ? '온나라 관련정보' : source.origin === 'tongdal' ? 'TONGDAL 서고' : '내 참고자료';
   const type = source.docType ? ` · ${source.docType}` : '';
   const number = source.docNumber ? ` (문서번호: ${source.docNumber})` : '';
   return source.role === 'example'

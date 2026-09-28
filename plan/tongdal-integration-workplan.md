@@ -1,6 +1,6 @@
 # onNara.sAIde × TONGDAL.ai 연동 작업계획서
 
-작성: 2026-09-28 · 상태: TG1(TONGDAL 브리지 기반) 구현 — TONGDAL.ai `main`(dd47d62) · 나머지 단계 미착수 · 작업은 두 저장소 모두 `main`에서 한다 · 대상 저장소: `D:\Dev\onNara.sAIde`(확장) · `D:\Dev\TONGDAL.ai`(데스크톱 앱)
+작성: 2026-09-28 · 상태: TG1(TONGDAL 브리지 기반)·TG2(onNara 읽기 연동) 구현 — 종단 확인 전 · TG3 이후 미착수 · 작업은 두 저장소 모두 `main`에서 한다 · 대상 저장소: `D:\Dev\onNara.sAIde`(확장) · `D:\Dev\TONGDAL.ai`(데스크톱 앱)
 상위 계획: [최종 구축 계획서](onnara-saide-final-workplan.md) — 이 문서는 §7 업무 지식 저장소와 4·5단계 일부(P4-1~P4-3, P5-1, P5-3)에 영향을 준다(§11).
 
 온나라 업무 중에 **TONGDAL.ai에 쌓아 둔 개인 자료를 찾아 쓰고(읽기), 온나라 문서·첨부·작성 결과를 TONGDAL에 등록하고(쓰기), 필요 없는 자료를 치우는(삭제)** 기능을 onNara.sAIde 사이드패널과 기안 서랍에서 제공한다.
@@ -313,3 +313,23 @@ TONGDAL 화면: "onNara에서 1건 삭제됨 [되돌리기]" 알림
 
 **아직 확인하지 못한 것**
 - 실제 창에서의 페어링(코드 발급 → 확인 창 → 토큰 발급)과 트레이 동작. 화면 조작 권한이 없어 사용자 확인이 필요하다. 개발 모드 실행 시 새 코드가 오류 없이 시작되고, 기본값(꺼짐)에서 포트가 열리지 않는 것까지는 확인했다.
+
+### 2026-09-28 · TG2 구현 (onNara.sAIde `main`, 미커밋)
+
+| 작업 | 결과 | 위치 |
+|---|---|---|
+| O1 클라이언트 | 요청·시간 제한·취소, 오류 코드 전달, 401이면 토큰 삭제, 상태 판정 7종, 화면 훅 | `src/lib/tongdal/{client,connection,status,types,useTongdal}.ts` |
+| O2 연동 설정 | 주소(이 PC만), 연결 코드, 허용 대기, 상태·권한, 해제. 토큰은 백업·복원에서 제외 | `options/TongdalSettings.tsx`, `lib/storage/backup.ts` |
+| O3 내 지식 탭 | 연결 시에만 보이는 탭. 검색·분류·본문 미리보기·TONGDAL에서 열기·AI에게 묻기 | `sidepanel/components/KnowledgePanel.tsx` |
+| O4 채팅 근거 | "내 지식" 토글. 근거는 마지막 사용자 턴에만, 예산 안에서, `[n]` 출처 카드 저장, 실패는 안내로 | `lib/tongdal/{chat-knowledge,evidence}.ts`, `lib/prompts/knowledge.ts`, `lib/chat/store.ts` |
+| O5 기안 서랍 | "TONGDAL 서고" 묶음, 고르면 본문을 받아 초안 참고자료로 | `drawer-page/components/TongdalRefGroup.tsx`, `DrawerApp.tsx` |
+| O6 조치카드 | "관련 내 자료" 최대 3건(질의는 공문 제목) | `sidepanel/components/RelatedKnowledge.tsx` |
+| O11 시험 | 신규 23건 포함 1152건 통과, `tsc`·빌드·대비 검사 통과 | `lib/tongdal/tongdal.test.ts` 등 |
+
+**계획과 달라진 점**
+- 빌드 기본 주소는 `.env`의 `WXT_TONGDAL_BRIDGE_URL`로 바꿀 수 있게 했지만 `.env.example`에는 넣지 않았다(기본값으로 충분).
+- 내 지식 탭의 [내 참고자료로 가져오기]는 빼고, 기안 서랍에서 TONGDAL 문서를 바로 고르게 했다(같은 목적, 사본을 만들지 않음).
+- "내 지식"은 에이전트 모드와 함께 쓰지 않는다. 도구 스키마와 근거가 같은 컨텍스트 예산을 다툰다.
+
+**아직 확인하지 못한 것**
+- 실제 Edge 확장 + 실행 중인 TONGDAL.ai로 페어링 → 검색 → 채팅 근거까지의 종단 확인. 확장 ID가 경로에서 나오므로(D1 미결) 페어링 뒤 폴더를 옮기면 다시 연결해야 한다.

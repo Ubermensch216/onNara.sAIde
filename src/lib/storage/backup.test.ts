@@ -111,6 +111,20 @@ it('그때그때의 신호는 담지도 되살리지도 않는다', async () => 
  * ★ 임베딩은 Float32Array다. JSON이 모르는 형이라 그냥 담으면 `{"0":…}` 객체로 되살아나고,
  *   길이도 내적도 성립하지 않아 검색이 조용히 망가진다.
  */
+it('TONGDAL.ai 페어링 토큰은 백업에 담지 않고, 파일에 들어 있어도 지금 연결을 덮어쓰지 않는다', async () => {
+  await seed();
+  const mine = { baseUrl: 'http://127.0.0.1:47821', token: 'm'.repeat(43), clientId: 'mine', scopes: ['read'], pairedAt: 1 };
+  local['saide.tongdal'] = mine;
+  const backup = await collectBackup();
+  expect(backup.local).not.toHaveProperty('saide.tongdal');
+  expect(serializeBackup(backup)).not.toContain('m'.repeat(43));
+
+  // 다른 PC의 백업(또는 옛 판본이 만든 파일)에 토큰이 들어 있는 경우.
+  const foreign = { ...backup, local: { ...backup.local, 'saide.tongdal': { ...mine, token: 'f'.repeat(43), clientId: 'foreign' } } };
+  await restoreBackup(parseBackup(serializeBackup(foreign)));
+  expect(local['saide.tongdal']).toEqual(mine);
+});
+
 it('기억을 함께 담으면 임베딩이 Float32Array 그대로 돌아온다', async () => {
   const vector = new Float32Array([0.5, -0.25, 0.125, 1]);
   await db.table('pageVectors').add({ id: 1, url: 'http://a.test/', title: 'A', text: '본문', chunk: 0, vector, model: 'bge-m3', visitedAt: 5 });

@@ -32,6 +32,11 @@ import type { UserRef } from '@/lib/storage/user-refs';
 import { TemplateManager } from './components/TemplateManager';
 import { MaterialIcon } from './components/MaterialIcon';
 import { ReferencePicker, onnaraKey, uploadKey } from './components/ReferencePicker';
+import { tongdalKey, type TongdalRef } from './components/TongdalRefGroup';
+import { getDocument } from '@/lib/tongdal/client';
+import { loadConnection } from '@/lib/tongdal/connection';
+import { locationOf } from '@/lib/tongdal/evidence';
+import type { TongdalSearchHit } from '@/lib/tongdal/types';
 import { needsAnalysis, useUserReferences } from './hooks/useUserReferences';
 import { estimateTokens } from '@/lib/extract/budget';
 
@@ -86,6 +91,8 @@ export function DrawerApp() {
   // 참고문서 상태 — 온나라 관련정보와 내 참고자료를 합쳐 최대 3건
   const [relatedDocs, setRelatedDocs] = useState<RelatedDocInfo[]>([]);
   const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
+  /** TONGDAL 서고에서 고른 문서. 고를 때 본문을 받아 와 여기 둔다. */
+  const [tongdalRefs, setTongdalRefs] = useState<TongdalRef[]>([]);
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const [onnaraMemos, setOnnaraMemos] = useState<Record<string, string>>({});
   const [fetchingTitle, setFetchingTitle] = useState<string | null>(null);
@@ -142,7 +149,8 @@ export function DrawerApp() {
     .map((key) => userRefs.find((ref) => uploadKey(ref) === key))
     .filter((ref): ref is UserRef => Boolean(ref));
   const firstSelectedTitle = selectedKeys
-    .map((key) => relatedDocs.find((doc) => onnaraKey(doc) === key)?.title ?? userRefs.find((ref) => uploadKey(ref) === key)?.name)
+    .map((key) => relatedDocs.find((doc) => onnaraKey(doc) === key)?.title ?? userRefs.find((ref) => uploadKey(ref) === key)?.name
+      ?? tongdalRefs.find((ref) => ref.key === key)?.title)
     .find(Boolean);
 
   // 지워진 자료는 선택에서도 뺀다.
@@ -314,6 +322,33 @@ export function DrawerApp() {
     if (next && doc && !doc.content && !fetchingTitle) handleFetchRefContent(doc);
   };
 
+  /** TONGDAL 서고 문서를 고르거나 뺀다. 고르면 본문(최대 2만 자)을 받아 온다. */
+  const handleToggleTongdal = (documentId: string, hit?: TongdalSearchHit) => {
+    const key = tongdalKey(documentId);
+    if (selectedKeys.includes(key)) {
+      setSelectedKeys((prev) => prev.filter((k) => k !== key));
+      setTongdalRefs((prev) => prev.filter((ref) => ref.key !== key));
+      return;
+    }
+    if (selectedKeys.length >= MAX_SELECTED_REFS || !hit) return;
+    setSelectedKeys((prev) => (prev.includes(key) || prev.length >= MAX_SELECTED_REFS ? prev : [...prev, key]));
+    setTongdalRefs((prev) => [...prev.filter((ref) => ref.key !== key), {
+      key, documentId, title: hit.title, location: locationOf(hit), text: null, loading: true, error: null,
+    }]);
+    void (async () => {
+      let text: string | null = null;
+      let error: string | null = null;
+      try {
+        const detail = await getDocument(await loadConnection(), documentId, { includeText: true, maxChars: 20_000 });
+        if (detail.text?.indexed && detail.text.content.trim()) text = detail.text.content;
+        else error = 'TONGDAL.ai가 아직 이 문서의 글자를 뽑지 못했습니다(색인 전).';
+      } catch (e) {
+        error = e instanceof Error ? e.message : String(e);
+      }
+      setTongdalRefs((prev) => prev.map((ref) => (ref.key === key ? { ...ref, text, error, loading: false } : ref)));
+    })();
+  };
+
   const handleUpload = async (files: File[]) => {
     const ids = await userRefsApi.upload(files);
     if (!ids.length) return;
@@ -357,6 +392,19 @@ export function DrawerApp() {
           notes: onnaraNotes.current.get(`${doc.title}#${doc.content.length}`),
         }];
       }
+      const shelf = tongdalRefs.find((r) => r.key === key);
+      if (shelf) {
+        if (!shelf.text) return [];
+        return [{
+          key,
+          origin: 'tongdal',
+          role: 'fact',
+          title: shelf.title,
+          docType: '서고',
+          text: shelf.text,
+          codeFacts: extractCodeFacts(shelf.text),
+        }];
+      }
       const ref = userRefs.find((r) => uploadKey(r) === key);
       if (!ref) return [];
       const complete = isAnalysisComplete(ref.analysis, ref.role, settings.model);
@@ -381,6 +429,13 @@ export function DrawerApp() {
     if (unread) {
       if (!fetchingTitle) handleFetchRefContent(unread);
       setGenerationError(`'${unread.title}'의 본문을 읽은 뒤 초안을 작성할 수 있습니다.`);
+      return;
+    }
+    const shelfPending = tongdalRefs.find((ref) => selectedKeys.includes(ref.key) && !ref.text);
+    if (shelfPending) {
+      setGenerationError(shelfPending.loading
+        ? `'${shelfPending.title}'의 본문을 TONGDAL.ai에서 받는 중입니다. 잠시 후 다시 누르세요.`
+        : `'${shelfPending.title}'의 본문을 받지 못했습니다. 선택을 빼거나 TONGDAL.ai 상태를 확인하세요.`);
       return;
     }
     const pending = selectedUploads.filter((ref) => needsAnalysis(ref, settings.model));
@@ -757,7 +812,7 @@ export function DrawerApp() {
                 selectedKeys={selectedKeys}
                 expandedKey={expandedKey}
                 onToggleSelect={handleToggleSelect}
-                onClearAll={() => { setSelectedKeys([]); setExpandedKey(null); }}
+                onClearAll={() => { setSelectedKeys([]); setExpandedKey(null); setTongdalRefs([]); }}
                 onToggleExpand={handleToggleExpand}
                 relatedDocs={relatedDocs}
                 fetchingTitle={fetchingTitle}
@@ -776,6 +831,8 @@ export function DrawerApp() {
                 onMemo={(id, memo) => void userRefsApi.setMemo(id, memo)}
                 onReanalyze={(id) => void userRefsApi.reanalyze(id)}
                 onDelete={(id) => void userRefsApi.remove(id)}
+                tongdalRefs={tongdalRefs}
+                onToggleTongdal={handleToggleTongdal}
               />
               </div>
             </section>

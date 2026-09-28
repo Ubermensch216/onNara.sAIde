@@ -191,6 +191,11 @@ function normalizeAttachment(
   return 'text' in a ? { page: a } : a;
 }
 
+/** 컨텍스트의 대략적인 토큰 수. 근거를 더 넣을 자리가 얼마나 남았는지 셀 때 쓴다. */
+export function contextTokens(messages: ChatMessage[]): number {
+  return messages.reduce((sum, m) => sum + costOf(m), 0);
+}
+
 /** 이 컨텍스트의 예상 프리필 대기시간(초). UI 경고에 쓴다. */
 export function estimatePrefillSeconds(
   messages: ChatMessage[],

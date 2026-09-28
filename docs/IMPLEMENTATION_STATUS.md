@@ -127,7 +127,7 @@
 
 ### 12. 테스트 및 무결성 검증 현황
 - **TypeScript 컴파일 검사 (`tsc --noEmit`) 통과**
-- **단위 및 통합 테스트 (`vitest run`) 통과: 102개 파일, 1128개 테스트 전체 통과 (2026-09-28 재확인)**
+- **단위 및 통합 테스트 (`vitest run`) 통과: 103개 파일, 1152개 테스트 전체 통과 (2026-09-28 TONGDAL 연동 후 재확인)**
 - **Edge MV3 빌드 검증 (`node scripts/verify-build.mjs`) 통과**
 - **WCAG AA 색상 대비 검사 (`node scripts/check-contrast.mjs`) 통과 (13개 색상 쌍 충족)**
 
@@ -174,6 +174,18 @@
   - 생성 후 사실 대조: 초안의 날짜·금액이 내용 근거 원문·메모·작성 요청 어디에도 없으면 `[확인 필요]`로 표시(작성 예시에서 옮겨 적은 값도 잡음)
   - 실측(gemma4:e2b, CPU): 1구간 분석 약 25초, 공문 예문에서 기한 2건·근거 법령 모두 원문 대조 통과 (`reference-analysis.itest.ts`)
 
+### 14. TONGDAL.ai 연동 — 읽기 (TG2, 2026-09-28)
+계획: [TONGDAL.ai 연동 작업계획서](../plan/tongdal-integration-workplan.md) · 계약: TONGDAL.ai `docs/tongdal-bridge-api.md`
+- **연결**(`lib/tongdal/`): 브리지 클라이언트(시간 제한·취소·오류 분류, 401이면 토큰 삭제), 연결 정보 저장(`saide.tongdal`, **이 PC 주소만 허용**), 상태 판정 7종(fail-closed), 화면용 훅(30초·창 복귀 시 재확인)
+- **설정 › TONGDAL.ai 연동**(`options/TongdalSettings.tsx`): 브리지 주소, 6자리 연결 코드 → TONGDAL 창 허용 대기, 연결 상태·권한, 연결 해제. 주소를 바꾸면 토큰을 버린다
+- **백업 제외**: 페어링 토큰은 전체 백업에 담지 않고, 파일에 들어 있어도 복원하지 않는다(`SECRET_KEYS`)
+- **내 지식 탭**(`KnowledgePanel.tsx`): 연결한 사용자에게만 보이는 다섯 번째 탭. 검색·분류 보기·문서 본문 미리보기·[TONGDAL에서 열기]·[AI에게 묻기]
+- **채팅 "내 지식" 토글**: 질문마다 TONGDAL을 검색해 근거를 **마지막 사용자 턴에만** 싣는다(시스템·페이지 접두사 불변 → KV 캐시 유지). 예산은 남은 컨텍스트에서 계산(최대 1,500토큰), 답변에 `[n]` 출처 카드(`StoredMessage.sources`) 저장. 연결 없음·결과 없음·예산 부족·키워드 전용은 답변 위 안내로 남긴다. 에이전트 모드와는 함께 쓰지 않는다
+- **기안 서랍 "TONGDAL 서고"**(`TongdalRefGroup.tsx`): 참고문서 선택의 세 번째 묶음. 고르면 본문(최대 2만 자)을 받아 `ReferenceSource(origin: 'tongdal')`로 초안에 반영, 3건 한도 공유
+- **조치카드 "관련 내 자료"**(`RelatedKnowledge.tsx`): 출처 공문 제목으로 TONGDAL을 찾아 최대 3건. 찾은 것이 없거나 연결이 없으면 칸 자체를 그리지 않는다(조치카드는 후보가 없어도 `sourceDoc`을 남기도록 바뀜)
+- **시험**: `lib/tongdal/tongdal.test.ts` 19건, 채팅 근거 3건(`store.test.ts`), 백업 토큰 제외 1건. 문서용 미리보기에 `?view=knowledge`·`knowledge-chat`·`options-tongdal` 표본 추가
+- **아직 확인하지 못한 것**: 실제 Edge + 실행 중인 TONGDAL.ai로의 종단 확인(페어링 → 검색 → 채팅 근거). 미리보기는 브리지 응답을 흉내 낸 것이다
+
 ---
 
 ## 아직 구현하지 않은 범위 (계획서 §10 대비)
@@ -185,7 +197,7 @@
 | S02 회신·기안 초안 | **완료** | 온나라 공문서 기안기 인페이지 사이드카(`drawer.ts`, `DrawerApp.tsx`), 서식 관리자, 참고문서 연동(관련정보 + 내 참고자료 업로드·정밀 분석, 최대 3건), 타깃 클릭 삽입 및 2단계 승인 체계 구현 완료 (위 13항) |
 | S03 담당자 배부 추천 | 미착수 | 배부기 상태기계 이식 파일 없음 |
 | S04 개인정보·공개구분 점검 | 미착수 | `pii` 모듈 없음. `assessTransfer`의 `containsSensitiveContent` 인자를 계산하는 코드가 아직 없다 |
-| S05·S06 유사 공문·지침 Q&A | 미착수 | 지식 컬렉션(`guideline`·`duty`·`case`) 스키마 미적재. 현재 기억은 방문 페이지 단일 컬렉션 |
+| S05·S06 유사 공문·지침 Q&A | **부분(TONGDAL 연동)** | TONGDAL.ai 지식 공간 검색으로 대체 진행 중(위 14항). 판본·적용일 필터와 확정 처리사례(`case`) 연결은 미착수 |
 | S08~S13 | 미착수 | 계획서 4~5단계 |
 | 공급자 선택·기능별 모델 지정 UI | 미착수 | 옵션 화면에 공급자 항목 없음. `resolveAiConfig`는 아직 호출되는 곳이 없다 |
 | 범정부 AI 공통기반 어댑터 | 미착수 | `lib/llm`에 `gov-ai` 구현체 없음 |

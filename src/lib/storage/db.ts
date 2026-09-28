@@ -14,6 +14,7 @@ import type { DocResult } from '@/lib/cache/doc-results';
 import type { FeedbackEntry } from '@/lib/feedback/store';
 import type { InboxDoc, InboxRun } from '@/lib/inbox/types';
 import type { UserRef } from '@/lib/storage/user-refs';
+import type { KnowledgeSource } from '@/lib/tongdal/evidence';
 import { sameDocument } from '@/lib/messaging/protocol';
 
 export interface Conversation {
@@ -77,6 +78,13 @@ export interface StoredMessage {
    *   똑같이 보이면, 캐시는 사용자에게 조용한 거짓말이 된다(B1).
    */
   cached?: number;
+  /**
+   * "내 지식 포함"으로 답할 때 근거로 붙인 TONGDAL.ai 자료. 비인덱스 필드.
+   *
+   * ★ 답변 속 [n] 번호가 가리키는 대상이다. 저장하지 않으면 다시 열었을 때 번호만 남고 출처가 사라진다.
+   *   본문은 저장하지 않는다 — 원본은 TONGDAL에 있다.
+   */
+  sources?: KnowledgeSource[];
   createdAt: number;
 }
 

@@ -4,6 +4,7 @@ import { createChatSession } from './store';
 import { createChatSessions } from './sessions';
 import * as storage from '@/lib/storage/db';
 import * as stream from '@/lib/ollama/stream';
+import * as knowledge from '@/lib/tongdal/chat-knowledge';
 import { DEFAULT_SETTINGS } from '@/lib/storage/settings';
 import type { SWToPanel } from '@/lib/messaging/protocol';
 
@@ -926,4 +927,61 @@ it('문서 팝업으로 옮기면 목록 화면에서 붙인 본문은 떼어낸
 
   expect(generate.mock.calls.at(-1)![1].messages.some(message => message.content.includes('받은문서 목록'))).toBe(false);
   expect(useChat.getState().messages.at(-1)!.notice).toContain('페이지가 바뀌어');
+});
+
+it('내 지식 포함: 근거는 이번 요청의 마지막 질문에만 싣고, 저장된 질문은 그대로, 출처는 답변에 남긴다', async () => {
+  const gather = vi.spyOn(knowledge, 'gatherKnowledge').mockResolvedValue({
+    evidence: [{ n: 1, title: '2026 사업계획', location: 'raw/plan.hwpx · 4쪽', text: '예산은 1억 원이다.' }],
+    sources: [{ n: 1, documentId: 'doc_1', title: '2026 사업계획', relativePath: 'raw/plan.hwpx', sectionPath: '', pageStart: 4, pageEnd: 4 }],
+    notice: 'Ollama를 쓸 수 없어 내 지식을 낱말 일치로만 찾았습니다.',
+  });
+  let sent: { role: string; content: string }[] = [];
+  vi.spyOn(stream, 'streamChat').mockImplementation(async (_endpoint, request, handlers) => {
+    sent = request.messages;
+    handlers.onToken?.('1억 원입니다 [1].');
+    return null;
+  });
+  await useChat.getState().openForTab(1, 'https://a.test');
+  await useChat.getState().send('사업 예산은?', DEFAULT_SETTINGS, { knowledge: true });
+
+  expect(gather).toHaveBeenCalledWith('사업 예산은?', expect.any(Number), expect.anything());
+  expect(gather.mock.calls[0]![1]).toBeGreaterThan(0);
+  const last = sent.at(-1)!;
+  expect(last.role).toBe('user');
+  expect(last.content).toContain('<my_knowledge>');
+  expect(last.content).toContain('예산은 1억 원이다.');
+  // 시스템 프롬프트는 건드리지 않는다(KV 캐시 접두사).
+  expect(sent[0]!.content).not.toContain('my_knowledge');
+
+  const [question, answer] = useChat.getState().messages;
+  expect(question!.content).toBe('사업 예산은?');
+  expect(answer!.sources).toEqual([expect.objectContaining({ n: 1, documentId: 'doc_1' })]);
+  expect(answer!.notice).toContain('낱말 일치');
+  const stored = await storage.listMessages(useChat.getState().conversation!.id);
+  expect(stored.find(m => m.role === 'user')!.content).toBe('사업 예산은?');
+  expect(stored.find(m => m.role === 'assistant')!.sources).toHaveLength(1);
+});
+
+it('내 지식을 쓸 수 없으면 근거 없이 답하되 그 사실을 답변에 남긴다', async () => {
+  vi.spyOn(knowledge, 'gatherKnowledge').mockResolvedValue({ evidence: [], sources: [], notice: '내 지식에서 관련 자료를 찾지 못해 근거 없이 답했습니다.' });
+  let last = '';
+  vi.spyOn(stream, 'streamChat').mockImplementation(async (_endpoint, request, handlers) => {
+    last = request.messages.at(-1)!.content;
+    handlers.onToken?.('답변');
+    return null;
+  });
+  await useChat.getState().openForTab(1, 'https://a.test');
+  await useChat.getState().send('질문', DEFAULT_SETTINGS, { knowledge: true });
+  expect(last).toBe('질문');
+  const answer = useChat.getState().messages.at(-1)!;
+  expect(answer.notice).toContain('찾지 못해');
+  expect(answer.sources).toBeUndefined();
+});
+
+it('내 지식을 켜지 않으면 검색하지 않는다', async () => {
+  const gather = vi.spyOn(knowledge, 'gatherKnowledge');
+  vi.spyOn(stream, 'streamChat').mockImplementation(async (_endpoint, _request, handlers) => { handlers.onToken?.('답변'); return null; });
+  await useChat.getState().openForTab(1, 'https://a.test');
+  await useChat.getState().send('질문', DEFAULT_SETTINGS);
+  expect(gather).not.toHaveBeenCalled();
 });
