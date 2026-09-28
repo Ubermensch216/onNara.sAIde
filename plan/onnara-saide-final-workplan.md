@@ -403,6 +403,8 @@ LlmJobQueue(공급자별)
 
 ## 7. 업무 지식 저장소
 
+> 2026-09-28: 문서 지식을 TONGDAL.ai에 두는 연동 계획이 나왔다. 이 절과 P4-1~P4-3의 범위는 [TONGDAL.ai 연동 작업계획서](tongdal-integration-workplan.md)의 결정 D4를 따른다.
+
 ### 7.1 컬렉션 구분
 
 | 종류 | 예 | 범위 | 기본 보관 |
