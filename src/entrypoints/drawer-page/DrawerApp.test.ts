@@ -632,3 +632,44 @@ it('실패 후 다시 읽기 버튼을 누르면 참고문서 조회를 재요�
   expect(document.body.textContent).toContain('필요하면 임시 탭이 열리고 자동으로 닫힙니다.');
   post.mockRestore();
 });
+
+it('본문 서식이 등록된 서식을 고르면 초안을 그 서식으로 미리 보여 주고, 본문 삽입 요청에 서식 묶음을 싣는다', async () => {
+  const template = {
+    id: 'tpl-format', title: '감리 보고 서식', documentType: '업무보고', description: '', sections: ['추진 배경'],
+    createdAt: 1, updatedAt: 1,
+    format: {
+      version: 1, source: { fileName: '감리.odt', kind: 'odt', sha256: '', importedAt: 1 }, docKind: 'report', boxes: [], headings: [], notes: [],
+      levels: [
+        { key: 'section', label: '□ 소제목', glyph: '\u{F03DA}', glyphs: ['\u{F03DA}'], sample: '', leadSpaces: 0, count: 2,
+          char: { font: 'HY견고딕', sizePt: 17, bold: false, spacingPct: 0, ratioPct: 100 },
+          para: { lineSpacingPct: 180, beforePt: 0, afterPt: 0, leftPt: 0, indentPt: 0, align: 'justify' } },
+        { key: 'item', label: '○ 항목', glyph: '❍', glyphs: ['❍'], sample: '', leadSpaces: 1, count: 5,
+          char: { font: '휴먼명조', sizePt: 16, bold: false, spacingPct: 0, ratioPct: 100 },
+          para: { lineSpacingPct: 170, beforePt: 0, afterPt: 0, leftPt: 0, indentPt: -28.3, align: 'left' } },
+      ],
+    },
+  };
+  vi.mocked(chrome.storage.local.get).mockImplementation((async (key: string) => (key === 'saide.draft_templates' ? { [key]: [template] } : {})) as never);
+  await act(() => root.render(createElement(DrawerApp)));
+  await settle();
+
+  window.postMessage({ type: 'SAIDE_SET_DRAFT_PREVIEW', templateId: 'tpl-format', draft: '1. 추진 배경\n가. 품질 확보' }, '*');
+  await settle();
+
+  const preview = document.querySelector('[aria-label="생성된 공문서 초안 본문"]')!;
+  expect(preview.textContent).toContain('[감리 보고 서식] 서식 적용 미리보기');
+  expect(preview.textContent).toContain('□ 추진 배경'); // 한컴 전용 □는 보이는 □로
+  expect(preview.textContent).toContain('❍ 품질 확보');
+
+  const post = vi.spyOn(window.parent, 'postMessage');
+  const insert = [...document.querySelectorAll('button')].find(b => b.textContent?.includes('본문에 삽입'));
+  await act(async () => { insert?.click(); });
+  await settle();
+  const call = post.mock.calls.find(c => (c[0] as { type?: string }).type === 'SAIDE_START_CLICK_TARGET');
+  expect(call?.[0]).toMatchObject({
+    type: 'SAIDE_START_CLICK_TARGET',
+    text: '\u{F03DA} 추진 배경\n ❍ 품질 확보',
+    styled: { paras: [expect.objectContaining({ font: 'HY견고딕', height: 1700 }), expect.objectContaining({ font: '휴먼명조', indent: -2830 })] },
+  });
+  post.mockRestore();
+});

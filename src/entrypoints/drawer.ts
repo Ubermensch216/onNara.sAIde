@@ -7,6 +7,14 @@
 
 import { captureDraftContext } from '@/lib/onnara/draft-context';
 import { resolveEditorAdapter, directInsertAtTarget, cleanupAccidentalContentEditable } from '@/lib/onnara/draft-editor';
+import type { StyledInsertPayload } from '@/lib/template-format/apply';
+
+/** 드로어(iframe)가 보낸 서식 묶음의 모양만 확인한다. 페이지 스크립트가 흉내 낸 메시지로 엉뚱한 값이 기안기에 가지 않게 한다. */
+function isStyledPayload(value: unknown): value is StyledInsertPayload {
+  const v = value as StyledInsertPayload | null;
+  return Boolean(v && Array.isArray(v.paras) && typeof v.html === 'string' && typeof v.text === 'string'
+    && v.paras.every(p => p && typeof p.text === 'string' && typeof p.height === 'number'));
+}
 import { DraftTransactionController } from '@/lib/onnara/draft-controller';
 import { findWriteBodyButton, isExactDraftPath } from '@/lib/onnara/draft-route';
 import { DRAWER_GAP_PX, applyPageLayoutShift } from '@/lib/onnara/drawer-layout';
@@ -745,6 +753,8 @@ export default defineUnlistedScript(() => {
   /* ── 🎯 Click-to-Insert 타깃 피커 모드 ── */
   let isPickingTarget = false;
   let pendingInsertText = '';
+  /** 서식관리에서 파일로 등록한 서식이 있을 때 함께 넘어오는 서식 묶음(기안기 서식 명령·HTML). */
+  let pendingStyled: StyledInsertPayload | undefined;
   let hoveredElement: HTMLElement | null = null;
   let originalOutline = '';
 
@@ -789,6 +799,7 @@ export default defineUnlistedScript(() => {
     }
 
     const textToInsert = pendingInsertText;
+    const styledToInsert = pendingStyled;
     const clickX = e.clientX;
     const clickY = e.clientY;
     stopTargetPicker();
@@ -796,7 +807,7 @@ export default defineUnlistedScript(() => {
     // 한컴 기안기 컨트롤이 마우스 클릭을 받아 포커스와 캐럿을 잡을 수 있도록 브라우저 틱(30ms) 양보 후 삽입
     setTimeout(async () => {
       // 1. WebHWP 메인 월드 API (HwpCtrl.PutFieldText("본문", ...) / InsertText / RunPaste) 및 DOM 삽입
-      const res = await directInsertAtTarget(targetEl, textToInsert, clickX, clickY, targetEl.ownerDocument || document);
+      const res = await directInsertAtTarget(targetEl, textToInsert, clickX, clickY, targetEl.ownerDocument || document, styledToInsert);
 
       // 2. 포커스된 요소에 클립보드 붙여넣기(Paste) 이벤트 자동 트리거
       // ★ 중요: directInsertAtTarget에서 이미 'applied'로 직접 삽입된 경우 중복 붙여넣기를 절대 수행하지 않는다!
@@ -863,12 +874,13 @@ export default defineUnlistedScript(() => {
     }
   }
 
-  function startTargetPicker(text: string) {
+  function startTargetPicker(text: string, styled?: StyledInsertPayload) {
     // 이전에 우발적으로 레이아웃 div에 걸렸을 수 있는 contenteditable 정리
     cleanupAccidentalContentEditable(document);
 
     isPickingTarget = true;
     pendingInsertText = text;
+    pendingStyled = styled;
     targetBanner.classList.add('active');
 
     // 기안기 문서들에 캡처 리스너 등록
@@ -885,6 +897,7 @@ export default defineUnlistedScript(() => {
     if (!isPickingTarget) return;
     isPickingTarget = false;
     pendingInsertText = '';
+    pendingStyled = undefined;
     clearHoverOutline();
     targetBanner.classList.remove('active');
 
@@ -977,7 +990,7 @@ export default defineUnlistedScript(() => {
       }
     } else if (msg.type === 'SAIDE_START_CLICK_TARGET' && msg.text) {
       // 🎯 클릭 지정 삽입 모드 시작
-      startTargetPicker(msg.text);
+      startTargetPicker(msg.text, isStyledPayload(msg.styled) ? msg.styled : undefined);
     } else if (msg.type === 'SAIDE_CANCEL_CLICK_TARGET') {
       stopTargetPicker();
     } else if (msg.type === 'DRAFT_FETCH_RELATED_DOC' && msg.doc) {

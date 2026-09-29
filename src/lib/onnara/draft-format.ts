@@ -56,10 +56,11 @@ export function createDomFragmentFromText(doc: Document, text: string): Document
 /**
  * 텍스트와 서식 있는 HTML을 클립보드에 동시 복사하여 일반 메모장부터 한컴, 워드, 웹 에디터까지 서식을 완벽하게 보존합니다.
  */
-export async function copyDraftToClipboard(text: string): Promise<boolean> {
+export async function copyDraftToClipboard(text: string, styled?: { text: string; html: string }): Promise<boolean> {
   if (!text) return false;
-  const clean = cleanAdminDraft(text);
-  const html = draftToHtml(clean);
+  // 서식관리에서 등록한 서식이 있으면 그 서식(글꼴·크기·단계별 들여쓰기)을 입힌 HTML로 복사한다.
+  const clean = styled ? styled.text : cleanAdminDraft(text);
+  const html = styled ? styled.html : draftToHtml(clean);
 
   try {
     if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {

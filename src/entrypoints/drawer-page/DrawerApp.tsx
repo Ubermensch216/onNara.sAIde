@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { loadSettings, DEFAULT_SETTINGS, type Settings } from '@/lib/storage/settings';
 import { cleanAdminDraft } from '@/lib/onnara/draft-cleaner';
 import { copyDraftToClipboard } from '@/lib/onnara/draft-format';
@@ -30,6 +30,8 @@ import {
 } from '@/lib/storage/draft-templates';
 import type { UserRef } from '@/lib/storage/user-refs';
 import { TemplateManager } from './components/TemplateManager';
+import { StyledDraftPreview } from './components/StyledDraftPreview';
+import { buildStyledInsert, formatHierarchyPrompt, layoutDraft } from '@/lib/template-format/apply';
 import { MaterialIcon } from './components/MaterialIcon';
 import { ReferencePicker, onnaraKey, uploadKey } from './components/ReferencePicker';
 import { tongdalKey, type TongdalRef } from './components/TongdalRefGroup';
@@ -143,6 +145,14 @@ export function DrawerApp() {
   }, []);
 
   const selectedTemplate = templates.find((t) => t.id === selectedTemplateId) || null;
+  const selectedFormat = selectedTemplate?.format;
+
+  // 서식관리에서 파일로 등록한 본문 서식이 있으면, 초안에 그 서식을 입힌 모양(미리보기·삽입·복사)을 만든다.
+  const styledParas = useMemo(
+    () => (selectedFormat && generatedDraft ? layoutDraft(cleanAdminDraft(generatedDraft), selectedFormat) : null),
+    [selectedFormat, generatedDraft],
+  );
+  const buildStyled = (clean: string) => (selectedFormat ? buildStyledInsert(clean, selectedFormat) : undefined);
 
   const selectedOnnara = relatedDocs.filter((doc) => selectedKeys.includes(onnaraKey(doc)));
   const selectedUploads = selectedKeys
@@ -263,9 +273,12 @@ export function DrawerApp() {
 
   const copyToClipboard = async () => {
     if (!generatedDraft) return;
-    const ok = await copyDraftToClipboard(generatedDraft);
+    const styled = buildStyled(cleanAdminDraft(generatedDraft));
+    const ok = await copyDraftToClipboard(generatedDraft, styled);
     if (ok) {
-      setStatusMsg('공문서 표준 서식으로 복사되었습니다. (Ctrl+V로 붙여넣기)');
+      setStatusMsg(styled
+        ? `[${selectedTemplate?.title}] 서식을 입혀 복사했습니다. (Ctrl+V로 붙여넣기)`
+        : '공문서 표준 서식으로 복사되었습니다. (Ctrl+V로 붙여넣기)');
       setTimeout(() => setStatusMsg(''), 2800);
     } else {
       setStatusMsg('복사 실패');
@@ -484,6 +497,10 @@ export function DrawerApp() {
       if (selectedTemplate.guidance) {
         systemPrompt += ` 서식 준수 지침: ${selectedTemplate.guidance}`;
       }
+      if (selectedTemplate.format) {
+        const hierarchy = formatHierarchyPrompt(selectedTemplate.format);
+        if (hierarchy) systemPrompt += ` ${hierarchy}`;
+      }
     }
 
     if (hasFact || !sources.length) {
@@ -589,9 +606,10 @@ export function DrawerApp() {
   const handleStartClickTarget = async () => {
     if (!generatedDraft) return;
     const clean = cleanAdminDraft(generatedDraft);
-    await copyDraftToClipboard(clean);
+    const styled = buildStyled(clean);
+    await copyDraftToClipboard(clean, styled);
     setIsTargetSelecting(true);
-    window.parent.postMessage({ type: 'SAIDE_START_CLICK_TARGET', text: clean }, '*');
+    window.parent.postMessage({ type: 'SAIDE_START_CLICK_TARGET', text: styled?.text ?? clean, ...(styled ? { styled } : {}) }, '*');
     setStatusMsg('기안기 화면에서 초안을 넣을 위치를 클릭하세요. (Esc: 취소)');
   };
 
@@ -1098,9 +1116,11 @@ export function DrawerApp() {
                     <div
                       tabIndex={0}
                       aria-label="생성된 공문서 초안 본문"
-                      className="p-3.5 bg-white border border-slate-300 rounded-lg shadow-2xs whitespace-pre-wrap leading-[1.72] min-h-[180px] max-h-[380px] overflow-y-auto select-text font-sans text-slate-800 text-xs sm:text-sm tracking-tight focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className={`p-3.5 bg-white border border-slate-300 rounded-lg shadow-2xs min-h-[180px] max-h-[380px] overflow-y-auto select-text text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 ${styledParas ? '' : 'whitespace-pre-wrap leading-[1.72] font-sans text-xs sm:text-sm tracking-tight'}`}
                     >
-                      {generatedDraft}
+                      {styledParas && selectedTemplate
+                        ? <StyledDraftPreview paras={styledParas} templateTitle={selectedTemplate.title} />
+                        : generatedDraft}
                     </div>
                   </div>
                 )}

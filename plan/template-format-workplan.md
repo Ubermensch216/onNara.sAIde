@@ -145,8 +145,15 @@ interface LevelStyle {
    - 단위 테스트 `template-format.test.ts` 12건(합성 파일만 사용)
 2. ✅ **2단계 — 서식관리 등록 화면** (2026-09-29 완료): `TemplateManager.tsx` [파일에서 가져오기] → **"서식을 분석합니다."** 안내(최소 0.7초) → 등록 창(분석값 채움 · `TemplateFormatEditor.tsx`에서 단계별 수정 · 미리보기) → 저장(원본 예시 문장 삭제) · 카드에 서식 요약
    - `DraftTemplate.format` 선택 필드 추가(기존 서식 호환). 화면 테스트 `TemplateManager.test.ts` 4건
-3. **3단계 — P0 기안기 진단**: `background.ts` 변경이 정리된 뒤 진행. 사용자가 기안기 화면을 열어야 한다
-4. **4단계 — 적용 엔진(P2)** → **5단계 — 상자 요소(P3)** → **6단계 — 요청문·문서(P4)**
+3. ✅ **3·4단계 — 적용 엔진 + 자동 진단** (2026-09-29 구현, 실환경 확인 대기)
+   - `template-format/apply.ts`: 초안 → 서식 단계 대응(같은 단계 우선, 없으면 깊이로) → 기호·앞 칸·번호(1. 가. ① Ⅰ 󰊱 이어 매김) → 글자·문단 서식. 명령용(HWPUNIT)·HTML·글자 세 형태로 직렬화
+   - `background.ts` `handleMainWorldHwpInsert(tabId, text, styled)`: ① 첫 문단에 ParaShape·CharShape → 글자 모양을 다시 읽어 확인되면 문단마다 서식 삽입(`StyledShapeActions`) ② 안 되면 `SetTextFile(html,'HTML','insertfile')` ③ 그래도 안 되면 기호·앞 칸만 맞춘 글자. 결과에 `method`·`styleCheck`·`capabilities`(기안기 API 목록)를 담아 돌려준다 → 별도 진단 버튼 없이 **첫 실제 삽입이 곧 P0 진단**
+   - 드로어: 서식 선택 시 생성 결과를 서식 적용 모양으로 미리보기(`StyledDraftPreview`), [본문에 삽입]·[초안 복사]에 서식 묶음을 실어 보냄. 삽입 안내 문구에 결과를 붙임("등록한 서식 적용됨" / "HTML로 삽입" / "기호·들여쓰기만"). 웹 편집기(contenteditable)에는 서식 있는 HTML
+   - 테스트: `apply.test.ts` 10건, `hwp-styled-insert.test.ts` 4건(가짜 기안기로 ①②③ 내림 순서 검증), `draft-editor-styled.test.ts` 3건, `DrawerApp.test.ts` 1건
+4. ✅ **5단계 — 상자 요소** (부분): HTML 경로에서 제목 상자·Ⅰ 대제목 막대를 표로 그린다. 서식 명령 경로에서는 "Ⅰ. 추진 배경" 한 줄(대제목 글자 서식)로 넣는다. 요약 상자는 AI 초안에 해당 문단이 없어 적용하지 않는다
+5. ✅ **6단계 — 요청문**: 서식이 있으면 `formatHierarchyPrompt`로 단계 기호 체계(예: □ → ○ → -, Ⅰ. → ◎ → ○)를 시스템 요청문에 추가. 한컴 전용 문자는 일반 문자로 알리고 삽입 때 되돌린다
+
+**남은 확인(사용자 실환경)**: 온나라 기안기 본문작성 화면에서 서식을 고르고 [본문에 삽입] → 안내 문구와, 개발자 도구 콘솔의 `[sAIde] 서식 적용 삽입 결과` 객체(method·styleCheck·capabilities)를 확인한다. 결과에 따라 ParaShape 단위(HWPUNIT 배수)·HTML 경로 우선순위를 조정한다.
 
 ## 5. 위험 요소
 

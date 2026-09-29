@@ -1,4 +1,6 @@
 import { readTemporaryReference } from '@/lib/onnara/temporary-reference';
+import type { HwpInsertResult } from '@/lib/onnara/draft-editor';
+import type { StyledInsertPayload } from '@/lib/template-format/apply';
 import { readOpenReferenceFrame } from '@/lib/onnara/open-reference';
 import { assertCurrent, captureTab, trustedPanel, validPanelRequest } from '@/lib/browser/guards';
 import { committedSince, duplicateWorkTab, forgetWorkTab, panelTab, registerWorkTabListeners, tabsSpawnedBy, workTabs } from '@/lib/browser/work-tabs';
@@ -81,15 +83,16 @@ async function maybeAttachDraftDrawer(tabId: number, frameId: number, url?: stri
  * 한컴 웹기안기(HwpCtrl) 객체를 찾아 누름틀('본문') 또는 커서 위치에 초안을 삽입한다.
  * CSP의 인라인 스크립트 차단 정책을 완전히 우회한다.
  */
-async function handleMainWorldHwpInsert(
+export async function handleMainWorldHwpInsert(
   tabId: number,
-  text: string
-): Promise<{ success: boolean; method?: string; fieldName?: string; error?: string }> {
+  text: string,
+  styled?: StyledInsertPayload
+): Promise<HwpInsertResult> {
   try {
     const results = await chrome.scripting.executeScript({
       target: { tabId, allFrames: true },
       world: 'MAIN',
-      func: (draftText: string) => {
+      func: async (draftText: string, styledPayload: StyledInsertPayload | null) => {
         try {
           function findHwp() {
             var w = window as any;
@@ -187,11 +190,161 @@ async function handleMainWorldHwpInsert(
             return any;
           }
 
+          /*
+           * 서식 적용 삽입(서식관리에서 파일로 등록한 서식이 있을 때).
+           * ★ 온나라 웹기안기가 어떤 명령을 지원하는지 확인되지 않았다. 그래서 되는 방식부터 차례로 시도하고,
+           *   쓴 방식과 확인 결과(capabilities·styleCheck)를 돌려줘 실환경에서 판정할 수 있게 한다.
+           *   1) 문단마다 ParaShape·CharShape 명령 → 첫 문단에서 글자 모양을 다시 읽어 적용됐는지 확인
+           *   2) 서식 있는 HTML 끼워 넣기(SetTextFile 'insertfile')
+           *   3) 글자만(기호·앞 칸은 서식대로 맞춘 글자)
+           */
+          if (styledPayload && styledPayload.paras && styledPayload.paras.length) {
+            var capNames = ['CreateAction', 'HAction', 'HParameterSet', 'SetTextFile', 'GetTextFile', 'InsertText', 'Run', 'MoveToField', 'FieldExist', 'PutFieldText'];
+            var capabilities = capNames.filter(function (n) { return h[n] !== undefined && h[n] !== null; });
+            var FACES = ['Hangul', 'Latin', 'Hanja', 'Japanese', 'Other', 'Symbol', 'User'];
+
+            var applyShapes = function (hwp: any, p: any): boolean {
+              if (typeof hwp.CreateAction === 'function') {
+                var pa = hwp.CreateAction('ParaShape');
+                var ps = pa.CreateSet();
+                pa.GetDefault(ps);
+                ps.SetItem('LineSpacingType', 0);
+                ps.SetItem('LineSpacing', p.lineSpacing);
+                ps.SetItem('PrevSpacing', p.prev);
+                ps.SetItem('NextSpacing', p.next);
+                ps.SetItem('LeftMargin', p.left);
+                ps.SetItem('Indentation', p.indent);
+                ps.SetItem('AlignType', p.align);
+                var okP = pa.Execute(ps) !== false;
+                var ca = hwp.CreateAction('CharShape');
+                var cs = ca.CreateSet();
+                ca.GetDefault(cs);
+                for (var k = 0; k < FACES.length; k++) {
+                  if (p.font) { cs.SetItem('FaceName' + FACES[k], p.font); cs.SetItem('FontType' + FACES[k], 1); }
+                  cs.SetItem('Spacing' + FACES[k], p.spacing);
+                  cs.SetItem('Ratio' + FACES[k], p.ratio);
+                }
+                cs.SetItem('Height', p.height);
+                cs.SetItem('Bold', p.bold ? 1 : 0);
+                var okC = ca.Execute(cs) !== false;
+                return okP || okC;
+              }
+              if (hwp.HAction && hwp.HParameterSet) {
+                var HP = hwp.HParameterSet;
+                hwp.HAction.GetDefault('ParaShape', HP.HParaShape.HSet);
+                HP.HParaShape.LineSpacingType = 0;
+                HP.HParaShape.LineSpacing = p.lineSpacing;
+                HP.HParaShape.PrevSpacing = p.prev;
+                HP.HParaShape.NextSpacing = p.next;
+                HP.HParaShape.LeftMargin = p.left;
+                HP.HParaShape.Indentation = p.indent;
+                HP.HParaShape.AlignType = p.align;
+                var okP2 = hwp.HAction.Execute('ParaShape', HP.HParaShape.HSet) !== false;
+                hwp.HAction.GetDefault('CharShape', HP.HCharShape.HSet);
+                for (var k2 = 0; k2 < FACES.length; k2++) {
+                  if (p.font) { HP.HCharShape['FaceName' + FACES[k2]] = p.font; HP.HCharShape['FontType' + FACES[k2]] = 1; }
+                  HP.HCharShape['Spacing' + FACES[k2]] = p.spacing;
+                  HP.HCharShape['Ratio' + FACES[k2]] = p.ratio;
+                }
+                HP.HCharShape.Height = p.height;
+                HP.HCharShape.Bold = p.bold ? 1 : 0;
+                var okC2 = hwp.HAction.Execute('CharShape', HP.HCharShape.HSet) !== false;
+                return okP2 || okC2;
+              }
+              return false;
+            };
+
+            /** 지금 커서의 글자 모양(크기·글꼴)을 읽는다. 명령이 실제로 먹었는지 확인하는 데 쓴다. */
+            var readCharShape = function (hwp: any): { height: number; face: string } | null {
+              try {
+                if (typeof hwp.CreateAction === 'function') {
+                  var a = hwp.CreateAction('CharShape');
+                  var st = a.CreateSet();
+                  a.GetDefault(st);
+                  return { height: Number(st.Item('Height')), face: String(st.Item('FaceNameHangul') || '') };
+                }
+                if (hwp.HAction && hwp.HParameterSet) {
+                  hwp.HAction.GetDefault('CharShape', hwp.HParameterSet.HCharShape.HSet);
+                  return { height: Number(hwp.HParameterSet.HCharShape.Height), face: String(hwp.HParameterSet.HCharShape.FaceNameHangul || '') };
+                }
+              } catch (e) {}
+              return null;
+            };
+
+            var insertOne = function (hwp: any, str: string): boolean {
+              if (!str) return true;
+              if (typeof hwp.InsertText === 'function') { hwp.InsertText(str); return true; }
+              if (typeof hwp.CreateAction === 'function') {
+                var ia = hwp.CreateAction('InsertText');
+                var iset = ia.CreateSet();
+                iset.SetItem('Text', str);
+                ia.Execute(iset);
+                return true;
+              }
+              return false;
+            };
+
+            var breakPara = function (hwp: any) {
+              if (typeof hwp.Run === 'function') hwp.Run('BreakPara');
+              else if (hwp.HAction && typeof hwp.HAction.Run === 'function') hwp.HAction.Run('BreakPara');
+            };
+
+            var paras = styledPayload.paras;
+            // 1) 서식 명령: 글자를 넣기 전에 첫 문단 서식만 걸어 보고 다시 읽어 확인한다(실패해도 본문은 그대로).
+            var styleCheck = 'none';
+            try {
+              if (applyShapes(h, paras[0])) {
+                var back = readCharShape(h);
+                var first = paras[0]!;
+                if (back && back.height === first.height && (!first.font || back.face === first.font)) styleCheck = 'verified';
+                else if (back) styleCheck = 'mismatch';
+                else styleCheck = 'unverified';
+              }
+            } catch (e) { styleCheck = 'error:' + String(e).slice(0, 80); }
+
+            if (styleCheck === 'verified' || styleCheck === 'unverified') {
+              try {
+                for (var pi = 0; pi < paras.length; pi++) {
+                  if (pi > 0) { breakPara(h); applyShapes(h, paras[pi]); }
+                  insertOne(h, paras[pi]!.text);
+                }
+                return { success: true, method: 'StyledShapeActions', styleCheck: styleCheck, capabilities: capabilities };
+              } catch (e) { styleCheck = 'error:' + String(e).slice(0, 80); }
+            }
+
+            // 2) 서식 있는 HTML 끼워 넣기. 웹기안기는 콜백으로 끝을 알린다(설치형은 즉시 true/false).
+            if (typeof h.SetTextFile === 'function' && styledPayload.html) {
+              try {
+                var htmlDoc = '<html><head><meta charset="utf-8"></head><body>' + styledPayload.html + '</body></html>';
+                var htmlResult: any = await new Promise(function (resolve) {
+                  var settled = false;
+                  var done = function (v: any) { if (!settled) { settled = true; resolve(v); } };
+                  try {
+                    var ret = h.SetTextFile(htmlDoc, 'HTML', 'insertfile', function (r: any) { done(r === undefined ? true : r); });
+                    if (ret === true || ret === false) done(ret);
+                  } catch (e2) { done(false); }
+                  setTimeout(function () { done('timeout'); }, 4000);
+                });
+                if (htmlResult && htmlResult !== 'timeout' && htmlResult !== 0) {
+                  return { success: true, method: 'SetTextFileHtml', styleCheck: styleCheck, capabilities: capabilities };
+                }
+              } catch (e) {}
+            }
+
+            // 3) 글자만: 기호·앞 칸만 서식대로 맞춘 글자를 아래 기존 경로로 넣는다.
+            draftText = styledPayload.text || draftText;
+            h.__saide_style_note = { styleCheck: styleCheck, capabilities: capabilities };
+          }
+
           // 1. 현재 커서 위치 직접 입력 (줄바꿈 보존 BreakPara 적용)
           if (typeof h.InsertText === 'function' || typeof h.CreateAction === 'function') {
             try {
               if (insertLines(h, draftText)) {
-                return { success: true, method: 'InsertLinesWithBreakPara' };
+                var note = h.__saide_style_note;
+                h.__saide_style_note = undefined;
+                return note
+                  ? { success: true, method: 'InsertLinesWithBreakPara', styleCheck: 'text-only', styleDetail: note.styleCheck, capabilities: note.capabilities }
+                  : { success: true, method: 'InsertLinesWithBreakPara' };
               }
             } catch (e) {}
           }
@@ -228,12 +381,12 @@ async function handleMainWorldHwpInsert(
           return { success: false, error: String(err) };
         }
       },
-      args: [text],
+      args: [text, styled ?? null],
     });
 
     for (const r of results ?? []) {
       if (r?.result?.success) {
-        return r.result;
+        return r.result as HwpInsertResult;
       }
     }
     return { success: false, error: 'NO_FRAME_SUCCESS' };
@@ -1037,7 +1190,7 @@ export default defineBackground(() => {
     if (msg && typeof msg === 'object' && (msg as any).type === 'DRAFT_MAIN_WORLD_HWP_INSERT') {
       const tabId = sender.tab?.id;
       if (tabId) {
-        handleMainWorldHwpInsert(tabId, String((msg as any).text || ''))
+        handleMainWorldHwpInsert(tabId, String((msg as any).text || ''), (msg as any).styled || undefined)
           .then(res => sendResponse(res))
           .catch(err => sendResponse({ success: false, error: String(err) }));
         return true;

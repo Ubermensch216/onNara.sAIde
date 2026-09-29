@@ -10,6 +10,32 @@ import { computeRevisionHash } from './draft-context';
 import type { InsertMode } from '../messaging/draft-protocol';
 import { findWriteBodyButton } from './draft-route';
 import { draftToHtml, createDomFragmentFromText, insertMultilineIntoHwp } from './draft-format';
+import type { StyledInsertPayload } from '../template-format/apply';
+
+/** 메인 월드 한글 기안기 삽입 결과. 서식 적용을 시도했으면 styleCheck·capabilities가 붙는다. */
+export interface HwpInsertResult {
+  success: boolean;
+  method?: string;
+  fieldName?: string;
+  error?: string;
+  /**
+   * verified = 서식 명령 적용을 다시 읽어 확인, unverified = 명령은 실행했으나 확인 불가,
+   * text-only = 서식 명령을 못 써 글자만 넣음, none·mismatch·error:… = 서식 명령 실패 사유
+   */
+  styleCheck?: string;
+  styleDetail?: string;
+  /** 기안기 객체에 있던 API 이름(실환경 진단용). */
+  capabilities?: string[];
+}
+
+/** 삽입 결과 안내 문구에 붙일 서식 적용 결과. */
+export function describeStyleResult(res: HwpInsertResult): string {
+  if (!res.styleCheck) return '';
+  if (res.method === 'StyledShapeActions' && res.styleCheck === 'verified') return ' (등록한 서식 적용됨)';
+  if (res.method === 'StyledShapeActions') return ' (서식 명령 실행 — 적용 여부를 본문에서 확인해 주세요)';
+  if (res.method === 'SetTextFileHtml') return ' (서식 있는 HTML로 삽입 — 글꼴·간격을 본문에서 확인해 주세요)';
+  return ' (기안기가 서식 명령을 받지 않아 기호·들여쓰기만 맞춘 글자로 삽입)';
+}
 
 export type EditorCapability = 'read-only' | 'copy-only' | 'cursor' | 'selection' | 'append';
 
@@ -288,6 +314,8 @@ export interface TargetInsertResult {
   status: 'applied' | 'clipboard-fallback' | 'failed';
   targetLabel: string;
   message: string;
+  /** 한글 기안기에 넣었을 때의 방식·서식 적용 결과(진단용). */
+  hwp?: HwpInsertResult;
 }
 
 /** 실제 텍스트 입력이 가능한 요소인지 판별 (일반 레이아웃 div 등 제외) */
@@ -508,14 +536,16 @@ export function tryApplyHwpCtrl(
  */
 export async function insertViaMainWorldHwp(
   text: string,
-  doc: Document = document
-): Promise<{ success: boolean; method?: string; fieldName?: string; error?: string }> {
+  doc: Document = document,
+  styled?: StyledInsertPayload
+): Promise<HwpInsertResult> {
   // 1. 서비스 워커(background.ts)를 통해 CSP를 우회하고 모든 프레임의 메인 월드에서 HwpCtrl 실행 (최우선)
   if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
     try {
       const resp = await chrome.runtime.sendMessage({
         type: 'DRAFT_MAIN_WORLD_HWP_INSERT',
         text,
+        ...(styled ? { styled } : {}),
       });
       if (resp && resp.success) {
         return resp;
@@ -863,7 +893,8 @@ export async function directInsertAtTarget(
   text: string,
   clientX?: number,
   clientY?: number,
-  doc: Document = document
+  doc: Document = document,
+  styled?: StyledInsertPayload
 ): Promise<TargetInsertResult> {
   const activeEl = target || (doc.activeElement as HTMLElement | null) || doc.body;
   const targetLabel = activeEl ? getElementLabel(activeEl) : '기안기 본문';
@@ -879,13 +910,15 @@ export async function directInsertAtTarget(
 
   if (isHwpCandidate) {
     try {
-      const hwpRes = await insertViaMainWorldHwp(text, ownerDoc);
+      const hwpRes = await insertViaMainWorldHwp(text, ownerDoc, styled);
       if (hwpRes.success) {
         const label = hwpRes.fieldName ? `한글 기안기 본문(${hwpRes.fieldName})` : '한글 기안기 본문';
+        if (hwpRes.styleCheck) console.info('[sAIde] 서식 적용 삽입 결과', hwpRes);
         return {
           status: 'applied',
           targetLabel: label,
-          message: `${label}에 초안이 삽입되었습니다.`,
+          message: `${label}에 초안이 삽입되었습니다.${describeStyleResult(hwpRes)}`,
+          ...(hwpRes.styleCheck ? { hwp: hwpRes } : {}),
         };
       }
     } catch (e) {
@@ -911,7 +944,7 @@ export async function directInsertAtTarget(
           iframeDoc.querySelector<HTMLElement>('[contenteditable="true"], [contenteditable=""], [contenteditable]') ||
           iframeDoc.body;
         if (innerTarget) {
-          return directInsertAtTarget(innerTarget, text, clientX, clientY, iframeDoc);
+          return directInsertAtTarget(innerTarget, text, clientX, clientY, iframeDoc, styled);
         }
       }
     } catch {
@@ -982,7 +1015,7 @@ export async function directInsertAtTarget(
       }
     }
 
-    const html = draftToHtml(text);
+    const html = styled?.html ?? draftToHtml(text);
     try {
       if (ownerDoc.queryCommandSupported && ownerDoc.queryCommandSupported('insertHTML')) {
         applied = ownerDoc.execCommand('insertHTML', false, html);
