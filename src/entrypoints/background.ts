@@ -2196,7 +2196,10 @@ const LOCATE_BUDGET_TOKENS = 1000;
 
 /** `읽기처리`를 누른 뒤 목록이 결과를 보일 때까지 기다리는 한도. */
 const MARK_READ_WAIT_MS = 12_000;
-const MARK_READ_POLL_MS = 700;
+/** 한 번에 목록 프레임 하나와 알림 글만 읽으므로 짧게 돈다. */
+const MARK_READ_POLL_MS = 400;
+/** 완료 알림이 뜨지 않는 판본에서 처음 서버 목록에 묻기까지 기다리는 시간. 알림이 뜨면 바로 묻는다. */
+const MARK_READ_FIRST_SERVER_CHECK_MS = 1_500;
 /** 화면 목록이 스스로 다시 그려지지 않을 때, 서버 목록으로 결과를 다시 묻는 간격. */
 const MARK_READ_SERVER_CHECK_MS = 3_000;
 
@@ -2220,9 +2223,6 @@ export async function markDocumentsRead(tabId: number, titles: string[], control
   const taskControl: RequestControl = { ...control, expectedUrl: undefined };
   const saved = await loadInboxLocation();
   const serverTab = saved ? (await findOnnaraTab(tabId, saved.origin))?.id : undefined;
-  const readServerList = async () => saved && serverTab !== undefined
-    ? readInboxList(serverTab, saved, taskControl).catch(() => null)
-    : null;
   const found = await dispatchContent(tabId, { type: 'EXTRACT', budgetTokens: LOCATE_BUDGET_TOKENS, purpose: 'page', targetTitle: titles[0], control: taskControl });
   if (found.type === 'FAILED') return { type: 'ERROR', error: found.error };
   // 현재 화면에서 이미 열람(read) 상태인 문서는 온나라 버튼을 다시 누를 필요 없이 바로 완료로 본다.
@@ -2302,11 +2302,16 @@ export async function markDocumentsRead(tabId: number, titles: string[], control
   const marked: string[] = [];
   let dialogs: string[] = [];
   const serverStillUnread = new Set<string>();
-  /** 판정할 수 없던 문서. 열람 칸이 없는 목록이면 행이 남아 있어도 열람인지 알 수 없다. */
-  const settle = (rows: StructuredDocumentList['rows'], complete: boolean) => {
+  /**
+   * 판정할 수 없던 문서는 `pending`에 남긴다. 열람 칸이 없는 목록이면 행이 남아 있어도 열람인지 알 수 없다.
+   *
+   * ★ 서버 목록에서 찾은 행이 미열람이면 그것은 서버의 말이다 — 목록을 끝까지 읽지 않았어도 미열람이다.
+   *   화면 행은 다시 그려지지 않은 옛 행일 수 있으므로 그렇게 보지 않는다.
+   */
+  const settle = (rows: StructuredDocumentList['rows'], from: 'screen' | 'server', complete: boolean) => {
     for (const title of [...pending]) {
       const row = rows.find(item => item.title && sameDocumentTitle(item.title, title));
-      if (complete && row && documentReadState(row) === 'unread') serverStillUnread.add(title);
+      if (from === 'server' && row && documentReadState(row) === 'unread') serverStillUnread.add(title);
       // 미열람 목록에서 빠졌거나, 열람 여부가 명시적으로 열람으로 바뀌었다.
       // 일반 처리 상태('담당확인' 등)는 documentReadState가 열람으로 보지 않는다.
       // 행이 없다는 것은 목록 전체를 읽었을 때만 근거가 된다 — 화면 목록은 한 페이지뿐이다.
@@ -2316,28 +2321,65 @@ export async function markDocumentsRead(tabId: number, titles: string[], control
       }
     }
   };
-  const until = Math.min(Date.now() + MARK_READ_WAIT_MS, taskControl.deadline - 2000);
-  let serverCheckedAt = Date.now();
+  const canAskServer = Boolean(saved) && serverTab !== undefined;
+  /**
+   * 저장된 조회 요청으로 서버 목록을 다시 받아 대조한다.
+   *
+   * ★ 남은 문서의 행을 모두 찾으면 나머지 페이지는 받지 않는다. 행의 열람 칸이 곧 답이다.
+   *   행이 없다는 것을 근거로 삼으려면 끝까지 읽어야 하므로 그때는 전부 받는다.
+   */
+  const askServer = async (): Promise<boolean> => {
+    if (!saved || serverTab === undefined) return false;
+    const server = await scanInboxList(serverTab, saved, taskControl, rows =>
+      [...pending].every(title => rows.some(row => row.title && sameDocumentTitle(row.title, title))))
+      .catch(() => null);
+    if (!server) return false;
+    // 앞서 미열람이라던 말은 서버가 처리하기 전에 들은 것일 수 있다. 가장 최근의 답만 남긴다.
+    serverStillUnread.clear();
+    settle(server.list.rows, 'server', server.complete);
+    return true;
+  };
+  const succeeded = () => !dialogs.some(message => READ_FAILURE_PATTERN.test(message)) &&
+    dialogs.some(message => READ_SUCCESS_PATTERN.test(message));
+
+  const clickedAt = Date.now();
+  const until = Math.min(clickedAt + MARK_READ_WAIT_MS, taskControl.deadline - 2000);
+  let serverCheckedAt = 0;
+  let askedAfterSuccess = false;
   while (pending.size && Date.now() < until && !cancelled.has(control.id)) {
     await delay(MARK_READ_POLL_MS);
-    dialogs = await frameDialogs(tabId, buttonFrameId, dialogs, taskControl);
+    // 알림 글과 화면 목록은 서로 기다릴 이유가 없다. 화면은 목록 프레임 하나만 다시 읽는다 —
+    // 모든 프레임을 읽는 추출은 한 번에 수백 ms~수 초가 들고, 느린 프레임 하나가 전체를 붙잡는다.
+    const [nextDialogs, list] = await Promise.all([
+      frameDialogs(tabId, buttonFrameId, dialogs, taskControl),
+      sendToFrame(tabId, frameId, { type: 'EXTRACT', budgetTokens: LOCATE_BUDGET_TOKENS, purpose: 'page', control: taskControl }),
+    ]);
+    dialogs = nextDialogs;
     if (dialogs.some(message => READ_FAILURE_PATTERN.test(message))) break;
-    const list = await dispatchContent(tabId, { type: 'EXTRACT', budgetTokens: LOCATE_BUDGET_TOKENS, purpose: 'page', control: taskControl });
     const rows = list.type === 'EXTRACTED' ? list.payload.structuredData?.rows : undefined;
-    if (rows) settle(rows, false);
-    if (pending.size && Date.now() - serverCheckedAt >= MARK_READ_SERVER_CHECK_MS) {
+    if (rows) settle(rows, 'screen', false);
+    if (!pending.size) break;
+    // 온나라가 완료를 알렸는데 서버에 물을 길이 없으면, 더 기다려도 나올 근거가 없다.
+    // 아래의 완료 알림 판정으로 바로 넘어간다(기다린 뒤에 하던 판정과 같다).
+    if (succeeded() && !canAskServer) break;
+    // 완료 알림은 서버 응답 뒤에 뜬다. 그 순간 바로 서버 목록에 묻고, 알림이 없는 판본이면
+    // 조금 기다렸다가 묻는다. 서버 목록은 여러 페이지일 수 있어 매번 묻지는 않는다.
+    const due = serverCheckedAt
+      ? Date.now() - serverCheckedAt >= MARK_READ_SERVER_CHECK_MS
+      : Date.now() - clickedAt >= MARK_READ_FIRST_SERVER_CHECK_MS;
+    const justSucceeded = succeeded() && !askedAfterSuccess;
+    if (due || justSucceeded) {
+      askedAfterSuccess ||= succeeded();
       serverCheckedAt = Date.now();
-      const server = await readServerList();
-      if (server) settle(server.rows, true);
+      await askServer();
     }
   }
   // 마지막으로 한 번 더 서버 목록에 묻는다. 버튼을 누른 뒤 서버가 늦게 처리하는 경우가 있다.
-  if (pending.size && !cancelled.has(control.id) && Date.now() < taskControl.deadline - 1000) {
-    const server = await readServerList();
-    if (server) settle(server.rows, true);
+  if (pending.size && canAskServer && !cancelled.has(control.id) && Date.now() < taskControl.deadline - 1000) {
+    await askServer();
   }
   // 목록이 스스로 다시 그려지지 않는 판본이 있다. 온나라가 완료를 알렸다면 그 말을 믿는다.
-  if (pending.size && !dialogs.some(message => READ_FAILURE_PATTERN.test(message)) && dialogs.some(message => READ_SUCCESS_PATTERN.test(message))) {
+  if (pending.size && succeeded()) {
     for (const title of [...pending]) {
       if (serverStillUnread.has(title)) continue;
       marked.push(title);
@@ -2423,6 +2465,20 @@ async function readInboxList(
   saved: NonNullable<Awaited<ReturnType<typeof loadInboxLocation>>>,
   control: RequestControl,
 ): Promise<StructuredDocumentList> {
+  return (await scanInboxList(sourceTabId, saved, control)).list;
+}
+
+/**
+ * [readInboxList]와 같되, `stopWhen`이 참이 되면 남은 페이지를 받지 않고 멈춘다.
+ *
+ * ★ 멈췄으면 `complete`가 거짓이다. 그 목록에 행이 없다는 것은 아무 근거도 되지 않는다.
+ */
+async function scanInboxList(
+  sourceTabId: number,
+  saved: NonNullable<Awaited<ReturnType<typeof loadInboxLocation>>>,
+  control: RequestControl,
+  stopWhen?: (rows: StructuredDocumentList['rows']) => boolean,
+): Promise<{ list: StructuredDocumentList; complete: boolean }> {
   let location: DocumentListLocation | null = firstInboxPage(saved.location);
   let list: StructuredDocumentList | undefined;
   const requests = new Set<string>();
@@ -2441,9 +2497,10 @@ async function readInboxList(
     list ??= { ...page.list, listName: saved.listName, rows: [] };
     list.rows.push(...page.list.rows);
     location = page.next;
+    if (location && stopWhen?.(list.rows)) return { list, complete: false };
   }
   if (!list) throw new Error('공유/공람 목록을 읽지 못했습니다.');
-  return list;
+  return { list, complete: true };
 }
 
 /** 목록 프레임이 돌려준 오류를 그대로 전한다(권한 안내 등 해결 버튼이 달린 오류다). */

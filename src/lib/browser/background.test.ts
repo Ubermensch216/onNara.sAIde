@@ -940,6 +940,44 @@ it('서버 목록이 여전히 미열람이면 완료 알림만으로 열람 확
   expect(await pending).toMatchObject({ type: 'DOCUMENTS_MARKED_READ', marked: [], unconfirmed: ['법원문서 통보'] });
 });
 
+it('완료 알림이 뜨면 정해진 간격을 기다리지 않고 곧바로 서버 목록에 물어 확정한다', async () => {
+  vi.useFakeTimers();
+  markReadHarness([{ title: '법원문서 통보', readState: '미열람' }], ['읽기처리 되었습니다.'], [{ title: '다른 공문 제목', readState: '미열람' }]);
+  let settled = false;
+  const pending = handlePanelMessage({ type: 'MARK_DOCUMENTS_READ', tabId: 9, titles: ['법원문서 통보'],
+    control: { id: crypto.randomUUID(), deadline: Date.now() + 30_000 } }).finally(() => { settled = true; });
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(settled).toBe(true);
+  expect(await pending).toMatchObject({ type: 'DOCUMENTS_MARKED_READ', marked: ['법원문서 통보'], unconfirmed: [] });
+});
+
+it('서버 목록에 물을 길이 없으면 완료 알림을 본 즉시 끝낸다', async () => {
+  vi.useFakeTimers();
+  markReadHarness([{ title: '법원문서 통보', readState: '미열람' }], ['읽기처리 되었습니다.']);
+  let settled = false;
+  const pending = handlePanelMessage({ type: 'MARK_DOCUMENTS_READ', tabId: 9, titles: ['법원문서 통보'],
+    control: { id: crypto.randomUUID(), deadline: Date.now() + 30_000 } }).finally(() => { settled = true; });
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(settled).toBe(true);
+  expect(await pending).toMatchObject({ type: 'DOCUMENTS_MARKED_READ', marked: ['법원문서 통보'], unconfirmed: [] });
+});
+
+it('서버 목록에서 대상 행의 열람 여부를 읽었으면 남은 페이지는 받지 않는다', async () => {
+  const { sendMessage } = markReadHarness([{ title: '법원문서 통보', readState: '미열람' }], [], [{ title: '법원문서 통보', readState: '열람' }]);
+  const original = sendMessage.getMockImplementation()!;
+  sendMessage.mockImplementation(async (tabId, message, options) => {
+    const reply = await original(tabId, message, options);
+    // 다음 페이지가 있는 목록으로 꾸민다. 대상 행은 첫 페이지에 있다.
+    return message.type === 'FETCH_INBOX_PAGE'
+      ? { ...reply, next: { url: 'https://onnara.test/frame/list?pageIndex=2', framePath: [1] } } as never
+      : reply;
+  });
+  const response = await handlePanelMessage({ type: 'MARK_DOCUMENTS_READ', tabId: 9, titles: ['법원문서 통보'],
+    control: { id: crypto.randomUUID(), deadline: Date.now() + 30_000 } });
+  expect(response).toMatchObject({ type: 'DOCUMENTS_MARKED_READ', marked: ['법원문서 통보'], unconfirmed: [] });
+  expect(sendMessage.mock.calls.filter(([, message]) => message.type === 'FETCH_INBOX_PAGE')).toHaveLength(1);
+});
+
 it('화면에 있는 문서가 이미 열람 상태이면 읽기처리 버튼을 누르지 않고 즉시 열람 완료로 보고한다', async () => {
   const { executeScript } = markReadHarness(
     [], [], undefined, 2,
