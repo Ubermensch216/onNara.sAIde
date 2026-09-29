@@ -278,7 +278,9 @@ export function TemplateManager({
   });
 
   return (
-    <div className="flex flex-col h-full bg-slate-50 text-slate-800 text-xs">
+    // ★ h-full이 아니라 flex-1 min-h-0: 드로어 머리글·탭 아래 남은 높이만 차지해야 목록 스크롤이 화면 안에서 끝난다.
+    //   h-full이면 드로어 전체 높이가 되어 머리글·탭 높이만큼 아래로 밀려 마지막 서식 카드가 잘린다.
+    <div className="flex flex-col flex-1 min-h-0 bg-slate-50 text-slate-800 text-xs">
       {/* 서식관리 상단 툴바 */}
       <div className="p-2.5 bg-white border-b border-slate-200 space-y-2">
         {/* 상단 검색 및 서식 등록/초기화 액션 */}
