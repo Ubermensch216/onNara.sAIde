@@ -125,13 +125,14 @@ it('복제한 백그라운드 탭에서 제목 문서를 열고 본문만 회수
     return { type: 'EXTRACTED', payload: { ...common, url: 'https://onnara.test/main', title: '온나라', text: '업무 메뉴', charCount: 5, method: 'innerText' } };
   });
   const remove = vi.fn(async () => undefined);
+  let duplicated = false;
   vi.stubGlobal('chrome', {
     tabs: {
       get: vi.fn(async (id: number) => id === 1
         ? { id: 1, url: 'https://onnara.test/main', title: '온나라', active: true, windowId: 7 }
         : { id: 20, url: 'https://onnara.test/main', title: '온나라', active: false, windowId: 7 }),
-      query: vi.fn(async () => [{ id: 1, url: 'https://onnara.test/main', active: true, windowId: 7 }, { id: 20, url: 'https://onnara.test/main', active: false, windowId: 7 }]),
-      duplicate: vi.fn(async () => ({ id: 20, url: 'https://onnara.test/main', active: false, windowId: 7 })),
+      query: vi.fn(async () => [{ id: 1, url: 'https://onnara.test/main', active: true, windowId: 7 }, ...(duplicated ? [{ id: 20, url: 'https://onnara.test/main', active: false, windowId: 7 }] : [])]),
+      duplicate: vi.fn(async () => { duplicated = true; return { id: 20, url: 'https://onnara.test/main', active: false, windowId: 7 }; }),
       update: vi.fn(async () => undefined), sendMessage, remove,
     },
     scripting: { executeScript: vi.fn(async () => []) },
@@ -461,6 +462,91 @@ it('같은 이름의 기존 팝업 창이 재사용되면 그 창에서 제목�
   expect(await pending).toMatchObject({ type: 'DOCUMENT_READ', requestedTitle: fixture.title });
   expect(fixture.remove).toHaveBeenCalledWith([20]);
   expect(fixture.open.has(40)).toBe(true);
+});
+
+it('같은 문서를 조회 창에 띄워 두었으면 목록에서 다시 열지 않고 그 창에서 첨부를 받으며 창을 닫지 않는다', async () => {
+  vi.useFakeTimers();
+  const fixture = popupFixture(() => undefined, [{ id: 40, windowId: 8 } as chrome.tabs.Tab]);
+  const common = { url: 'https://onnara.test/main', title: '온나라', text: '메뉴', charCount: 2, method: 'innerText', truncated: false, keptRatio: 1, estimatedTokens: 20, extractedAt: Date.now() };
+  const listPayload = { ...common, structuredData: { kind: 'onnara-document-list', listName: '받은문서', columns: [], rows: [{ title: fixture.title }] } };
+  const detail = { ...common, url: 'https://onnara.test/view', title: '문서조회', text: `결재경로 과장 국장\n제목 ${fixture.title}\n1. 관련 근거\n${'본문 내용 '.repeat(40)}`, charCount: 400 };
+  let createdListener: ((item: { id: number }) => void) | undefined;
+  const chromeMock = globalThis.chrome as any;
+  chromeMock.tabs.sendMessage.mockImplementation(async (id: number, msg: { type: string; purpose?: string; name?: string }, options: { frameId: number }) => {
+    if (msg.type === 'LOCATE_DOCUMENT') return { type: 'DOCUMENT_LOCATED', location: { url: 'https://onnara.test/list', framePath: [0] } };
+    if (msg.type === 'SCAN_ATTACHMENTS') return { type: 'ATTACHMENTS_FOUND', items: id === 40 && options.frameId === 0 ? [{ index: 0, name: '평정계획.hwpx' }] : [] };
+    if (msg.type === 'CLICK_ATTACHMENT') { setTimeout(() => createdListener?.({ id: 88 }), 300); return { type: 'ATTACHMENT_CLICKED', clicked: true }; }
+    if (id === 40) return { type: 'EXTRACTED', payload: options.frameId === 0 ? detail : common };
+    return { type: 'EXTRACTED', payload: options.frameId === 2 ? listPayload : common };
+  });
+  chromeMock.downloads = {
+    onCreated: { addListener: vi.fn(listener => { createdListener = listener; }), removeListener: vi.fn(() => { createdListener = undefined; }) },
+    search: vi.fn(async () => [{ id: 88, state: 'complete', filename: 'C:\\Downloads\\평정계획.hwpx' }]),
+    download: vi.fn(), cancel: vi.fn(),
+  };
+  const pending = handlePanelMessage({ type: 'DOWNLOAD_ATTACHMENTS', tabId: 1, title: fixture.title, control: { id: crypto.randomUUID(), deadline: Date.now() + 170_000, expectedUrl: 'https://onnara.test/main' } });
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(await pending).toEqual({ type: 'ATTACHMENTS_DOWNLOADED', results: [{ name: '평정계획.hwpx', status: 'complete', downloadId: 88, path: 'C:\\Downloads\\평정계획.hwpx' }] });
+  expect(chromeMock.tabs.duplicate).not.toHaveBeenCalled();
+  expect(chromeMock.tabs.sendMessage.mock.calls.some(([, msg]: [number, { type: string }]) => msg.type === 'OPEN_DOCUMENT')).toBe(false);
+  expect(fixture.remove).not.toHaveBeenCalled();
+  expect(fixture.open.has(40)).toBe(true);
+});
+
+it('조회 창에 제목이 더 긴 다른 문서가 떠 있으면 그 창을 쓰지 않고 목록에서 문서를 연다', async () => {
+  vi.useFakeTimers();
+  const fixture = popupFixture(() => noteTopCommit({ tabId: 40, frameId: 0 }), [{ id: 40, windowId: 8 } as chrome.tabs.Tab]);
+  const common = { url: 'https://onnara.test/main', title: '온나라', text: '메뉴', charCount: 2, method: 'innerText', truncated: false, keptRatio: 1, estimatedTokens: 20, extractedAt: Date.now() };
+  const listPayload = { ...common, structuredData: { kind: 'onnara-document-list', listName: '받은문서', columns: [], rows: [{ title: fixture.title }] } };
+  const other = { ...common, url: 'https://onnara.test/view', title: '문서조회', text: `제목 ${fixture.title} 변경 알림\n관련: ${fixture.title}\n${'다른 문서 '.repeat(40)}`, charCount: 400 };
+  const detail = { ...common, url: 'https://onnara.test/view', title: fixture.title, text: `${fixture.title} 본문 내용`.repeat(20), charCount: 400 };
+  let opened = false;
+  const chromeMock = globalThis.chrome as any;
+  chromeMock.tabs.sendMessage.mockImplementation(async (id: number, msg: { type: string; purpose?: string }, options: { frameId: number }) => {
+    if (msg.type === 'LOCATE_DOCUMENT') return { type: 'DOCUMENT_LOCATED', location: { url: 'https://onnara.test/list', framePath: [0] } };
+    if (msg.type === 'OPEN_DOCUMENT') { opened = true; noteTopCommit({ tabId: 40, frameId: 0 }); return { type: 'OPENING_DOCUMENT', title: fixture.title }; }
+    if (id === 40) return { type: 'EXTRACTED', payload: options.frameId === 0 ? (opened ? detail : other) : common };
+    return { type: 'EXTRACTED', payload: options.frameId === 2 ? listPayload : common };
+  });
+  const pending = readDocumentInBackground(1, fixture.title, 2000, { id: crypto.randomUUID(), deadline: Date.now() + 60_000, expectedUrl: 'https://onnara.test/main' });
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(await pending).toMatchObject({ type: 'DOCUMENT_READ', requestedTitle: fixture.title, payload: { title: fixture.title } });
+  expect(opened).toBe(true);
+  expect(fixture.open.has(40)).toBe(true);
+});
+
+it('문서를 여는 작업 탭에서만 "이미 상세보기 창이 존재합니다" 확인창을 수락하고 다른 대화상자는 실패로 기록한다', async () => {
+  vi.useFakeTimers();
+  const fixture = popupFixture(() => undefined);
+  const installs: Array<{ tabId: number; func: (accept: boolean) => void; args: [boolean] }> = [];
+  (globalThis.chrome as any).scripting.executeScript = vi.fn(async (injection: { target: { tabId: number }; func?: (accept: boolean) => void; args?: [boolean]; world?: string }) => {
+    if (injection.func && injection.args) installs.push({ tabId: injection.target.tabId, func: injection.func, args: injection.args });
+    return [];
+  });
+  const pending = readDocumentInBackground(1, fixture.title, 2000, { id: crypto.randomUUID(), deadline: Date.now() + 20_000, expectedUrl: 'https://onnara.test/main' });
+  await vi.advanceTimersByTimeAsync(25_000);
+  await pending;
+  expect(installs.filter(item => item.tabId === 20).every(item => item.args[0] === true)).toBe(true);
+  expect(installs.filter(item => item.tabId === 1).every(item => item.args[0] === false)).toBe(true);
+
+  const install = (accept: boolean) => {
+    const attrs = new Map<string, string>();
+    const documentElement = { setAttribute: (key: string, value: string) => attrs.set(key, value), removeAttribute: (key: string) => attrs.delete(key), getAttribute: (key: string) => attrs.get(key) ?? null };
+    const win = { document: { documentElement }, frames: [] as unknown[] } as any;
+    win.top = win; win.parent = win;
+    vi.stubGlobal('window', win);
+    vi.stubGlobal('document', win.document);
+    installs[0]!.func(accept);
+    return { win, attrs };
+  };
+  const work = install(true);
+  expect(work.win.confirm('이미 상세보기 창이 존재합니다. 새로운 문서를 보시겠습니까?')).toBe(true);
+  expect(work.attrs.has('data-saide-dialog')).toBe(false);
+  expect(work.win.confirm('결재를 취소하시겠습니까?')).toBe(false);
+  expect(work.attrs.get('data-saide-dialog')).toBe('결재를 취소하시겠습니까?');
+  const source = install(false);
+  expect(source.win.confirm('이미 상세보기 창이 존재합니다. 새로운 문서를 보시겠습니까?')).toBe(false);
+  expect(source.attrs.get('data-saide-dialog')).toContain('이미 상세보기 창이 존재합니다');
 });
 
 it('상세 화면의 본문 프레임이 권한 없는 다른 주소면 기다리지 않고 그 주소를 알린다', async () => {

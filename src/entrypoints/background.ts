@@ -2063,6 +2063,22 @@ export async function readDocumentInBackground(
   }
 
   const taskControl: RequestControl = { ...control, deadline: control.deadline - 5000, expectedUrl: undefined };
+  // 사용자가 이 문서를 조회 창에 이미 띄워 두었으면 그 창에서 바로 읽는다. 목록에서 다시 열면
+  // 온나라가 "이미 상세보기 창이 존재합니다"를 묻고, 작업 탭·팝업을 새로 만들 이유도 없다.
+  // ★ try 밖에서 처리한다. finally가 다음 문서용으로 남겨 둔 작업 탭 기록을 지우지 않게 한다.
+  const open = await alreadyOpenDetail(sourceTabId, source.url, title, budgetTokens, taskControl);
+  if (cancelled.has(control.id)) return { type: 'ERROR', error: { code: 'ABORTED', message: '문서 읽기를 중단했습니다.' } };
+  if (open) {
+    const payload = { ...open.payload, url: source.url ?? open.payload.url, title: open.payload.title || title };
+    if (!onDetail) return { type: 'DOCUMENT_READ', requestedTitle: title, payload };
+    try {
+      return await onDetail({ tabId: open.tabId, payload, control: taskControl });
+    } catch (error) {
+      if (cancelled.has(control.id)) return { type: 'ERROR', error: { code: 'ABORTED', message: '문서 읽기를 중단했습니다.' } };
+      if (error instanceof ReadFailure) return { type: 'ERROR', error: error.appError };
+      return { type: 'ERROR', error: { code: 'UNKNOWN', message: `열려 있는 문서 창에서 작업하지 못했습니다. ${String(error)}` } };
+    }
+  }
   let stage: ReadStage = 'source';
   const observed: DetailObservation = { popup: false, frameChanged: false, state: 'none', chars: 0 };
   try {
@@ -2134,7 +2150,7 @@ export async function readDocumentInBackground(
     if (options.keepWorkTab && workTabId !== sourceTabId) keptWorkTabId = workTabId;
     const openFrameId = list.sourceFrameId ?? 0;
     stage = 'open';
-    await injectDialogInterceptor(workTabId, openFrameId);
+    await injectDialogInterceptor(workTabId, openFrameId, true);
     if (workTabId !== sourceTabId) {
       await injectDialogInterceptor(sourceTabId, openFrameId);
     }
@@ -2746,7 +2762,13 @@ const DETAIL_SETTLE_LIMIT_MS = 10_000;
 
 const ACCESS_DENIED_PATTERN = /과제\s*미지정|열람\s*권한|열람하실\s*수\s*없습니다|접근\s*권한|권한이\s*없습니다|존재하지\s*않는\s*문서|삭제된\s*문서|처리\s*권한|오류가\s*발생/i;
 
-async function injectDialogInterceptor(tabId: number, openFrameId = 0): Promise<void> {
+/**
+ * @param acceptDetailReplace 온나라가 "이미 상세보기 창이 존재합니다. 새로운 문서를 보시겠습니까?"를 물으면
+ *   확인한다. 거절하면 문서가 열리지 않아 사용자가 조회 창을 띄워 둔 동안에는 읽기·첨부 받기가 모두 실패한다.
+ *   확인하면 온나라가 기존 조회 창에 요청한 문서를 띄우고, 그 창은 reusedPopup이 읽되 닫지 않는다.
+ *   문서를 여는 탭에만 켠다. 원본 탭에서는 사용자가 직접 누른 문서에 대한 질문일 수 있다.
+ */
+async function injectDialogInterceptor(tabId: number, openFrameId = 0, acceptDetailReplace = false): Promise<void> {
   const frameIds = new Set<number>([0, openFrameId]);
   try {
     const all = await chrome.webNavigation.getAllFrames({ tabId });
@@ -2763,7 +2785,11 @@ async function injectDialogInterceptor(tabId: number, openFrameId = 0): Promise<
         target: { tabId, frameIds: [frameId] },
         world: 'MAIN',
         injectImmediately: true,
-        func: () => {
+        args: [acceptDetailReplace],
+        func: (acceptReplace: boolean) => {
+          type Hooked = { __saide_dialog_hooked?: boolean; __saide_accept_replace?: boolean };
+          // "이미 상세보기 창이 존재합니다. 새로운 문서를 보시겠습니까?"
+          const REPLACE_DETAIL = /이미\s*(?:상세\s*보기\s*)?창이?\s*(?:존재|열려)/;
           const saveDialog = (msg: unknown) => {
             try {
               const text = String(msg ?? '').trim();
@@ -2791,11 +2817,18 @@ async function injectDialogInterceptor(tabId: number, openFrameId = 0): Promise<
               if (!w) return;
               try { w.document.documentElement.removeAttribute('data-saide-dialog'); } catch {}
               (w as unknown as { __saide_dialog_message?: string | null }).__saide_dialog_message = null;
-              if ((w as unknown as { __saide_dialog_hooked?: boolean }).__saide_dialog_hooked) return;
-              (w as unknown as { __saide_dialog_hooked?: boolean }).__saide_dialog_hooked = true;
+              const state = w as unknown as Hooked;
+              // 이미 설치된 창도 이번 요청의 설정을 따르게 가로채기 밖에서 매번 기록한다.
+              state.__saide_accept_replace = acceptReplace;
+              if (state.__saide_dialog_hooked) return;
+              state.__saide_dialog_hooked = true;
 
               w.alert = function (msg) { saveDialog(msg); };
-              w.confirm = function (msg) { saveDialog(msg); return false; };
+              w.confirm = function (msg) {
+                if (state.__saide_accept_replace && REPLACE_DETAIL.test(String(msg ?? ''))) return true;
+                saveDialog(msg);
+                return false;
+              };
               w.prompt = function (msg) { saveDialog(msg); return null; };
             } catch {}
           };
@@ -3283,6 +3316,45 @@ async function reusedPopup(
     if (window?.type === 'popup') return tab.id;
   }
   return undefined;
+}
+
+/**
+ * 사용자가 이미 띄워 둔 같은 출처의 문서 조회 창 중 요청한 문서를 보여 주는 창.
+ *
+ * ★ 제목이 본문 어딘가에 들어 있는 것으로는 받아들이지 않는다. 관련문서·붙임에 이 제목을 적은
+ *   다른 문서, "… 실시계획 변경"처럼 제목이 더 긴 문서의 첨부를 잘못 받게 된다.
+ *   화면 제목이 같거나, 한 줄 전체가(앞의 "제목"을 빼고) 요청한 제목과 같을 때만 같은 문서로 본다.
+ */
+async function alreadyOpenDetail(
+  sourceTabId: number,
+  sourceUrl: string | undefined,
+  title: string,
+  budgetTokens: number,
+  control: RequestControl,
+): Promise<{ tabId: number; payload: ExtractedPage } | undefined> {
+  const key = compactText(title);
+  if (!key) return undefined;
+  const tabs = (await chrome.tabs.query({}).catch(() => []) ?? [])
+    .filter(tab => typeof tab.id === 'number' && tab.id !== sourceTabId && !workTabs.has(tab.id) && sameOrigin(tab.url, sourceUrl));
+  // 온나라 탭을 여러 개 띄워 둔 사용자도 있다. 문서마다 모든 탭을 묻느라 늦어지지 않게 개수를 제한한다.
+  for (const tab of tabs.slice(0, 6)) {
+    if (typeof tab.id !== 'number') continue;
+    if (cancelled.has(control.id) || Date.now() >= control.deadline) return undefined;
+    // 사용자 창이므로 짧게 한 번만 묻는다. 대답이 없으면 평소처럼 목록에서 연다.
+    const probe: RequestControl = { ...control, deadline: Math.min(control.deadline, Date.now() + OPEN_DETAIL_PROBE_MS) };
+    const result = await dispatchContent(tab.id, { type: 'EXTRACT', budgetTokens, purpose: 'document-detail', targetTitle: title, control: probe })
+      .catch(() => undefined);
+    if (result?.type !== 'EXTRACTED' || result.payload.structuredData || result.payload.charCount < 120) continue;
+    if (showsDocumentTitle(result.payload, key)) return { tabId: tab.id, payload: result.payload };
+  }
+  return undefined;
+}
+
+const OPEN_DETAIL_PROBE_MS = 4000;
+
+function showsDocumentTitle(payload: ExtractedPage, key: string): boolean {
+  if (compactText(payload.title) === key) return true;
+  return payload.text.split('\n').some(line => compactText(line.replace(/^\s*제\s*목\s*[:：]?/, '')) === key);
 }
 
 function sameOrigin(left: string | undefined, right: string | undefined): boolean {
