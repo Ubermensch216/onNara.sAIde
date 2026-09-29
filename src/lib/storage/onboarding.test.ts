@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ONBOARDING_KEY,
   ONBOARDING_VERSION,
+  getOnboardingLaunch,
   markOnboardingSeen,
   resetOnboarding,
   shouldShowOnboarding,
@@ -31,12 +32,14 @@ afterEach(() => vi.unstubAllGlobals());
 describe('표시 여부', () => {
   it('처음 열면 보여 준다', async () => {
     expect(await shouldShowOnboarding()).toBe(true);
+    expect(await getOnboardingLaunch()).toBe('first-run');
   });
 
   it('★ 한 번 보고 나면 다시 띄우지 않는다', async () => {
     await markOnboardingSeen();
     expect(stored[ONBOARDING_KEY]).toBe(ONBOARDING_VERSION);
     expect(await shouldShowOnboarding()).toBe(false);
+    expect(await getOnboardingLaunch()).toBe('hidden');
   });
 
   // ★ 명령 체계가 바뀌면 한 번 더 알려야 한다. 그때만 판을 올린다.
@@ -49,6 +52,7 @@ describe('표시 여부', () => {
     await markOnboardingSeen();
     await resetOnboarding();
     expect(await shouldShowOnboarding()).toBe(true);
+    expect(await getOnboardingLaunch()).toBe('guide');
   });
 
   it('★ 저장소를 읽지 못하면 띄우지 않는다', async () => {

@@ -141,12 +141,9 @@ function OnnaraRefItem({
             </div>
           ) : (
             <div className="p-2.5 bg-amber-50 border border-amber-200 rounded text-xs text-amber-800 space-y-1">
-              <p className="font-semibold flex items-center gap-1.5">
+              <p className="flex items-center gap-1.5 leading-normal">
                 <MaterialIcon name="warning" size={13} className="text-amber-600" />
-                <span>참고문서 본문을 읽지 못했습니다.</span>
-              </p>
-              <p className="text-[11px] text-amber-700 leading-normal">
-                {doc.errorMessage || '원문을 확인하지 못했습니다. 로그인 상태와 열린 원문을 확인한 뒤 [다시 읽기]를 눌러 주세요.'}
+                <span>문서 내용을 확인하려면 '관련정보'에서 해당 문서를 연 후, '다시 읽기'를 눌러 주세요.</span>
               </p>
               {onRetry && <button type="button" onClick={onRetry} disabled={retryDisabled} className="underline font-medium cursor-pointer disabled:opacity-50">다시 읽기</button>}
             </div>

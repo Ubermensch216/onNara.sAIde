@@ -350,6 +350,9 @@ if (mode.startsWith('options') || OPTION_VIEWS.includes(mode)) {
   } else if (mode === 'presets') {
     const { PresetEditor } = await import('@/entrypoints/options/PresetEditor');
     createRoot(document.getElementById('root')!).render(<div className="wrap"><PresetEditor /></div>);
+  } else if (mode === 'options-tongdal') {
+    const { TongdalSettings } = await import('@/entrypoints/options/TongdalSettings');
+    createRoot(document.getElementById('root')!).render(<div className="wrap"><TongdalSettings /></div>);
   } else {
     const { default: OptionsApp } = await import('@/entrypoints/options/OptionsApp');
     createRoot(document.getElementById('root')!).render(<OptionsApp />);
@@ -709,6 +712,16 @@ if (mode.startsWith('options') || OPTION_VIEWS.includes(mode)) {
     localStorage.setItem('saide.view', 'inbox');
   } else if (mode === 'knowledge') {
     localStorage.setItem('saide.view', 'knowledge');
+    setTimeout(() => {
+      const input = document.querySelector<HTMLInputElement>('.kn-search input');
+      if (input) {
+        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+        nativeInputValueSetter?.call(input, '시범사업');
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        const form = input.closest('form');
+        form?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      }
+    }, 50);
   } else {
     localStorage.setItem('saide.view', 'ai');
   }

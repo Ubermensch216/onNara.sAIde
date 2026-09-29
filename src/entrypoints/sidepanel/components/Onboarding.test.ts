@@ -35,6 +35,7 @@ afterEach(async () => {
 });
 
 const render = () => act(() => root.render(createElement(Onboarding, { onClose })));
+const renderFirstRun = () => act(() => root.render(createElement(Onboarding, { onClose, showWelcome: true })));
 const next = () => document.querySelector<HTMLButtonElement>('.onboard-next')!;
 const title = () => document.querySelector('.onboard-title')!.textContent;
 
@@ -73,4 +74,24 @@ it('Esc로도 닫힌다', async () => {
   await render();
   await act(async () => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); });
   expect(onClose).toHaveBeenCalled();
+});
+
+it('최초 실행에는 웰컴 영상을 자동 재생하고, 끝나면 사용법으로 이어진다', async () => {
+  await renderFirstRun();
+  const video = document.querySelector<HTMLVideoElement>('.onboard-video')!;
+  expect(video).not.toBeNull();
+  expect(video.autoplay).toBe(true);
+  expect(video.muted).toBe(true);
+  expect(video.getAttribute('src')).toBe('/media/welcome.mp4');
+
+  await act(async () => video.dispatchEvent(new Event('ended', { bubbles: true })));
+  expect(document.querySelector('.onboard-video')).toBeNull();
+  expect(document.querySelector('.onboard-step')!.textContent).toBe('1 / 3');
+});
+
+it('영상에서 사용법 보기 버튼을 누르면 바로 첫 안내로 간다', async () => {
+  await renderFirstRun();
+  await act(async () => document.querySelector<HTMLButtonElement>('.onboard-next')!.click());
+  expect(document.querySelector('.onboard-video')).toBeNull();
+  expect(title()).toContain('목록에서 처리');
 });

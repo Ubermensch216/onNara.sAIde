@@ -57,7 +57,7 @@ import { AutomationPanel } from './components/AutomationPanel';
 import { SchedulePanel } from './components/SchedulePanel';
 import { ScheduleIntentCard } from './components/ScheduleIntentCard';
 import { Onboarding } from './components/Onboarding';
-import { shouldShowOnboarding } from '@/lib/storage/onboarding';
+import { getOnboardingLaunch, type OnboardingLaunch } from '@/lib/storage/onboarding';
 import { SCHEDULE_ALIASES, SCHEDULE_PRESET_ID, SCHEDULE_SLASH } from '@/lib/schedule/intent';
 import type { PanelLink } from '@/lib/panel/links';
 import { focusJob, useAutomation } from '@/lib/automation/jobs';
@@ -129,7 +129,7 @@ export default function App() {
   const [view, setView] = useState<View>(initialView);
   const [automationError, setAutomationError] = useState<AppError | null>(null);
   /** 첫 실행 안내(B3). 저장소를 읽어 한 번만 켠다. */
-  const [onboarding, setOnboarding] = useState(false);
+  const [onboarding, setOnboarding] = useState<OnboardingLaunch>('hidden');
   const isDrawerMode = useMemo(() => {
     try { return new URLSearchParams(window.location.search).get('mode') === 'drawer'; } catch { return false; }
   }, []);
@@ -169,7 +169,7 @@ export default function App() {
   }, [isDrawerMode]);
 
   // 처음 여는 사람에게는 `/`와 `@`의 규칙을 아무도 알려 주지 않았다(B3).
-  useEffect(() => { void shouldShowOnboarding().then(setOnboarding); }, []);
+  useEffect(() => { void getOnboardingLaunch().then(setOnboarding); }, []);
 
 
   /* ── 설정 ── */
@@ -965,7 +965,12 @@ export default function App() {
       )}
 
       {/* 첫 실행 안내(B3). 설정에서 "사용법 다시 보기"를 누르면 다시 뜬다. */}
-      {onboarding && <Onboarding onClose={() => setOnboarding(false)} />}
+      {onboarding !== 'hidden' && (
+        <Onboarding
+          showWelcome={onboarding === 'first-run'}
+          onClose={() => setOnboarding('hidden')}
+        />
+      )}
 
       {menuOpen && (
         <ConversationMenu

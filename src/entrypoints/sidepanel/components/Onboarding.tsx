@@ -6,8 +6,8 @@
  *   처음 여는 사람에게는 **설명 없는 규칙**이다. 입력창에 `/`를 쳐야 목록이 뜬다는 사실조차
  *   아무도 알려 주지 않았다.
  *
- * ★ 세 장을 넘지 않는다. 읽지 않고 닫는 안내는 없는 것과 같다.
- *   ① 목록에서 체크하고 명령 ② `/`와 `@`의 차이 ③ 기한은 일정 탭으로 — 이 셋이면 첫 하루가 된다.
+ * ★ 신규 설치에서는 짧은 웰컴 영상을 먼저 보여 준 뒤 세 장의 사용법으로 이어진다.
+ *   설명은 ① 목록에서 체크하고 명령 ② `/`와 `@`의 차이 ③ 기한은 일정 탭으로 — 이 셋이면 첫 하루가 된다.
  *
  * ★ 길을 막지 않는다. 어느 장에서든 건너뛸 수 있고, `Esc`로도 닫힌다.
  *   설정에서 언제든 다시 열 수 있으므로 "지금 꼭 읽어야 하는" 화면이 아니다.
@@ -19,12 +19,15 @@ import { markOnboardingSeen } from '@/lib/storage/onboarding';
 
 interface Props {
   onClose: () => void;
+  /** 저장값이 전혀 없는 신규 설치에서만 참이다. */
+  showWelcome?: boolean;
 }
 
 const STEPS = 3;
 
-export function Onboarding({ onClose }: Props) {
+export function Onboarding({ onClose, showWelcome = false }: Props) {
   const t = useT();
+  const [welcome, setWelcome] = useState(showWelcome);
   const [step, setStep] = useState(0);
   const closeRef = useRef<HTMLButtonElement>(null);
 
@@ -52,37 +55,64 @@ export function Onboarding({ onClose }: Props) {
 
   return (
     <div className="onboard-backdrop" role="dialog" aria-modal="true" aria-label={t('onboard.title')}>
-      <div className="onboard">
+      <div className={`onboard ${welcome ? 'onboard-welcome' : ''}`}>
         <div className="onboard-head">
-          <span className="onboard-step">{t('onboard.step', { n: step + 1, total: STEPS })}</span>
+          <span className="onboard-step">
+            {welcome ? t('onboard.welcomeStep') : t('onboard.step', { n: step + 1, total: STEPS })}
+          </span>
           <button ref={closeRef} type="button" className="onboard-skip" onClick={finish}>
             {t('onboard.skip')}
           </button>
         </div>
 
-        <h2 className="onboard-title">{body.title}</h2>
-        <ul className="onboard-lines">
-          {body.lines.map(line => <li key={line}>{line}</li>)}
-        </ul>
+        {welcome ? (
+          <>
+            <video
+              className="onboard-video"
+              src="/media/welcome.mp4"
+              autoPlay
+              muted
+              playsInline
+              controls
+              preload="auto"
+              onEnded={() => setWelcome(false)}
+            />
+            <h2 className="onboard-title">{t('onboard.welcomeTitle')}</h2>
+            <p className="onboard-welcome-hint">{t('onboard.welcomeHint')}</p>
+            <div className="onboard-actions">
+              <div className="spacer" />
+              <button type="button" className="onboard-next" onClick={() => setWelcome(false)}>
+                {t('onboard.watchGuide')}
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <h2 className="onboard-title">{body.title}</h2>
+            <ul className="onboard-lines">
+              {body.lines.map(line => <li key={line}>{line}</li>)}
+            </ul>
 
-        <div className="onboard-dots" aria-hidden="true">
-          {Array.from({ length: STEPS }, (_, index) => (
-            <span key={index} className={`onboard-dot ${index === step ? 'on' : ''}`} />
-          ))}
-        </div>
+            <div className="onboard-dots" aria-hidden="true">
+              {Array.from({ length: STEPS }, (_, index) => (
+                <span key={index} className={`onboard-dot ${index === step ? 'on' : ''}`} />
+              ))}
+            </div>
 
-        <div className="onboard-actions">
-          {step > 0 && (
-            <button type="button" className="minibtn" onClick={() => setStep(value => value - 1)}>
-              {t('onboard.prev')}
-            </button>
-          )}
-          <div className="spacer" />
-          <button type="button" className="onboard-next"
-            onClick={() => (step + 1 < STEPS ? setStep(value => value + 1) : finish())}>
-            {step + 1 < STEPS ? t('onboard.next') : t('onboard.done')}
-          </button>
-        </div>
+            <div className="onboard-actions">
+              {step > 0 && (
+                <button type="button" className="minibtn" onClick={() => setStep(value => value - 1)}>
+                  {t('onboard.prev')}
+                </button>
+              )}
+              <div className="spacer" />
+              <button type="button" className="onboard-next"
+                onClick={() => (step + 1 < STEPS ? setStep(value => value + 1) : finish())}>
+                {step + 1 < STEPS ? t('onboard.next') : t('onboard.done')}
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

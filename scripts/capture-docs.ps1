@@ -34,7 +34,10 @@ $views = @(
   @('briefing', '09-briefing-settings.png', '1120,1000'),
   @('drafter', '10-drafter.png', '520,940'),
   @('drafter-refs', '12-drafter-references.png', '520,940'),
-  @('templates', '11-template-manager.png', '520,940')
+  @('templates', '11-template-manager.png', '520,940'),
+  @('knowledge', '13-knowledge.png', '520,940'),
+  @('knowledge-chat', '14-knowledge-chat.png', '520,940'),
+  @('options-tongdal', '15-options-tongdal.png', '1120,1000')
 )
 
 foreach ($view in $views) {

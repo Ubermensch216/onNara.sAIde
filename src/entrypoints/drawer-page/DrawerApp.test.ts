@@ -625,6 +625,9 @@ it('실패 후 다시 읽기 버튼을 누르면 참고문서 조회를 재요�
   window.postMessage({ type: 'DRAFT_RELATED_DOC_CONTENT', title: '감사 유공 표창 알림', content: '', error: '문서 ID 없음' }, '*');
   await settle();
   const post = vi.spyOn(window.parent, 'postMessage');
+  const referenceWarning = document.querySelector('.bg-amber-50');
+  expect(referenceWarning?.textContent).toContain("문서 내용을 확인하려면 '관련정보'에서 해당 문서를 연 후, '다시 읽기'를 눌러 주세요.");
+  expect(referenceWarning?.textContent).not.toContain('문서 ID 없음');
   const retry = [...document.querySelectorAll('button')].find(b => b.textContent?.trim() === '다시 읽기');
   expect(retry).toBeDefined();
   await act(() => retry?.click());
