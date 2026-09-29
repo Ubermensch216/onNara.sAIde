@@ -91,6 +91,31 @@ it('제목만 있는 관련정보도 이미 열린 HTML·HWP 원문에서 읽는
   for (const fn of [tabs.create, tabs.duplicate, tabs.update, tabs.remove, windows.create, windows.update]) expect(fn).not.toHaveBeenCalled();
 });
 
+it('기관별 다른 원문 팝업 주소에서도 제목을 대조해 본문을 읽는다', async () => {
+  const { tabs, executeScript } = openedHarness();
+  const popupUrl = 'https://onnara.test/portal/legacy/popup.do';
+  tabs.query.mockResolvedValue([{ id: 2, url: popupUrl, title: '온나라시스템' } as chrome.tabs.Tab]);
+  tabs.get.mockImplementation(async (tabId?: number) => ({ id: tabId || 1, url: tabId === 2 ? popupUrl : url }));
+  executeScript.mockResolvedValue([{ frameId: 0, result: { text, title, id } }] as any);
+  expect((await handleFetchRelatedDocContent({ title }, 1)).content).toContain('10월 1일부터');
+});
+
+it('사용자가 기안 탭에서 연 하위 프레임 원문을 다시 읽는다', async () => {
+  const { tabs, executeScript } = harness({ texts: [], pdf: [], error: '직접 조회 실패' });
+  tabs.query.mockResolvedValue([{ id: 1, url } as chrome.tabs.Tab]);
+  executeScript.mockResolvedValue([
+    { frameId: 0, result: { text: '', title: '기안 제목', id: '' } },
+    { frameId: 4, result: { text, title, id } },
+  ] as any);
+  expect((await handleFetchRelatedDocContent({ title, id }, 1)).content).toContain('10월 1일부터');
+});
+
+it('제목 필드가 확인된 WebHWP 본문만 반환해도 읽는다', async () => {
+  const { executeScript } = openedHarness();
+  executeScript.mockResolvedValue([{ frameId: 0, result: { text: '1. 10월 1일부터 7일까지 행사를 개최하며 관련 부서의 협조를 요청합니다.', title, id } }] as any);
+  expect((await handleFetchRelatedDocContent({ title, id }, 1)).content).toContain('10월 1일부터');
+});
+
 it('제목만 있는 관련정보도 이미 열린 PDF 원문에서 읽는다', async () => {
   const { tabs } = openedHarness();
   tabs.sendMessage.mockImplementation(async (_tabId?: any, msg?: any) => msg?.type === 'EXTRACT' ? {
@@ -116,7 +141,7 @@ it('다른 출처·기안기·문서 목록은 원문 후보로 읽지 않는다
     { id: 3, url: 'https://onnara.test/bms/dct/addreport.do' }, { id: 4, url: 'https://onnara.test/main.do' },
   ] as chrome.tabs.Tab[]);
   expect((await handleFetchRelatedDocContent({ title }, 1)).content).toBe('');
-  expect(executeScript.mock.calls.some((call: any) => call[0]?.world === 'MAIN')).toBe(false);
+  expect(executeScript.mock.calls.filter((call: any) => call[0]?.world === 'MAIN').map((call: any) => call[0].target.tabId)).toEqual([1]);
 });
 
 it('제목이 같아도 문서 ID가 다르면 열린 문서의 본문을 사용하지 않는다', async () => {

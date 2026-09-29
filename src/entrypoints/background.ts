@@ -974,11 +974,11 @@ type ReferenceContent = { content: string; title?: string; attachments?: string[
 /** 이미 열린 같은 온나라 출처의 상세 문서만 읽는다. 창/탭/포커스를 바꾸지 않는다. */
 async function readAlreadyOpenReference(info: { title: string; id?: string }, callerTabId: number, originUrl: string, onlyTabId?: number, readDeadline?: number): Promise<ReferenceContent | null> {
   const tabs = onlyTabId === undefined ? (await chrome.tabs.query({}).catch(() => []) ?? []) : [await chrome.tabs.get(onlyTabId)].filter(Boolean);
-  const candidates = tabs.filter(tab => tab.id !== undefined && tab.id !== callerTabId &&
+  // 기관별 원문 팝업 주소는 일정하지 않다. 주소 이름으로 제외하지 말고,
+  // 같은 출처의 탭에서 실제 제목·문서 ID·본문을 읽어 검증한다.
+  const candidates = tabs.filter(tab => tab.id !== undefined &&
     !workTabs.has(tab.id) && sameOrigin(tab.url, originUrl) &&
-    !/\/(?:add|modify|draft)[^/]*\.do/i.test(new URL(tab.url!).pathname) &&
-    (/\/(?:bms\/dct|[^/]*(?:view|report|document|detail|doc))/i.test(new URL(tab.url!).pathname) ||
-      /\.pdf(?:[?#]|$)/i.test(tab.url!) || compactText(tab.title || '') === compactText(info.title)));
+    (tab.id === callerTabId || !/\/(?:add|modify|draft|list|main|index|home)[^/]*\.do/i.test(new URL(tab.url!).pathname)));
   candidates.sort((a, b) => Number(Boolean(info.id && b.url?.includes(info.id))) - Number(Boolean(info.id && a.url?.includes(info.id))));
   const deadline = readDeadline ?? Date.now() + 20_000;
   const matches: ReferenceContent[] = [];
@@ -992,18 +992,21 @@ async function readAlreadyOpenReference(info: { title: string; id?: string }, ca
       const frames = await frameTimeout(chrome.scripting.executeScript({
         target: { tabId: tab.id!, allFrames: true }, world: 'MAIN', func: readOpenReferenceFrame,
       }), control).catch(() => []);
-      const topId = frames?.find(frame => frame.frameId === 0)?.result?.id;
+      const sourceFrames = tab.id === callerTabId ? frames?.filter(frame => frame.frameId !== 0) : frames;
+      const topId = tab.id === callerTabId ? undefined : sourceFrames?.find(frame => frame.frameId === 0)?.result?.id;
       if (info.id && topId && info.id !== topId) continue;
-      const verifiedTitle = frames?.map(frame => frame.result?.title || '').find(title => compactText(title) === compactText(info.title)) || '';
-      for (const frame of frames ?? []) {
+      const verifiedTitle = sourceFrames?.map(frame => frame.result?.title || '').find(title => compactText(title) === compactText(info.title)) || '';
+      for (const frame of sourceFrames ?? []) {
         const value = frame.result;
         if (!value?.text || value.text.length > 200_000 || (info.id && value.id && value.id !== info.id)) continue;
         // 제목은 요청값으로 만들지 않는다. 원문 또는 실제 문서 제목 필드와 일치해야 한다.
         const parsed = parseReferenceDocument(value.text, info.title) ||
-          (value.bodyOnly && verifiedTitle && !/^제\s*목/m.test(value.text) ? parseReferenceDocument('제목 ' + verifiedTitle + '\n' + value.text, info.title) : null);
+          (verifiedTitle && !/^\s*제\s*목\s*[:：]?/m.test(value.text) &&
+            (value.bodyOnly || compactText(value.title || '') === compactText(info.title))
+            ? parseReferenceDocument('제목 ' + verifiedTitle + '\n' + value.text, info.title) : null);
         if (parsed) { content = { content: parsed.body, title: parsed.title, attachments: parsed.attachments }; break; }
       }
-      if (!content) {
+      if (!content && tab.id !== callerTabId) {
         const extracted = await dispatchContent(tab.id!, { type: 'EXTRACT', purpose: 'document-detail', targetTitle: info.title, budgetTokens: 100_000, control });
         if (extracted.type === 'EXTRACTED' && !extracted.payload.truncated && !extracted.payload.structuredData &&
           !extracted.payload.text.includes('앞 ' + PDF_MAX_PAGES + '쪽만 읽음')) {
