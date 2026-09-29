@@ -51,6 +51,7 @@
   * **원문 대조 검증**: AI의 환각을 방지하기 위해 추출된 기한과 근거 문장을 원문과 실시간 대조하여 표시합니다.
   * **아침 공유/공람 브리핑 (미열람 유지)**: 받은문서 목록을 훑어 기한 임박, 내 업무, 단순 공람으로 자동 분류합니다 (본문을 열지 않아 미열람 유지).
   * **공유/공람 '넘기기' 초고속 처리**: 온나라 DOM 반응 최적화로 불필요한 대기를 제거하여 수신된 공유/공람 문서를 신속하게 넘겨 처리할 수 있습니다.
+  * **공유/공람 개인화 AI 학습 (RAG / Few-shot)**: 사용자의 맞춤/틀림 피드백 및 올바른 분류 지정을 로컬에 축적하여, 이후 유사 공문 수신 시 임베딩/어휘 검색으로 확신도 높은 문서를 자동 분류하고 AI 판단을 지속적으로 개인화합니다.
   * **공문 본문 및 첨부파일 일괄 다운로드**: 체크한 공문의 본문(HTML/PDF)과 첨부파일을 백그라운드에서 안전하게 일괄 내려받습니다.
   * **공문서 기안기 연동 (사이드카 드로어)**: 온나라 기안기 화면 진입 시 인페이지 드로어가 구동되어 4대 표준 서식 기반 초안 작성, 참고문서 자동 연동 요약, 추천 제목 자동 추출 및 본 화면 반영, 클릭 타깃 직접 삽입을 지원합니다.
   * **내 문서 서식 분석(HWPX/ODT) 및 웹기안기 3단계 서식 적용 삽입**: 기존 공문 서식 파일을 등록하면 글꼴·크기·줄간격·들여쓰기·제목막대·요약상자 등 서식을 자동 분석하여 보관하고, 웹기안기 삽입 시 ParaShape/CharShape 한글 API → SetTextFile(HTML) → 들여쓰기 텍스트 순의 3단계로 완벽한 공문 규격을 유지하며 삽입합니다.
@@ -77,6 +78,7 @@ onNara.sAIde is a Microsoft Edge extension designed to help administrative perso
   * **Source Verification**: Verifies extracted deadlines and sentences against the original document text to prevent hallucinations.
   * **Inbox Briefing (Unread Preservation)**: Automatically categorizes incoming documents without opening them, preserving unread status.
   * **Fast Inbox Triage**: High-speed document pass-through optimized for OnNara DOM responsiveness.
+  * **Personalized Inbox Classification (RAG / Few-shot)**: Learns from user feedback and category corrections locally to auto-triage incoming documents using embedding/n-gram similarity and few-shot prompt injection.
   * **Batch Body & Attachment Downloads**: Safely downloads document bodies (HTML/PDF) and attachments in the background.
   * **Document Drafter Sidecar**: Provides an in-page drawer inside OnNara drafter to generate administrative drafts based on standard templates, suggest document titles directly into OnNara, and insert text into the editor with explicit approval.
   * **Template Format Analysis & 3-Stage Formatted Insertion**: Automatically extracts paragraph/character styles from HWPX/ODT files and inserts drafts using a robust 3-stage fallback (HWP API -> HTML -> Indented Text).

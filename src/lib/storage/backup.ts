@@ -27,7 +27,7 @@ import { TONGDAL_KEY } from '@/lib/tongdal/connection';
 export const BACKUP_FORMAT = 'onnara-saide-backup';
 export const BACKUP_VERSION = 1;
 
-/** 기억(임베딩) 표. 파일 크기를 혼자 좌우해서, 내보낼 때 따로 고른다. */
+/** 방문 페이지 기억 표. 개인화 사례의 임베딩도 같은 선택을 따른다. */
 export const MEMORY_TABLE = 'pageVectors';
 
 /**
@@ -106,7 +106,13 @@ export async function collectBackup(options: { includeMemory?: boolean } = {}): 
   const tables: Record<string, unknown[]> = {};
   for (const table of db.tables) {
     if (table.name === MEMORY_TABLE && !options.includeMemory) continue;
-    tables[table.name] = await table.toArray();
+    const rows = await table.toArray();
+    tables[table.name] = table.name === 'inboxFeedback' && !options.includeMemory
+      ? rows.map(row => {
+        const { vector: _vector, embedModel: _embedModel, ...example } = row as Record<string, unknown>;
+        return example;
+      })
+      : rows;
   }
 
   return {
@@ -239,12 +245,16 @@ function sanitizeLocal(local: Record<string, unknown>): Record<string, unknown> 
  */
 export async function restoreBackup(backup: BackupFile): Promise<BackupSummary> {
   const names = Object.keys(backup.tables);
+  // v7 이전에는 개인화 사례 표가 없었다. 옛 평가 기록을 복원할 때 현재 사례가 남으면
+  // 복원된 평가와 분류 동작이 서로 어긋난다. 방문 페이지 기억의 선택적 보존과는 다르다.
+  const clearLegacyExamples = backup.schemaVersion < 7 && names.includes('feedback') && !names.includes('inboxFeedback');
+  if (clearLegacyExamples) names.push('inboxFeedback');
   if (names.length) {
     await db.transaction('rw', names.map(name => db.table(name)), async () => {
       for (const name of names) {
         const table = db.table(name);
         await table.clear();
-        const rows = backup.tables[name]!;
+        const rows = backup.tables[name] ?? [];
         if (rows.length) await table.bulkPut(rows);
       }
     });

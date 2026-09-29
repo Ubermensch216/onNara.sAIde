@@ -18,6 +18,7 @@ import {
   type FeedbackKind,
   type FeedbackVerdict,
 } from '@/lib/feedback/store';
+import { ThumbIcon } from './ThumbIcon';
 
 interface Props {
   kind: FeedbackKind;
@@ -50,12 +51,12 @@ export function FeedbackButtons({ kind, targetKey, model, initial, compact }: Pr
     <span className={`feedback ${compact ? 'compact' : ''}`} role="group" aria-label={t('fb.label')}>
       {!compact && <span className="feedback-ask">{t('fb.ask')}</span>}
       <button type="button" className={`feedback-btn ${verdict === 'good' ? 'on good' : ''}`}
-        onClick={() => choose('good')} title={t('fb.goodHint')} aria-pressed={verdict === 'good'}>
-        {t('fb.good')}
+        onClick={() => choose('good')} title={t('fb.goodHint')} aria-label={t('fb.good')} aria-pressed={verdict === 'good'}>
+        <ThumbIcon direction="up" />
       </button>
       <button type="button" className={`feedback-btn ${verdict === 'bad' ? 'on bad' : ''}`}
-        onClick={() => choose('bad')} title={t('fb.badHint')} aria-pressed={verdict === 'bad'}>
-        {t('fb.bad')}
+        onClick={() => choose('bad')} title={t('fb.badHint')} aria-label={t('fb.bad')} aria-pressed={verdict === 'bad'}>
+        <ThumbIcon direction="down" />
       </button>
     </span>
   );

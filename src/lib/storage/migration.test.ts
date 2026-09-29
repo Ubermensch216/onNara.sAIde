@@ -11,7 +11,7 @@ it('v1 데이터베이스를 최신 판으로 열어도 기존 대화·메시지
   await legacy.table('pageVectors').add({ url: 'https://example.com', visitedAt: 1, vector: new Float32Array([1, 0]) });
   legacy.close();
   await db.open();
-  expect(db.verno).toBe(6);
+  expect(db.verno).toBe(7);
   expect((await db.conversations.get(1))?.title).toBe('Keep');
   expect(await db.messages.count()).toBe(1);
   expect(await db.table('pageVectors').count()).toBe(1);
@@ -26,6 +26,7 @@ it('v1 데이터베이스를 최신 판으로 열어도 기존 대화·메시지
   expect(await db.inboxRuns.count()).toBe(0);
   // v6에서 더한 내 참고자료도 빈 채로 열린다.
   expect(await db.userRefs.count()).toBe(0);
+  expect(await db.inboxFeedback.count()).toBe(0);
   await db.delete();
 });
 
@@ -40,7 +41,7 @@ it('v1 데이터베이스를 최신 판으로 열어도 기존 대화·메시지
  */
 it('선언된 표는 사라지지 않는다', () => {
   expect([...db.tables.map(table => table.name)].sort()).toEqual([
-    'conversations', 'docResults', 'feedback', 'inboxDocs', 'inboxRuns',
+    'conversations', 'docResults', 'feedback', 'inboxDocs', 'inboxFeedback', 'inboxRuns',
     'memoryControl', 'messages', 'pageVectors', 'tasks', 'userRefs',
   ]);
 });

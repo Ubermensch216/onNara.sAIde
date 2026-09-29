@@ -1489,14 +1489,20 @@
 .feedback-ask { margin-right: 2px; }
 
 .feedback-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
   border: 1px solid var(--border);
   background: var(--surface);
   color: var(--fg-muted);
   border-radius: 999px;
-  padding: 1px 8px;
-  font-size: 11px;
+  padding: 0;
   cursor: pointer;
 }
+
+.feedback-thumb.down { transform: rotate(180deg); }
 
 .feedback-btn:hover { border-color: var(--border-strong); }
 .feedback-btn.on.good { color: var(--ok); background: var(--ok-soft); border-color: var(--ok); }
@@ -1743,7 +1749,11 @@
 .inbox-item-meta > span.inbox-unread + span::before, .inbox-unread::before { content: none !important; }
 
 .inbox-reason { margin: 0; font-size: 11.5px; color: var(--fg-muted); line-height: 1.45; }
-.inbox-actions { display: flex; align-items: center; gap: 8px; }
+.inbox-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.inbox-actions .feedback.compact { margin-left: 0; }
+.inbox-feedback-correction { display: flex; flex-basis: 100%; align-items: center; gap: 5px; flex-wrap: wrap; padding: 4px 0; }
+.inbox-feedback-correction select { max-width: 130px; font-size: 11px; }
+.inbox-feedback-correction button { font-size: 11px; }
 
 /* ── 일정 등록 초안 (공유/공람 카드 안) ──
  * 카드 안에서 편다. 좁은 패널에서 모달을 띄우면 "어느 문서였지?"가 사라진다.

@@ -112,5 +112,10 @@ export async function feedbackSummary(): Promise<FeedbackSummary> {
 }
 
 export async function clearAllFeedback(): Promise<void> {
-  try { await db.feedback.clear(); } catch { /* 지울 것이 없다 */ }
+  try {
+    await db.transaction('rw', db.feedback, db.inboxFeedback, async () => {
+      await db.feedback.clear();
+      await db.inboxFeedback.clear();
+    });
+  } catch { /* 지울 것이 없다 */ }
 }

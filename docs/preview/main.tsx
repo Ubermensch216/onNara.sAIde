@@ -674,8 +674,8 @@ if (mode.startsWith('options') || OPTION_VIEWS.includes(mode)) {
       title: '온나라 연계 AI 어시스턴트 보안관리지침(안) 부서 의견조회',
       reportDate: day(2), sender: '행정안전부 정보화기반과', department: '정보통신과',
       hasAttachment: true, readState: 'unread' as const,
-      category: 'mine' as const, reason: '관심 키워드 “정보화”와 조치를 요구하는 말(“의견조회”)이 있습니다',
-      dueDate: '', classifier: 'rule' as const,
+      category: 'mine' as const, reason: '유사 피드백 “정보화예산 집행현황” 참고 · 관심 키워드 “정보화”가 걸린 문서',
+      dueDate: '', classifier: 'personalized' as const,
       firstSeenAt: now - 86400000, lastSeenAt: now - 86400000, briefedAt: now - 86400000,
     },
     {

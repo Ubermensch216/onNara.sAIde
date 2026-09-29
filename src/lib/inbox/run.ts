@@ -14,6 +14,7 @@ import { planBriefing, summarizeBriefing, toInboxRows, type Briefing } from './b
 import type { InboxScope } from './scope';
 import { loadInboxGroups, markBriefed, pruneInboxDocs, recordInboxRun, saveInboxDocs } from './store';
 import type { InboxTrigger } from './types';
+import { applyInboxFeedback } from './personalize';
 
 export function scopeFromSettings(settings: Settings): InboxScope {
   return {
@@ -39,6 +40,10 @@ export async function runBriefing({ list, settings, trigger, now = new Date() }:
     scope: scopeFromSettings(settings),
     classify: { now, interests: settings.briefingKeywords },
   });
+
+  plan.docs = await applyInboxFeedback(plan.docs, settings.briefingKeywords, now);
+  const personalized = new Map(plan.docs.map(doc => [doc.key, doc]));
+  plan.briefed = plan.briefed.map(doc => personalized.get(doc.key) ?? doc);
 
   await saveInboxDocs(plan.docs);
   // ★ 표시는 카드를 만든 뒤에 한다. 저장이 먼저 끝나야 "이미 브리핑했다"가 사실이 된다.

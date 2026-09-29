@@ -50,6 +50,7 @@ async function seed() {
   await db.tasks.add({ id: 4, title: '예산 자료 제출', status: 'todo', dueDate: '2026-10-01', createdAt: 12, updatedAt: 12 });
   await db.inboxDocs.add({ key: 'doc-1', group: 'g1', title: '협조 요청', reportDate: '2026-09-20', category: 'mine', firstSeenAt: 13, briefedAt: 13, readState: 'unread' } as never);
   await db.feedback.add({ id: 1, kind: 'inbox-relevance', key: 'doc-1', verdict: 'good', at: 14 } as never);
+  await db.inboxFeedback.add({ key: 'doc-1', title: '협조 요청', sender: '총무과', department: '기획팀', category: 'mine', verdict: 'good', at: 14, vector: new Float32Array([1, 0]), embedModel: 'bge-m3' });
   local['saide.settings'] = { model: 'gemma4:e2b', theme: 'dark', pageTokenBudget: 3000 };
   local['saide.presets'] = [{ id: 'p1', slash: '/검토', body: '검토해 줘' }];
   // 휘발성 신호. 담기지도 되살아나지도 않아야 한다.
@@ -77,10 +78,12 @@ it('★ 내보낸 파일로 되돌리면 일정·대화·브리핑 원장·설�
   expect((await db.messages.get(3))?.conversationId).toBe(7);
   expect(await db.inboxDocs.get('doc-1')).toMatchObject({ title: '협조 요청' });
   expect(await db.feedback.count()).toBe(1);
+  expect(await db.inboxFeedback.get('doc-1')).toMatchObject({ title: '협조 요청', category: 'mine' });
+  expect((await db.inboxFeedback.get('doc-1'))?.vector).toBeUndefined();
   expect(local['saide.settings']).toMatchObject({ model: 'gemma4:e2b', theme: 'dark', pageTokenBudget: 3000 });
   expect(local['saide.presets']).toEqual([{ id: 'p1', slash: '/검토', body: '검토해 줘' }]);
-  // 대화 1 · 메시지 1 · 일정 1 · 브리핑 원장 1 · 정확도 기록 1.
-  expect(restored.total).toBe(5);
+  // 대화 1 · 메시지 1 · 일정 1 · 브리핑 원장 1 · 정확도 기록 1 · 개인화 사례 1.
+  expect(restored.total).toBe(6);
 });
 
 it('복원한 뒤 새로 등록한 일정이 되살린 id와 부딪히지 않는다', async () => {
@@ -128,6 +131,7 @@ it('TONGDAL.ai 페어링 토큰은 백업에 담지 않고, 파일에 들어 있
 it('기억을 함께 담으면 임베딩이 Float32Array 그대로 돌아온다', async () => {
   const vector = new Float32Array([0.5, -0.25, 0.125, 1]);
   await db.table('pageVectors').add({ id: 1, url: 'http://a.test/', title: 'A', text: '본문', chunk: 0, vector, model: 'bge-m3', visitedAt: 5 });
+  await db.inboxFeedback.add({ key: 'example', title: '예산 안내', sender: '총무과', department: '기획팀', category: 'mine', verdict: 'good', at: 5, vector, embedModel: 'bge-m3' });
 
   const file = serializeBackup(await collectBackup({ includeMemory: true }));
   await wipeEverything();
@@ -136,6 +140,7 @@ it('기억을 함께 담으면 임베딩이 Float32Array 그대로 돌아온다'
   const row = await db.table('pageVectors').get(1);
   expect(row.vector).toBeInstanceOf(Float32Array);
   expect([...row.vector]).toEqual([0.5, -0.25, 0.125, 1]);
+  expect((await db.inboxFeedback.get('example'))?.vector).toEqual(vector);
 });
 
 it('기억을 뺀 백업으로 복원해도 지금 쌓인 기억은 지우지 않는다', async () => {
@@ -147,6 +152,16 @@ it('기억을 뺀 백업으로 복원해도 지금 쌓인 기억은 지우지 �
 
   // 사용자가 지우라고 한 적이 없다. 백업이 다루지 않은 표는 건드리지 않는다.
   expect(await db.table('pageVectors').count()).toBe(1);
+});
+
+it('이전 스키마의 평가 백업을 복원하면 현재 개인화 사례를 비운다', async () => {
+  await seed();
+  const old = await collectBackup();
+  old.schemaVersion = 6;
+  delete old.tables.inboxFeedback;
+  await restoreBackup(parseBackup(serializeBackup(old)));
+  expect(await db.feedback.count()).toBe(1);
+  expect(await db.inboxFeedback.count()).toBe(0);
 });
 
 /* ── 외부 파일 방어 ─────────────────────────────────────── */

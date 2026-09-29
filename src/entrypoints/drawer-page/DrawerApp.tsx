@@ -53,6 +53,8 @@ const OUTPUT_TOKENS = 4096;
 const REFERENCE_BUDGET_MAX = 16000;
 /** 이보다 긴 관련정보 원문은 구간별 사실 노트를 만들어 함께 넣는다(analyzeReferenceForDraft). */
 const LONG_REFERENCE_CHARS = 12_000;
+/** [원문 진단 파일 저장] 버튼 표시. 관련정보 원문을 못 읽는 새 사례를 조사할 때만 켠다. */
+const SHOW_REFERENCE_DIAGNOSIS = false;
 
 function formatLabel(ref: UserRef): string {
   return { pdf: 'PDF', hwpx: 'HWPX', docx: 'DOCX', xlsx: 'XLSX', text: 'TXT' }[ref.format];
@@ -312,6 +314,7 @@ export function DrawerApp() {
   };
 
   // 원문을 읽지 못한 관련정보의 실제 화면 구조를 진단 파일로 저장한다(읽기 전용).
+  // 버튼은 숨겨 둔다. 새 종류의 문서를 못 읽을 때 SHOW_REFERENCE_DIAGNOSIS를 켜서 다시 쓴다.
   const [diagnosing, setDiagnosing] = useState(false);
   const handleDiagnoseRef = (doc: RelatedDocInfo) => {
     if (diagnosing || typeof chrome === 'undefined' || !chrome.runtime?.sendMessage) return;
@@ -850,7 +853,7 @@ export function DrawerApp() {
                 onClearAll={() => { setSelectedKeys([]); setExpandedKey(null); setTongdalRefs([]); }}
                 onToggleExpand={handleToggleExpand}
                 onRetry={handleFetchRefContent}
-                onDiagnose={handleDiagnoseRef}
+                onDiagnose={SHOW_REFERENCE_DIAGNOSIS ? handleDiagnoseRef : undefined}
                 diagnosing={diagnosing}
                 relatedDocs={relatedDocs}
                 fetchingTitle={fetchingTitle}

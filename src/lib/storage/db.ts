@@ -12,6 +12,7 @@ import type { ScheduleTask } from '@/lib/schedule/task';
 import type { TaskCandidate } from '@/lib/schedule/candidates';
 import type { DocResult } from '@/lib/cache/doc-results';
 import type { FeedbackEntry } from '@/lib/feedback/store';
+import type { InboxFeedbackExample } from '@/lib/inbox/personalize';
 import type { InboxDoc, InboxRun } from '@/lib/inbox/types';
 import type { UserRef } from '@/lib/storage/user-refs';
 import type { KnowledgeSource } from '@/lib/tongdal/evidence';
@@ -97,6 +98,8 @@ class SaideDB extends Dexie {
   docResults!: EntityTable<DocResult, 'key'>;
   /** 정확도 피드백(B4). 대화를 지워도 남는다 — 누적 수치가 이 기능의 목적이다. */
   feedback!: EntityTable<FeedbackEntry, 'id'>;
+  /** 사용자가 확인한 공유/공람 분류 사례. 제목은 이 기능에만 쓰며 로컬에 보관한다. */
+  inboxFeedback!: EntityTable<InboxFeedbackExample, 'key'>;
   /** 브리핑 원장(N1). "이 문서를 이미 브리핑했는가"를 여기서만 판단한다. */
   inboxDocs!: EntityTable<InboxDoc, 'key'>;
   /** 브리핑 실행 기록(N1). 건너뛴 실행도 남긴다. */
@@ -177,6 +180,7 @@ class SaideDB extends Dexie {
      * ★ 계획서 §7 업무 지식 저장소(personal 컬렉션)의 전 단계다. 그때는 upgrade()로 옮겨 담는다.
      */
     this.version(6).stores({ userRefs: 'id, contentHash, createdAt, lastUsedAt' });
+    this.version(7).stores({ inboxFeedback: 'key, at' });
   }
 }
 

@@ -18,13 +18,14 @@ import type { ErrorPresentation } from '@/lib/errors/describe';
 import { requestAccessForError, requestAllUrls } from '@/lib/permissions';
 import {
   clearInboxError, clearInboxFocus, collectAndBrief, designateInbox, dismissDoc,
-  groupDocs, loadInbox, openTaskDraft, pendingDocs, useInbox, type TaskDraftSession,
+  groupDocs, loadInbox, openTaskDraft, pendingDocs, refinePendingInbox, useInbox, type TaskDraftSession,
 } from '@/lib/inbox/panel';
 import type { InboxCategory, InboxDoc } from '@/lib/inbox/types';
 import { ErrorBanner } from './ErrorBanner';
 import { InboxTaskDraft } from './InboxTaskDraft';
-import { FeedbackButtons } from './FeedbackButtons';
+import { InboxFeedback } from './InboxFeedback';
 import { loadFeedbackMap, type FeedbackVerdict } from '@/lib/feedback/store';
+import { loadInboxFeedbackMap, type InboxFeedbackExample } from '@/lib/inbox/personalize';
 
 interface Props {
   tab: TabSummary | null;
@@ -51,9 +52,15 @@ export function InboxPanel({ tab, settings, onOpenSchedule }: Props) {
   const [showFiltered, setShowFiltered] = useState(false);
   /** 이미 눌러 둔 관심도 평가. 한 번에 읽어 카드에 나눠 준다(B4). */
   const [verdicts, setVerdicts] = useState<Map<string, FeedbackVerdict>>(new Map());
+  const [examples, setExamples] = useState<Map<string, InboxFeedbackExample>>(new Map());
+  const refreshFeedback = async () => {
+    const [nextVerdicts, nextExamples] = await Promise.all([loadFeedbackMap('inbox-relevance'), loadInboxFeedbackMap()]);
+    setVerdicts(nextVerdicts);
+    setExamples(nextExamples);
+  };
 
-  useEffect(() => { void loadInbox(); }, []);
-  useEffect(() => { void loadFeedbackMap('inbox-relevance').then(setVerdicts); }, []);
+  useEffect(() => { void loadInbox().then(() => refinePendingInbox(settings)); }, []);
+  useEffect(() => { void refreshFeedback(); }, []);
 
   useEffect(() => {
     if (!focus || !loaded) return;
@@ -161,8 +168,8 @@ export function InboxPanel({ tab, settings, onOpenSchedule }: Props) {
           </div>
           <ul className="inbox-list">
             {group.docs.map(doc => (
-              <InboxCard key={doc.key} doc={doc} lit={spotlight === doc.key} model={settings.model}
-                verdict={verdicts.get(doc.key)} onOpenSchedule={onOpenSchedule}
+              <InboxCard key={doc.key} doc={doc} lit={spotlight === doc.key}
+                verdict={verdicts.get(doc.key)} example={examples.get(doc.key)} onFeedbackSaved={refreshFeedback} onOpenSchedule={onOpenSchedule}
                 tab={tab} settings={settings} draft={draft?.key === doc.key ? draft : null} />
             ))}
           </ul>
@@ -177,8 +184,8 @@ export function InboxPanel({ tab, settings, onOpenSchedule }: Props) {
           {showFiltered && (
             <ul className="inbox-list">
               {filtered.slice(0, 50).map(doc => (
-                <InboxCard key={doc.key} doc={doc} lit={false} model={settings.model}
-                  verdict={verdicts.get(doc.key)} onOpenSchedule={onOpenSchedule}
+                <InboxCard key={doc.key} doc={doc} lit={false}
+                  verdict={verdicts.get(doc.key)} example={examples.get(doc.key)} onFeedbackSaved={refreshFeedback} onOpenSchedule={onOpenSchedule}
                   tab={tab} settings={settings} draft={draft?.key === doc.key ? draft : null} />
               ))}
             </ul>
@@ -192,8 +199,9 @@ export function InboxPanel({ tab, settings, onOpenSchedule }: Props) {
 interface CardProps {
   doc: InboxDoc;
   lit: boolean;
-  model: string;
   verdict?: FeedbackVerdict | undefined;
+  example?: InboxFeedbackExample | undefined;
+  onFeedbackSaved: () => Promise<void>;
   onOpenSchedule: (taskId: number) => void;
   /** 본문을 읽을 때 쓸 탭. 받은문서 목록을 보고 있어야 한다. */
   tab: TabSummary | null;
@@ -202,7 +210,7 @@ interface CardProps {
   draft: TaskDraftSession | null;
 }
 
-function InboxCard({ doc, lit, model, verdict, onOpenSchedule, tab, settings, draft }: CardProps) {
+function InboxCard({ doc, lit, verdict, example, onFeedbackSaved, onOpenSchedule, tab, settings, draft }: CardProps) {
   const t = useT();
   const dismissing = useInbox(state => state.dismissing);
   const meta = [doc.department, doc.sender, doc.reportDate].filter(Boolean);
@@ -230,7 +238,7 @@ function InboxCard({ doc, lit, model, verdict, onOpenSchedule, tab, settings, dr
           </button>
         )}
         {/* ★ 분류가 맞았는지 한 번 누르는 것으로 받는다(B4). 이 수치가 관심도 학습의 표본이 된다. */}
-        <FeedbackButtons kind="inbox-relevance" targetKey={doc.key} model={model} initial={verdict} compact />
+        {doc.category !== 'filtered' && <InboxFeedback doc={doc} settings={settings} initial={verdict} example={example} onSaved={onFeedbackSaved} />}
         <span className="spacer" />
         {/* ★ 넘기면 목록에서 읽기처리를 누른다. 되돌릴 수 없으므로 제목 풍선에 적어 둔다. */}
         <button type="button" className="inbox-link" disabled={Boolean(dismissing)}

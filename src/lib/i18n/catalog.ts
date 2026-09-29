@@ -615,7 +615,7 @@ const ko = {
 
   /* ── 정확도 기록·캐시 (B4 · B1) ── */
   'quality.h': '정확도 기록',
-  'quality.intro': '답변과 기한 후보에 누른 맞음·틀림이 여기에 쌓입니다. 전부 이 컴퓨터 안에만 남고 밖으로 나가지 않습니다.',
+  'quality.intro': '답변·기한 후보·공유/공람 분류에 누른 맞음·틀림이 여기에 쌓입니다. 공유/공람의 확인된 분류 사례에는 문서 제목이 포함되며, 이후 AI 분류에 쓰입니다. 전부 이 컴퓨터 안에만 남습니다.',
   'quality.accuracy': '지금까지의 정확도',
   'quality.accuracyValue': '{pct}% (평가 {n}건)',
   'quality.accuracyDesc': '답변 아래와 기한 후보 옆의 버튼으로 평가할 수 있습니다. 다시 누르면 취소됩니다.',
@@ -636,7 +636,7 @@ const ko = {
   'quality.clearFeedback': '평가 기록 지우기',
   'quality.showGuide': '사용법 다시 보기',
   'quality.showGuideDone': '다음에 사이드패널을 열면 안내가 나옵니다.',
-  'quality.clearDesc': '지운 기록은 되돌릴 수 없습니다. 캐시를 비우면 다음 분석에서 모델을 다시 부릅니다.',
+  'quality.clearDesc': '평가 기록을 지우면 공유/공람 개인화 사례도 함께 지워집니다. 지운 기록은 되돌릴 수 없습니다.',
   'alert.title': '기한 임박 {n}건',
   'alert.overdue': '지남 {n}건',
   'alert.today': '오늘 {n}건',
@@ -660,6 +660,10 @@ const ko = {
   'fb.bad': '틀림',
   'fb.goodHint': '원문과 맞습니다. 이 컴퓨터에만 기록됩니다.',
   'fb.badHint': '원문과 다릅니다. 이 컴퓨터에만 기록됩니다.',
+  'fb.inboxCorrection': '올바른 분류',
+  'fb.inboxApply': '반영',
+  'fb.inboxCancel': '취소',
+  'fb.inboxError': '피드백을 저장하지 못했습니다. 다시 시도해 주세요.',
 
   /* ── 첫 실행 안내 (B3) ── */
   'onboard.title': '온나라 sAIde 사용법',
@@ -1401,7 +1405,7 @@ const en = {
 
   /* ── Accuracy record & cache (B4 · B1) ── */
   'quality.h': 'Accuracy record',
-  'quality.intro': 'Correct and wrong votes on answers and due-date candidates collect here. Everything stays on this computer.',
+  'quality.intro': 'Ratings for answers, due-date candidates, and shared-document classification collect here. Confirmed shared-document examples include titles and help future AI classification. All data stays on this computer.',
   'quality.accuracy': 'Accuracy so far',
   'quality.accuracyValue': '{pct}% ({n} rating(s))',
   'quality.accuracyDesc': 'Rate an answer with the buttons below it, or a due-date candidate beside it. Press again to undo.',
@@ -1422,7 +1426,7 @@ const en = {
   'quality.clearFeedback': 'Clear ratings',
   'quality.showGuide': 'Show the guide again',
   'quality.showGuideDone': 'The guide will appear the next time you open the side panel.',
-  'quality.clearDesc': 'Clearing cannot be undone. After clearing the cache the next analysis calls the model again.',
+  'quality.clearDesc': 'Clearing ratings also deletes shared-document personalization examples. Deleted records cannot be restored.',
   'alert.title': '{n} tasks due',
   'alert.overdue': '{n} overdue',
   'alert.today': '{n} today',
@@ -1446,6 +1450,10 @@ const en = {
   'fb.bad': 'Wrong',
   'fb.goodHint': 'Matches the source. Recorded on this computer only.',
   'fb.badHint': 'Differs from the source. Recorded on this computer only.',
+  'fb.inboxCorrection': 'Correct category',
+  'fb.inboxApply': 'Apply',
+  'fb.inboxCancel': 'Cancel',
+  'fb.inboxError': 'Could not save feedback. Please try again.',
 
   /* ── First-run guide (B3) ── */
   'onboard.title': 'How onNara sAIde works',

@@ -21,6 +21,7 @@ import { lastInboxRun, listInboxDocs, patchInboxDoc } from './store';
 import { draftFromDoc, draftTasksFromBody, toNewTask, type TaskDraft } from './task-draft';
 import type { InboxCategory, InboxDoc, InboxRun, InboxTrigger } from './types';
 import { INBOX_CATEGORIES } from './types';
+import { classifyByRules } from './classify-rules';
 
 /**
  * `@브리핑` — 공유/공람을 수시로 확인하는 명령.
@@ -230,10 +231,11 @@ async function refineInBackground(briefing: Briefing, settings: Settings, serial
   try {
     const next = await classifyWithModel(docs, settings, abort.signal);
     if (abort.signal.aborted || serial !== briefingSerial) return;
-    const changed = next.filter((doc, index) => doc.category !== docs[index]!.category);
+    const changed = next.filter((doc, index) => doc.category !== docs[index]!.category || doc.classifier !== docs[index]!.classifier);
     if (!changed.length) return;
     for (const doc of changed) {
       if (abort.signal.aborted || serial !== briefingSerial) return;
+      if (useInbox.getState().docs.find(current => current.key === doc.key)?.classifier === 'feedback') continue;
       await patchLocal(doc.key, { category: doc.category, reason: doc.reason, classifier: doc.classifier });
     }
     if (abort.signal.aborted || serial !== briefingSerial) return;
@@ -292,6 +294,44 @@ const MARK_READ_TIMEOUT_MS = 90_000;
 async function patchLocal(key: string, patch: Partial<InboxDoc>): Promise<void> {
   await patchInboxDoc(key, patch);
   useInbox.setState(state => ({ docs: state.docs.map(doc => doc.key === key ? { ...doc, ...patch } : doc) }));
+}
+
+/** 알람으로 수집돼 규칙 분류만 남은 문서를 패널을 열었을 때 개인화 AI로 보강한다. */
+export async function refinePendingInbox(settings: Settings): Promise<void> {
+  const docs = pendingDocs(useInbox.getState().docs)
+    .filter(doc => doc.classifier === 'rule' && (doc.category === 'mine' || doc.category === 'notice'));
+  if (!docs.length) return;
+  refining?.abort();
+  const abort = new AbortController();
+  refining = abort;
+  const serial = ++briefingSerial;
+  const timer = setTimeout(() => abort.abort(), REFINE_TIMEOUT_MS);
+  try {
+    const next = await classifyWithModel(docs, settings, abort.signal);
+    if (abort.signal.aborted || serial !== briefingSerial) return;
+    for (const doc of next) {
+      if (abort.signal.aborted || serial !== briefingSerial) return;
+      const current = useInbox.getState().docs.find(row => row.key === doc.key);
+      if (!current || current.classifier === 'feedback' ||
+          (current.category === doc.category && current.classifier === doc.classifier)) continue;
+      await patchLocal(doc.key, { category: doc.category, reason: doc.reason, classifier: doc.classifier });
+    }
+  } catch { /* 모델을 못 쓰면 규칙 결과를 남긴다. */ }
+  finally {
+    clearTimeout(timer);
+    if (refining === abort) refining = null;
+  }
+}
+
+/** 사용자가 고친 갈래를 원장과 화면에 즉시 반영한다. */
+export async function setInboxFeedbackCategory(doc: InboxDoc, category: 'mine' | 'notice'): Promise<void> {
+  await patchLocal(doc.key, { category, reason: '내 피드백으로 분류', classifier: 'feedback' });
+}
+
+/** 평가를 취소하면 현재 설정의 규칙 분류로 되돌린다. */
+export async function restoreInboxRuleCategory(doc: InboxDoc, settings: Settings): Promise<void> {
+  const rule = classifyByRules(doc, { interests: settings.briefingKeywords });
+  await patchLocal(doc.key, { category: rule.category, reason: rule.reason, classifier: 'rule' });
 }
 
 /**

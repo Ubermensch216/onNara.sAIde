@@ -54,13 +54,20 @@ it('한참 지난 날짜는 기한이 아니라 제목의 표기로 본다', () 
   expect(plan.briefed[0]!.category).not.toBe('deadline');
 });
 
-it('조치를 요구하는 말이 있으면 내 업무로, 없으면 단순 공람으로 본다', () => {
+it('관심 키워드가 있으면 내 업무로, 없으면 단순 공람으로 본다', () => {
+  const plan = planBriefing([
+    row({ title: '업무추진비 집행내역 알림' }),
+    row({ title: '직원 동호회 활동 사진 공모' }),
+  ], [], options({ classify: { now: NOW, interests: ['업무추진비'] } }));
+  expect(plan.briefed.map(doc => doc.category)).toEqual(['mine', 'notice']);
+  expect(plan.briefed[0]!.reason).toContain('업무추진비');
+});
+
+it('조치를 요구하는 말만으로는 내 업무로 보지 않고 단순 공람으로 본다', () => {
   const plan = planBriefing([
     row({ title: '업무추진비 집행내역 회신 협조' }),
-    row({ title: '직원 동호회 활동 사진 공모' }),
   ], [], options());
-  expect(plan.briefed.map(doc => doc.category)).toEqual(['mine', 'notice']);
-  expect(plan.briefed[0]!.reason).toContain('회신');
+  expect(plan.briefed[0]!.category).toBe('notice');
 });
 
 it('키워드 범위는 걸리지 않은 문서를 버리지 않고 범위 밖으로 남긴다', () => {
@@ -132,7 +139,7 @@ it('급한 것부터 실어 보내고, 빈 갈래는 만들지 않는다', () =>
     row({ title: '정산자료 제출(9. 25.까지)' }),
     row({ title: '수요조사 협조' }),
     row({ title: '정산자료 제출(9. 21.까지)' }),
-  ], [], options());
+  ], [], options({ classify: { now: NOW, interests: ['수요조사'] } }));
   const briefing = summarizeBriefing(plan, '받은문서', 'manual', AT);
   expect(briefing.groups.map(group => group.category)).toEqual(['deadline', 'mine', 'notice']);
   // 같은 갈래 안에서는 기한이 이른 것이 먼저다.

@@ -16,14 +16,6 @@ import { normalizeDueDate, parseReferenceDate, type TaskDue } from '@/lib/schedu
 import { daysUntil } from '@/lib/schedule/task';
 import type { InboxCategory, InboxRow } from './types';
 
-/**
- * 제목에 있으면 "내가 손댈 일"로 보는 말.
- *
- * ★ `보고`·`안내`는 넣지 않는다. 단순 공람 제목에 가장 흔한 말이라, 넣는 순간
- *   목록 대부분이 '내 업무로 보임'이 되어 갈래가 의미를 잃는다.
- */
-const ACTION_WORDS = ['제출', '회신', '요청', '협조', '조치', '신청', '의견조회', '수요조사', '참석', '독촉', '이행', '정산', '점검'];
-
 export interface ClassifyOptions {
   now?: Date;
   /** '내 업무로 보임' 판정에 쓸 관심 키워드. 설정 키워드가 그대로 들어온다. */
@@ -88,8 +80,5 @@ export function classifyByRules(row: InboxRow, options: ClassifyOptions = {}): R
     .find(keyword => text.includes(normalizeForMatch(keyword)));
   if (interest) return { category: 'mine', reason: `관심 키워드 "${interest}"`, ...(due ? { due } : {}) };
 
-  const action = ACTION_WORDS.find(word => text.includes(word));
-  if (action) return { category: 'mine', reason: `조치를 요구하는 말 "${action}"`, ...(due ? { due } : {}) };
-
-  return { category: 'notice', reason: '기한·조치 표현이 없습니다', ...(due ? { due } : {}) };
+  return { category: 'notice', reason: '기한·관심 키워드가 없습니다', ...(due ? { due } : {}) };
 }

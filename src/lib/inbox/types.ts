@@ -15,7 +15,7 @@ import type { TaskDue } from '@/lib/schedule/due-date';
  * 브리핑의 갈래.
  *
  * - `deadline` 기한 임박 — 제목에서 코드가 날짜를 뽑아낸 문서
- * - `mine` 내 업무로 보임 — 키워드가 걸리거나 조치를 요구하는 말이 있는 문서
+ * - `mine` 내 업무로 보임 — 관심 키워드가 걸린 문서
  * - `notice` 단순 공람 — 나머지
  * - `filtered` 범위 밖 — 사용자가 정한 범위에 들지 않은 문서. **버리지 않고 남긴다**
  */
@@ -53,7 +53,7 @@ export interface InboxDoc extends InboxRow {
   /** 색인·정렬용 기한 날짜(YYYY-MM-DD). 없으면 빈 문자열 — tasks 테이블과 같은 규칙이다. */
   dueDate: string;
   /** 규칙이 정했는가, 모델이 다시 정했는가. */
-  classifier: 'rule' | 'model';
+  classifier: 'rule' | 'model' | 'feedback' | 'personalized';
   firstSeenAt: number;
   lastSeenAt: number;
   briefedAt?: number;

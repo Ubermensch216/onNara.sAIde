@@ -16,6 +16,7 @@ import { requireCapabilities } from '@/lib/ollama/client';
 import { streamChat } from '@/lib/ollama/stream';
 import type { Settings } from '@/lib/storage/settings';
 import type { InboxCategory, InboxDoc } from './types';
+import { retrieveInboxFeedback, strongPersonalMatch, type RetrievedExample } from './personalize';
 
 /**
  * 분류에 쓸 컨텍스트 길이 상한.
@@ -50,20 +51,31 @@ export const INBOX_CLASSIFY_SCHEMA = {
   required: ['items'],
 } as const;
 
-export function buildClassifyPrompt(): string {
+export function buildClassifyPrompt(interests: string[] = []): string {
   return [
     '너는 공공기관 공문 목록을 분류하는 도구다. 각 줄은 "번호. 제목 | 발신 | 부서" 형식이다.',
     '각 문서를 다음 둘 중 하나로만 분류한다.',
-    '- mine: 받은 사람이 회신·제출·참석·협조·조치 같은 행동을 해야 할 것으로 보이는 문서',
-    '- notice: 알리거나 공유하는 것이 목적이고 받은 사람이 할 일이 없는 문서',
+    '- mine: 이 사용자의 담당 업무나 관심 분야와 관련되어 직접 챙길 문서',
+    '- notice: 이 사용자에게 단순 공유·공람으로 보이는 문서',
+    '회신·제출·협조 같은 일반적인 요청 표현만으로 mine이라고 판단하지 않는다.',
+    ...(interests.length ? [`사용자 관심 키워드: ${interests.slice(0, 12).map(value => value.slice(0, 30)).join(', ')}`] : []),
     '제목에 없는 내용을 지어내지 않는다. 판단이 서지 않으면 notice로 둔다.',
+    '각 번호에 붙은 사용자 확인 사례는 개인 업무의 단서다. 유사성만 참고하고 문서 자체를 판단한다.',
     'JSON만 출력한다. 모든 번호에 대해 한 항목씩 낸다.',
   ].join('\n');
 }
 
-export function buildClassifyInput(docs: Pick<InboxDoc, 'title' | 'sender' | 'department'>[]): string {
+export function buildClassifyInput(
+  docs: Pick<InboxDoc, 'title' | 'sender' | 'department' | 'key'>[],
+  examples: Map<string, RetrievedExample[]> = new Map(),
+): string {
   return docs
-    .map((doc, index) => `${index + 1}. ${doc.title.slice(0, MAX_TITLE_LENGTH)} | ${doc.sender} | ${doc.department}`)
+    .map((doc, index) => {
+      const prior = (examples.get(doc.key) ?? [])
+        .map(hit => `사용자 확인: "${hit.example.title.replace(/\s+/g, ' ').slice(0, 70)}" → ${hit.example.category}`)
+        .join('; ');
+      return `${index + 1}. ${doc.title.slice(0, MAX_TITLE_LENGTH)} | ${doc.sender} | ${doc.department}${prior ? `\n   ${prior}` : ''}`;
+    })
     .join('\n');
 }
 
@@ -99,19 +111,35 @@ export async function classifyWithModel(
   settings: Settings,
   signal?: AbortSignal,
 ): Promise<InboxDoc[]> {
-  const targets = docs.filter(doc => doc.category === 'mine' || doc.category === 'notice').slice(0, MAX_CLASSIFY_TITLES);
+  const targets = docs.filter(doc => (doc.category === 'mine' || doc.category === 'notice') && doc.classifier !== 'feedback' && doc.classifier !== 'personalized').slice(0, MAX_CLASSIFY_TITLES);
   if (!targets.length) return docs;
 
-  await requireCapabilities(settings.endpoint, settings.model, [], signal);
+  const examples = await retrieveInboxFeedback(targets, settings, signal);
+  signal?.throwIfAborted();
+  const direct = new Map(targets.map(doc => [doc.key, strongPersonalMatch(examples.get(doc.key) ?? [])] as const)
+    .filter((pair): pair is readonly [string, NonNullable<typeof pair[1]>] => Boolean(pair[1])));
+  const personalized = docs.map(doc => {
+    const hit = direct.get(doc.key);
+    return hit ? {
+      ...doc, category: hit.example.category,
+      reason: `유사 피드백 "${hit.example.title.slice(0, 40)}" 참고`,
+      classifier: 'personalized' as const,
+    } : doc;
+  });
+  const remaining = targets.filter(doc => !direct.has(doc.key));
+  if (!remaining.length) return personalized;
+
+  try { await requireCapabilities(settings.endpoint, settings.model, [], signal); }
+  catch { return personalized; }
 
   let raw = '';
-  await streamChat(
+  try { await streamChat(
     settings.endpoint,
     {
       model: settings.model,
       messages: [
-        { role: 'system', content: buildClassifyPrompt() },
-        { role: 'user', content: buildClassifyInput(targets) },
+        { role: 'system', content: buildClassifyPrompt(settings.briefingKeywords) },
+        { role: 'user', content: buildClassifyInput(remaining, examples) },
       ],
       stream: true,
       think: false,
@@ -122,23 +150,24 @@ export async function classifyWithModel(
     },
     { onToken: token => { raw += token; } },
     signal,
-  );
+  ); } catch { return personalized; }
   signal?.throwIfAborted();
 
-  const verdicts = readClassification(raw, targets.length);
-  if (!verdicts.size) return docs;
+  const verdicts = readClassification(raw, remaining.length);
+  if (!verdicts.size) return personalized;
 
-  const changed = new Map<string, ModelCategory>();
-  targets.forEach((doc, index) => {
+  const checked = new Map<string, ModelCategory>();
+  remaining.forEach((doc, index) => {
     const category = verdicts.get(index);
-    if (category && category !== doc.category) changed.set(doc.key, category);
+    if (category) checked.set(doc.key, category);
   });
-  if (!changed.size) return docs;
+  if (!checked.size) return personalized;
 
-  return docs.map(doc => {
-    const category = changed.get(doc.key);
+  return personalized.map(doc => {
+    const category = checked.get(doc.key);
+    const cited = examples.get(doc.key)?.[0]?.example.title;
     return category
-      ? { ...doc, category, reason: `${doc.reason} · 모델이 ${category === 'mine' ? '내 업무' : '단순 공람'}으로 봄`, classifier: 'model' as const }
+      ? { ...doc, category, reason: category === doc.category && !cited ? doc.reason : `${cited ? `유사 피드백 "${cited.slice(0, 40)}" 참고 · ` : ''}모델이 ${category === 'mine' ? '내 업무' : '단순 공람'}으로 봄`, classifier: 'model' as const }
       : doc;
   });
 }
