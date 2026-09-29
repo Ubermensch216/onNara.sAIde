@@ -273,3 +273,25 @@ describe('related-info', () => {
     });
   });
 });
+
+it('표시 span을 감싼 요소부터 탐색해도 하위 링크의 ID를 놓치지 않는다', () => {
+  const doc = document.implementation.createHTMLDocument();
+  doc.body.innerHTML = `<table><tr><th>관련정보</th><td><div><a href="https://onnara.test/view.do?docid=123456"><span>[문서] 2026년 북구 종합감사 유공 표창 대상자 알림</span></a></div></td></tr></table>`;
+  expect(extractRelatedDocuments(doc)[0]).toMatchObject({ id: '123456', title: '2026년 북구 종합감사 유공 표창 대상자 알림' });
+});
+
+it('기관별 더블클릭 함수명과 같은 항목의 hidden 값에서도 DCT ID를 얻는다', () => {
+  const id = 'DCTEF3F599DC9712EE4BC1EC15B8716FA9B';
+  const doc = document.implementation.createHTMLDocument();
+  doc.body.innerHTML = `<table><tr><th>관련정보</th><td><span ondblclick="showDocumentCard('${id}')">[문서] 감사 유공 표창 알림</span></td></tr></table>`;
+  expect(extractRelatedDocuments(doc)[0]?.id).toBe(id);
+  doc.body.innerHTML = `<table><tr><th>관련정보</th><td><input type="hidden" value="${id}"><span>[문서] 감사 유공 표창 알림</span></td></tr></table>`;
+  expect(extractRelatedDocuments(doc)[0]?.id).toBe(id);
+});
+
+it('대소문자가 다른 infodessource textarea의 URL 인코딩 값도 읽는다', () => {
+  const id = 'DOCEF3F599DC9712EE4BC1EC15B8716FA9B';
+  const doc = document.implementation.createHTMLDocument();
+  doc.body.innerHTML = `<textarea name="infoDesSource">${encodeURIComponent(id + '|문서「감사 유공 표창 알림」')}</textarea><table><tr><th>관련정보</th><td><span>[문서] 감사 유공 표창 알림</span></td></tr></table>`;
+  expect(extractRelatedDocuments(doc)[0]?.id).toBe(id);
+});

@@ -5,6 +5,8 @@
  * 주요 필수 항목과 작성 지침을 정의하고 영속화 및 프롬프트 생성에 사용한다.
  */
 
+import type { TemplateFormat } from '@/lib/template-format/types';
+
 export type DocumentType =
   | '업무보고'
   | '기본 계획서'
@@ -27,6 +29,7 @@ export interface DraftTemplate {
   description: string;        // 서식 설명
   sections: string[];         // 유형에 따른 주요 항목 목록 (예: ['1. 보고 배경 및 목적', ...])
   guidance?: string;          // 항목 작성 시 준수할 특화 지침
+  format?: TemplateFormat;    // 서식 파일(.hwpx·.odt)에서 가져온 본문 서식(글꼴·크기·단계별 들여쓰기 등)
   isBuiltin?: boolean;        // 기본 탑재 서식 여부
   createdAt: number;
   updatedAt: number;

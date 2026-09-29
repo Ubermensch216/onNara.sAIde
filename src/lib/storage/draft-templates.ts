@@ -9,6 +9,7 @@ import {
   BUILTIN_TEMPLATES,
   type DraftTemplate,
 } from '@/lib/onnara/draft-templates';
+import type { TemplateFormat } from '@/lib/template-format/types';
 
 const STORAGE_KEY = 'saide.draft_templates';
 
@@ -81,6 +82,7 @@ export async function addDraftTemplate(input: {
   description?: string;
   sections: string[];
   guidance?: string;
+  format?: TemplateFormat;
 }): Promise<DraftTemplate[]> {
   const list = await loadDraftTemplates();
   const now = Date.now();
@@ -91,6 +93,7 @@ export async function addDraftTemplate(input: {
     description: (input.description || '').trim(),
     sections: input.sections.map((s) => s.trim()).filter(Boolean),
     guidance: (input.guidance || '').trim() || undefined,
+    ...(input.format ? { format: input.format } : {}),
     isBuiltin: false,
     createdAt: now,
     updatedAt: now,

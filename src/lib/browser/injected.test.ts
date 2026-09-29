@@ -115,3 +115,12 @@ it('목록 없는 화면에 주입된 메시지도 저장한 요청으로 목록
   expect(document.body.innerHTML).toBe('<h1>업무 홈</h1>');
   expect(fetcher).toHaveBeenCalledTimes(1);
 });
+
+it('관련정보 직접 조회 메시지는 원본 DOM을 유지하며 본문을 반환한다', async () => {
+  const title = '행사 개최계획 알림';
+  const before = document.body.innerHTML;
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(`<div id="reportBody"><p>제목 ${title}</p><p>1. 10월 1일부터 7일까지 행사를 개최하며 관련 부서의 협조를 요청합니다.</p></div>`)));
+  const reply = await send({ type: 'FETCH_RELATED_DOCUMENT', doc: { title, url: `${location.origin}/bms/dct/view.do` }, control: control() });
+  expect(reply).toMatchObject({ type: 'RELATED_DOCUMENT_SOURCES', sources: { texts: [expect.stringContaining('10월 1일')], pdf: [] } });
+  expect(document.body.innerHTML).toBe(before);
+});

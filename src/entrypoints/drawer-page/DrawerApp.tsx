@@ -185,7 +185,7 @@ export function DrawerApp() {
         const { title, content, error, documentTitle, attachments } = data;
         setRelatedDocs((prev) =>
           prev.map((d) =>
-            d.title === title
+            d.title === title && (!data.docId || d.id === data.docId)
               ? { ...d, content, documentTitle, attachments, status: content ? 'loaded' : 'error', errorMessage: error }
               : d
           )
@@ -298,7 +298,7 @@ export function DrawerApp() {
     setStatusMsg(`'${doc.title}' 본문을 조회하는 중입니다...`);
   };
 
-  // 선택한 관련정보 중 본문이 없는 것을 하나씩 읽어 온다(백그라운드 작업 탭을 겹쳐 열지 않는다).
+  // 선택한 관련정보 중 본문이 없는 것을 하나씩 읽어 온다(동시에 여러 원문을 요청하지 않는다).
   useEffect(() => {
     if (fetchingTitle) return;
     const doc = selectedOnnara.find((d) => !d.content && !requestedReferenceTitles.current.has(d.title));
@@ -814,6 +814,7 @@ export function DrawerApp() {
                 onToggleSelect={handleToggleSelect}
                 onClearAll={() => { setSelectedKeys([]); setExpandedKey(null); setTongdalRefs([]); }}
                 onToggleExpand={handleToggleExpand}
+                onRetry={handleFetchRefContent}
                 relatedDocs={relatedDocs}
                 fetchingTitle={fetchingTitle}
                 refDocSummaries={refDocSummaries}

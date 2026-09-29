@@ -32,7 +32,7 @@ export function parseReferenceDocument(text: string, expectedTitle: string): { t
   const expected = compact(expectedTitle);
   const titleIndex = lines.findIndex(line => {
     const match = line.match(/^제\s*목\s*[:：]?\s*(.+)$/);
-    return expected.length >= 4 && (match?.[1] ? compact(match[1]).includes(expected) : compact(line) === expected);
+    return expected.length >= 4 && (match?.[1] ? compact(match[1]) === expected : compact(line) === expected);
   });
   if (titleIndex < 0) return null;
   const title = lines[titleIndex]!.replace(/^제\s*목\s*[:：]?\s*/, '').trim();
@@ -106,54 +106,38 @@ export function parseRelatedDocText(raw: string): { type: string; title: string;
 
 /** 요소 또는 상위 속성에서 문서 식별자(ID) 탐색 */
 function findDocIdFromElement(el: HTMLElement): { id?: string; docNumber?: string; url?: string; openFunction?: string } {
-  const link = el.closest<HTMLAnchorElement>('a[href]') || el.querySelector<HTMLAnchorElement>('a[href]');
-  const urlOwner = el.closest<HTMLElement>('[data-url], [data-href]');
-  const rawUrl = link?.getAttribute('href') || urlOwner?.getAttribute('data-url') || urlOwner?.getAttribute('data-href') || '';
-  let url: string | undefined;
-  try {
-    const resolved = new URL(rawUrl, el.ownerDocument.baseURI);
-    if (/^https?:$/.test(resolved.protocol) && rawUrl && !/^#|^javascript:/i.test(rawUrl)) url = resolved.href;
-  } catch { /* URL이 없는 항목 */ }
-  // data 속성 확인
-  const owner = el.closest<HTMLElement>('[data-id], [data-docid], [data-report-id], [data-doc-id], [onclick]') || el;
-  const dataId = owner.getAttribute('data-id') || owner.getAttribute('data-docid') || owner.getAttribute('data-report-id') || owner.getAttribute('data-doc-id');
-  if (dataId) {
-    const action = owner.getAttribute('onclick') || (rawUrl.startsWith('javascript:') ? rawUrl : '');
-    const opener = action.match(/\b((?:fn_view|fn_open|openDoc|viewReport|openReport)[\w]*)\s*\(/i)?.[1];
-    return { id: dataId, docNumber: /^\d+$/.test(dataId) ? dataId : undefined, url, openFunction: opener };
-  }
-
-  // onclick 속성 확인 (예: fn_viewDoc('11099'), fn_openReport('11099'))
-  const onclick = owner.getAttribute('onclick') || (rawUrl.startsWith('javascript:') ? rawUrl : '');
-  const openerMatch = onclick.match(/\b((?:fn_view|fn_open|openDoc|viewReport|openReport)[\w]*)\s*\(/i);
-  const openFunction = openerMatch?.[1];
-  if (!url) {
-    const path = onclick.match(/['"](\/?[^'"\s]+\.(?:do|pdf)(?:\?[^'"]*)?)['"]/i)?.[1];
+  const nodes = [...new Set([el, el.closest<HTMLElement>('a, [onclick], [ondblclick], [data-docid], [data-id]'),
+    ...el.querySelectorAll<HTMLElement>('a, [onclick], [ondblclick], [data-docid], [data-id], input[type="hidden"]')].filter((node): node is HTMLElement => Boolean(node)))];
+  let url: string | undefined, id: string | undefined, openFunction: string | undefined;
+  for (const node of nodes) {
+    const raw = node.getAttribute('href') || node.getAttribute('data-url') || node.getAttribute('data-href') || '';
+    const action = [node.getAttribute('onclick'), node.getAttribute('ondblclick'), raw.startsWith('javascript:') ? raw : ''].filter(Boolean).join(' ');
+    const path = raw && !/^(?:#|javascript:)/i.test(raw) ? raw : action.match(/['"](\/?[^'"\s]+\.(?:do|pdf)(?:\?[^'"]*)?)['"]/i)?.[1];
     if (path) {
-      try {
-        const resolved = new URL(path, el.ownerDocument.baseURI);
-        if (/^https?:$/.test(resolved.protocol)) url = resolved.href;
-      } catch { /* 원문 주소 없음 */ }
+      try { const resolved = new URL(path, el.ownerDocument.baseURI); if (/^https?:$/.test(resolved.protocol)) url ??= resolved.href; } catch {}
     }
+    id ??= node.getAttribute('data-docid') || node.getAttribute('data-doc-id') || node.getAttribute('data-report-id') || node.getAttribute('data-id') || undefined;
+    // 함수 이름이 기관별로 달라도 명시된 문서 식별자는 실행 없이 수집한다.
+    id ??= action.match(/\b([A-Z]{3}[A-F0-9]{32})\b/i)?.[1];
+    const opener = action.match(/\b((?:fn_view|fn_open|openDoc|viewReport|openReport)[\w]*)\s*\(\s*['"]?([^'",)\s]+)/i);
+    if (opener) { openFunction ??= opener[1]; id ??= opener[2]; }
+    if (node instanceof HTMLInputElement && /^(?:[A-Z]{3}[A-F0-9]{32}|\d{4,})$/i.test(node.value.trim())) id ??= node.value.trim();
   }
-  const clickMatch = onclick.match(/(?:fn_view|fn_open|openDoc|viewReport|openReport)[a-zA-Z0-9_]*\s*\(\s*['"]?([^'",\)\s]+)/i);
-  if (clickMatch && clickMatch[1]) {
-    return { id: clickMatch[1], docNumber: /^\d+$/.test(clickMatch[1]) ? clickMatch[1] : undefined, url, openFunction };
+  if (url) {
+    id ??= [...new URL(url).searchParams].find(([name]) => /^(?:docid|documentid|reportid)$/i.test(name))?.[1];
   }
-
-  // 인접 또는 자식 hidden input 확인
-  const hiddenInp = el.querySelector<HTMLInputElement>('input[type="hidden"]') || el.parentElement?.querySelector<HTMLInputElement>('input[type="hidden"]');
-  if (hiddenInp && hiddenInp.value && /^\d+$/.test(hiddenInp.value.trim())) {
-    return { id: hiddenInp.value.trim(), docNumber: hiddenInp.value.trim(), url };
-  }
-
-  return { url };
+  // 표시용 span 밖에 놓인 hidden 값도 같은 항목 안에서만 찾는다.
+  const container = el.closest('td, li') || el.parentElement;
+  const hidden = [...(container?.querySelectorAll<HTMLInputElement>('input[type="hidden"]') ?? [])]
+    .map(input => input.value.trim()).filter(value => /^(?:[A-Z]{3}[A-F0-9]{32}|\d{4,})$/i.test(value));
+  if (hidden.length === 1) id ??= hidden[0];
+  return { id, url, openFunction, docNumber: id && /^\d+$/.test(id) ? id : undefined };
 }
 
 /** 모든 프레임을 순회하며 Document 배열 반환 */
 function getAllFrameDocuments(rootDoc: Document): Document[] {
   const docs: Document[] = [rootDoc];
-  const iframes = Array.from(rootDoc.querySelectorAll('iframe'));
+  const iframes = Array.from(rootDoc.querySelectorAll<HTMLIFrameElement | HTMLFrameElement>('iframe, frame'));
   for (const ifr of iframes) {
     try {
       if (ifr.contentDocument) {
@@ -168,7 +152,8 @@ function getAllFrameDocuments(rootDoc: Document): Document[] {
 
 /** 온나라 문서관리카드의 infodessource 값: DCT 문서ID|문서종류「제목」. */
 export function parseInfoDesSource(value: string): Array<{ id: string; label: string }> {
-  const markers = [...value.matchAll(/(DCT[A-F0-9]{32})\|/gi)];
+  try { value = decodeURIComponent(value); } catch { /* 이미 디코딩된 값 */ }
+  const markers = [...value.matchAll(/([A-Z]{3}[A-F0-9]{32})\s*\|/gi)];
   return markers.map((match, index) => ({
     id: match[1]!,
     label: value.slice((match.index || 0) + match[0].length, markers[index + 1]?.index).trim(),
@@ -308,7 +293,7 @@ export function extractRelatedDocuments(rootDoc: Document = document): RelatedDo
   }
 
   // 실제 기안기에는 관련정보의 DCT ID가 보이는 칩이 아니라 infodessource-100에 저장된다.
-  const metadata = docs.flatMap(doc => [...doc.querySelectorAll<HTMLInputElement>('input[name="infodessource"], input[id^="infodessource-"]')]
+  const metadata = docs.flatMap(doc => [...doc.querySelectorAll<HTMLInputElement>('input[name*="infodessource" i], input[id*="infodessource" i], textarea[name*="infodessource" i]')]
     .flatMap(input => parseInfoDesSource(input.value)));
   const normalize = (value: string) => value.replace(/[^0-9a-zA-Z가-힣]/g, '').toLowerCase();
   for (const item of metadata) {

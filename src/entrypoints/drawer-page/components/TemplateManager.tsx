@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   DOCUMENT_TYPES,
   RECOMMENDED_SECTIONS_BY_TYPE,
@@ -11,7 +11,22 @@ import {
   resetToDefaultDraftTemplates,
   updateDraftTemplate,
 } from '@/lib/storage/draft-templates';
+import { FileExtractError } from '@/lib/extract/files/types';
+import { analyzeTemplateFile, TEMPLATE_ACCEPT, TEMPLATE_FORMATS_LABEL, type TemplateFormat } from '@/lib/template-format';
 import { MaterialIcon } from './MaterialIcon';
+import { stripFormatSamples, TemplateFormatEditor, TemplateFormatSummary } from './TemplateFormatEditor';
+
+/** '서식을 분석합니다.' 안내가 깜빡이고 사라지지 않도록 최소한 보여 주는 시간. */
+const ANALYZE_NOTICE_MIN_MS = 700;
+
+/** 파일 이름으로 문서 유형을 짐작한다. 모르면 업무보고. */
+function guessDocumentType(fileName: string, format: TemplateFormat): string {
+  if (/보도/.test(fileName)) return '언론 보도';
+  if (/구축/.test(fileName) && /계획/.test(fileName)) return '구축 계획서';
+  if (/계획/.test(fileName)) return '기본 계획서';
+  if (/보고/.test(fileName)) return '업무보고';
+  return format.docKind === 'official' ? '기타' : '업무보고';
+}
 
 interface TemplateManagerProps {
   templates: DraftTemplate[];
@@ -48,6 +63,12 @@ export function TemplateManager({
   const [sections, setSections] = useState<string[]>([]);
   const [newSectionInput, setNewSectionInput] = useState('');
   const [guidance, setGuidance] = useState('');
+  const [format, setFormat] = useState<TemplateFormat | undefined>(undefined);
+
+  // 서식 파일 가져오기 상태
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [analyzingFile, setAnalyzingFile] = useState<string | null>(null);
+  const [importError, setImportError] = useState('');
 
   const showToast = (msg: string) => {
     setStatusMessage(msg);
@@ -65,7 +86,35 @@ export function TemplateManager({
     setSections([...(RECOMMENDED_SECTIONS_BY_TYPE['업무보고'] || [])]);
     setNewSectionInput('');
     setGuidance('객관적 사실과 수치 중심의 개조식으로 기술하며, 문제점에 대한 구체적인 대응방안을 포함하십시오.');
+    setFormat(undefined);
     setIsEditorOpen(true);
+  };
+
+  // 서식 파일(.hwpx·.odt)을 분석해 새 서식 등록 창을 채운다.
+  const handleImportFile = async (file: File) => {
+    setImportError('');
+    setAnalyzingFile(file.name);
+    const started = Date.now();
+    try {
+      const analyzed = await analyzeTemplateFile(file);
+      const wait = ANALYZE_NOTICE_MIN_MS - (Date.now() - started);
+      if (wait > 0) await new Promise(resolve => setTimeout(resolve, wait));
+      const type = guessDocumentType(file.name, analyzed);
+      setEditingId(null);
+      setTitle(`${file.name.replace(/.[^.]+$/, '').trim()} 서식`);
+      setDocumentType(type);
+      setCustomDocType('');
+      setDescription(`'${file.name}'에서 가져온 서식`);
+      setSections(analyzed.headings.length ? [...analyzed.headings] : [...(RECOMMENDED_SECTIONS_BY_TYPE[type] || [])]);
+      setNewSectionInput('');
+      setGuidance('');
+      setFormat(analyzed);
+      setIsEditorOpen(true);
+    } catch (error) {
+      setImportError(error instanceof FileExtractError ? error.message : `서식을 분석하지 못했습니다: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setAnalyzingFile(null);
+    }
   };
 
   // 모달 열기: 기존 서식 수정
@@ -83,6 +132,7 @@ export function TemplateManager({
     setSections([...t.sections]);
     setNewSectionInput('');
     setGuidance(t.guidance || '');
+    setFormat(t.format);
     setIsEditorOpen(true);
   };
 
@@ -175,6 +225,7 @@ export function TemplateManager({
         description,
         sections: validSections,
         guidance,
+        format: format ? stripFormatSamples(format) : undefined,
       });
       showToast('서식이 성공적으로 수정되었습니다.');
     } else {
@@ -184,6 +235,7 @@ export function TemplateManager({
         description,
         sections: validSections,
         guidance,
+        ...(format ? { format: stripFormatSamples(format) } : {}),
       });
       showToast('새 서식이 등록되었습니다.');
     }
@@ -241,6 +293,29 @@ export function TemplateManager({
             />
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept={TEMPLATE_ACCEPT}
+              className="hidden"
+              aria-hidden="true"
+              tabIndex={-1}
+              onChange={e => {
+                const file = e.target.files?.[0];
+                e.target.value = '';
+                if (file) void handleImportFile(file);
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={Boolean(analyzingFile)}
+              className="h-7 px-2 bg-white border border-blue-300 hover:bg-blue-50 text-blue-700 rounded font-semibold text-[11px] transition inline-flex items-center gap-1 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+              title={`서식 파일(${TEMPLATE_FORMATS_LABEL})을 올려 본문 서식을 분석해 등록`}
+            >
+              <MaterialIcon name="uploadFile" size={14} />
+              <span>파일에서 가져오기</span>
+            </button>
             <button
               type="button"
               onClick={handleOpenCreate}
@@ -294,6 +369,16 @@ export function TemplateManager({
           })}
         </div>
 
+        {importError && (
+          <div role="alert" className="py-1 px-2 bg-red-50 border border-red-200 text-red-800 rounded text-[11px] flex items-start gap-1">
+            <MaterialIcon name="warning" size={14} className="shrink-0 mt-px" />
+            <span className="flex-1">{importError}</span>
+            <button type="button" onClick={() => setImportError('')} className="text-red-400 hover:text-red-700" aria-label="오류 알림 닫기">
+              <MaterialIcon name="close" size={14} />
+            </button>
+          </div>
+        )}
+
         {statusMessage && (
           <div className="py-1 px-2 bg-blue-50 border border-blue-200 text-blue-800 text-center rounded font-medium text-[11px]">
             {statusMessage}
@@ -308,7 +393,7 @@ export function TemplateManager({
             <MaterialIcon name="description" size={30} className="mx-auto mb-1" />
             <p className="font-semibold text-slate-600">등록된 서식이 없습니다.</p>
             <p className="text-[11px] mt-1 text-slate-400">
-              상단의 + 버튼으로 서식을 등록하거나 [초기화]를 눌러 표준 서식을 불러오세요.
+              [파일에서 가져오기]로 서식 파일(HWPX·ODT)을 올리거나, + 버튼으로 직접 등록하거나, [초기화]로 표준 서식을 불러오세요.
             </p>
           </div>
         ) : (
@@ -363,6 +448,8 @@ export function TemplateManager({
                   </button>
                 </div>
               </div>
+
+              {t.format && <TemplateFormatSummary format={t.format} />}
 
               {/* 필수 주요 항목: 카드별로 접고 펼칠 수 있음 */}
               <div className="bg-slate-50 border border-slate-200 rounded px-2">
@@ -426,6 +513,17 @@ export function TemplateManager({
           ))
         )}
       </div>
+
+      {/* 서식 파일 분석 중 안내 */}
+      {analyzingFile && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-3">
+          <div role="status" aria-live="polite" className="bg-white rounded-lg shadow-xl border border-slate-200 px-5 py-4 flex flex-col items-center gap-2 max-w-xs text-center">
+            <span className="h-6 w-6 rounded-full border-2 border-blue-200 border-t-blue-600 animate-spin" aria-hidden="true" />
+            <p className="font-bold text-slate-900 text-sm">서식을 분석합니다.</p>
+            <p className="text-[11px] text-slate-500 break-all">{analyzingFile}</p>
+          </div>
+        </div>
+      )}
 
       {/* 서식 추가/수정 모달 다이얼로그 */}
       {isEditorOpen && (
@@ -613,6 +711,20 @@ export function TemplateManager({
                   </button>
                 </div>
               </div>
+
+              {/* 파일에서 가져온 본문 서식 */}
+              {format && (
+                <div className="pt-1 border-t border-slate-200 space-y-1">
+                  <TemplateFormatEditor format={format} onChange={setFormat} />
+                  <button
+                    type="button"
+                    onClick={() => setFormat(undefined)}
+                    className="text-[10px] text-red-500 hover:underline"
+                  >
+                    본문 서식 빼고 항목·지침만 저장
+                  </button>
+                </div>
+              )}
 
               {/* 작성 지침 가이드라인 */}
               <div className="space-y-1 pt-1 border-t border-slate-200">

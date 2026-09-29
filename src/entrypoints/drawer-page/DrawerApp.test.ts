@@ -612,3 +612,23 @@ describe('내 참고자료 업로드', () => {
     expect(user).toContain('2026. 10. 15.(목)까지 제출');
   });
 });
+
+it('실패 후 다시 읽기 버튼을 누르면 참고문서 조회를 재요청한다', async () => {
+  await act(() => root.render(createElement(DrawerApp)));
+  await settle();
+  window.postMessage({ type: 'DRAFT_CONTEXT_RESPONSE', relatedDocs: [{ title: '감사 유공 표창 알림', rawText: '', status: 'idle' }] }, '*');
+  await settle();
+  window.postMessage({ type: 'DRAFT_RELATED_DOC_CONTENT', title: '감사 유공 표창 알림', content: '', error: '문서 ID 없음' }, '*');
+  await settle();
+  await act(() => [...document.querySelectorAll('button')].find(b => b.textContent?.trim() === '내용')?.click());
+  await settle();
+  window.postMessage({ type: 'DRAFT_RELATED_DOC_CONTENT', title: '감사 유공 표창 알림', content: '', error: '문서 ID 없음' }, '*');
+  await settle();
+  const post = vi.spyOn(window.parent, 'postMessage');
+  const retry = [...document.querySelectorAll('button')].find(b => b.textContent?.trim() === '다시 읽기');
+  expect(retry).toBeDefined();
+  await act(() => retry?.click());
+  expect(post).toHaveBeenCalledWith(expect.objectContaining({ type: 'DRAFT_FETCH_RELATED_DOC', doc: expect.objectContaining({ title: '감사 유공 표창 알림' }) }), '*');
+  expect(document.body.textContent).toContain('필요하면 임시 탭이 열리고 자동으로 닫힙니다.');
+  post.mockRestore();
+});

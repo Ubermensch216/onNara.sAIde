@@ -1,3 +1,5 @@
+import { readTemporaryReference } from '@/lib/onnara/temporary-reference';
+import { readOpenReferenceFrame } from '@/lib/onnara/open-reference';
 import { assertCurrent, captureTab, trustedPanel, validPanelRequest } from '@/lib/browser/guards';
 import { committedSince, duplicateWorkTab, forgetWorkTab, panelTab, registerWorkTabListeners, tabsSpawnedBy, workTabs } from '@/lib/browser/work-tabs';
 import { forgetPanelSpawn, isReportedPanelTab, notePanelSpawn, panelOpener, rememberPanelTab } from '@/lib/browser/panel-sync';
@@ -816,285 +818,103 @@ async function handleMainWorldHwpReplaceSelection(
 
 type ReferenceContent = { content: string; title?: string; attachments?: string[]; error?: string };
 
-/** 원본 기안기 화면을 건드리지 않고 비활성 작업 탭에서 관련정보 원문을 읽는다. */
-async function readRelatedDocInBackground(
-  docInfo: { title: string; url?: string; id?: string; openFunction?: string },
-  callerTabId: number,
-  timeoutMs = 35_000,
-  mode: 'link-or-chip' | 'report-form' = 'link-or-chip',
-): Promise<ReferenceContent | null> {
-  const source = await chrome.tabs.get(callerTabId).catch(() => null);
-  if (!source?.url) return null;
-  if (docInfo.url && sameOrigin(docInfo.url, source.url)) {
-    const pdf = await pdfText({ url: docInfo.url });
-    const parsed = parseReferenceDocument(pdf.text, docInfo.title);
-    if (parsed && pdf.pages <= PDF_MAX_PAGES) return { content: parsed.body, title: parsed.title, attachments: parsed.attachments };
-  }
-  let workTabId: number | undefined;
-  try {
-    if (mode === 'link-or-chip' && docInfo.url && sameOrigin(docInfo.url, source.url) && typeof chrome.tabs.create === 'function') {
-      const tab = await chrome.tabs.create({ url: docInfo.url, active: false });
-      workTabId = tab.id;
-      if (workTabId !== undefined) workTabs.add(workTabId);
-    } else if (typeof chrome.tabs.duplicate === 'function') {
-      const tab = await duplicateWorkTab(callerTabId);
-      workTabId = tab.id;
-      if (workTabId !== undefined) await keepBackground(workTabId, source);
-    }
-    if (workTabId === undefined) return null;
-
-    const deadline = Date.now() + timeoutMs;
-    const control: RequestControl = { id: crypto.randomUUID(), deadline, expectedUrl: undefined };
-    if (mode === 'report-form') {
-      if (!docInfo.id || !/^DCT[A-F0-9]{32}$/i.test(docInfo.id)) return null;
-      const submitted = await chrome.scripting.executeScript({
-        target: { tabId: workTabId, frameIds: [0] }, world: 'MAIN',
-        func: (documentId: string) => {
-          const form = document.createElement('form');
-          form.method = 'POST';
-          form.action = new URL('/bms/dct/viewreport.do', location.origin).href;
-          form.target = '_self';
-          form.style.display = 'none';
-          const input = document.createElement('input');
-          input.type = 'hidden'; input.name = 'docid'; input.value = documentId;
-          form.appendChild(input);
-          document.body.appendChild(form);
-          form.submit();
-          return true;
-        },
-        args: [docInfo.id],
-      }).catch(() => []);
-      if (!submitted.some(result => result.result === true)) return null;
-    } else if (!docInfo.url) {
-      let opened = false;
-      while (Date.now() < deadline - 15_000 && !opened) {
-        const frames = await chrome.webNavigation.getAllFrames({ tabId: workTabId }).catch(() => null);
-        for (const frame of frames?.length ? frames : [{ frameId: 0 }]) {
-          const reply = await sendToFrame(workTabId, frame.frameId, { type: 'OPEN_RELATED_DOCUMENT', title: docInfo.title, control });
-          if (reply.type === 'OPENING_RELATED_DOCUMENT') { opened = true; break; }
-        }
-        if (!opened && docInfo.openFunction && docInfo.id &&
-          /^(?:fn_view|fn_open|openDoc|viewReport|openReport)[\w]*$/i.test(docInfo.openFunction) &&
-          /^[\w-]{1,80}$/.test(docInfo.id)) {
-          const results = await chrome.scripting.executeScript({
-            target: { tabId: workTabId, allFrames: true }, world: 'MAIN',
-            func: (name: string, id: string) => {
-              const fn = (window as unknown as Record<string, unknown>)[name];
-              if (typeof fn !== 'function') return false;
-              (fn as (documentId: string) => void)(id);
-              return true;
-            },
-            args: [docInfo.openFunction, docInfo.id],
-          }).catch(() => []);
-          opened = results.some(result => result.result === true);
-        }
-        if (!opened) await delay(500);
+/** 이미 열린 같은 온나라 출처의 상세 문서만 읽는다. 창/탭/포커스를 바꾸지 않는다. */
+async function readAlreadyOpenReference(info: { title: string; id?: string }, callerTabId: number, originUrl: string, onlyTabId?: number, readDeadline?: number): Promise<ReferenceContent | null> {
+  const tabs = onlyTabId === undefined ? (await chrome.tabs.query({}).catch(() => []) ?? []) : [await chrome.tabs.get(onlyTabId)].filter(Boolean);
+  const candidates = tabs.filter(tab => tab.id !== undefined && tab.id !== callerTabId &&
+    !workTabs.has(tab.id) && sameOrigin(tab.url, originUrl) &&
+    !/\/(?:add|modify|draft)[^/]*\.do/i.test(new URL(tab.url!).pathname) &&
+    (/\/(?:bms\/dct|[^/]*(?:view|report|document|detail|doc))/i.test(new URL(tab.url!).pathname) ||
+      /\.pdf(?:[?#]|$)/i.test(tab.url!) || compactText(tab.title || '') === compactText(info.title)));
+  candidates.sort((a, b) => Number(Boolean(info.id && b.url?.includes(info.id))) - Number(Boolean(info.id && a.url?.includes(info.id))));
+  const deadline = readDeadline ?? Date.now() + 20_000;
+  const matches: ReferenceContent[] = [];
+  for (const tab of candidates.slice(0, 8)) {
+    if (Date.now() >= deadline) break;
+    const urlId = [...new URL(tab.url!).searchParams].find(([key]) => /^(?:docid|documentid|reportid)$/i.test(key))?.[1];
+    if (info.id && urlId && urlId !== info.id) continue;
+    const control: RequestControl = { id: crypto.randomUUID(), deadline, expectedUrl: tab.url };
+    let content: ReferenceContent | null = null;
+    try {
+      const frames = await frameTimeout(chrome.scripting.executeScript({
+        target: { tabId: tab.id!, allFrames: true }, world: 'MAIN', func: readOpenReferenceFrame,
+      }), control).catch(() => []);
+      const topId = frames?.find(frame => frame.frameId === 0)?.result?.id;
+      if (info.id && topId && info.id !== topId) continue;
+      const verifiedTitle = frames?.map(frame => frame.result?.title || '').find(title => compactText(title) === compactText(info.title)) || '';
+      for (const frame of frames ?? []) {
+        const value = frame.result;
+        if (!value?.text || value.text.length > 200_000 || (info.id && value.id && value.id !== info.id)) continue;
+        // 제목은 요청값으로 만들지 않는다. 원문 또는 실제 문서 제목 필드와 일치해야 한다.
+        const parsed = parseReferenceDocument(value.text, info.title) ||
+          (value.bodyOnly && verifiedTitle && !/^제\s*목/m.test(value.text) ? parseReferenceDocument('제목 ' + verifiedTitle + '\n' + value.text, info.title) : null);
+        if (parsed) { content = { content: parsed.body, title: parsed.title, attachments: parsed.attachments }; break; }
       }
-      if (!opened) return null;
-    }
-
-    while (Date.now() < deadline) {
-      await delay(600);
-      const currentTabs = await chrome.tabs.query({});
-      const popupIds = [...new Set([
-        ...tabsSpawnedBy(workTabId),
-        ...currentTabs.filter(tab => tab.openerTabId === workTabId && typeof tab.id === 'number').map(tab => tab.id!),
-      ])];
-      for (const tabId of [...popupIds.reverse(), workTabId]) {
-        const tab = currentTabs.find(item => item.id === tabId);
-        if (!tab?.url || isRestrictedUrl(tab.url)) continue;
-        const result = await dispatchContent(tabId, {
-          type: 'EXTRACT', purpose: 'document-detail', budgetTokens: 100_000,
-          targetTitle: docInfo.title, control,
-        });
-        if (result.type !== 'EXTRACTED') continue;
-        const parsed = parseReferenceDocument(result.payload.text, docInfo.title);
-        if (parsed && !result.payload.truncated && !result.payload.text.includes(`앞 ${PDF_MAX_PAGES}쪽만 읽음`)) {
-          return { content: parsed.body, title: parsed.title, attachments: parsed.attachments };
+      if (!content) {
+        const extracted = await dispatchContent(tab.id!, { type: 'EXTRACT', purpose: 'document-detail', targetTitle: info.title, budgetTokens: 100_000, control });
+        if (extracted.type === 'EXTRACTED' && !extracted.payload.truncated && !extracted.payload.structuredData &&
+          !extracted.payload.text.includes('앞 ' + PDF_MAX_PAGES + '쪽만 읽음')) {
+          const text = extracted.payload.text;
+          // PDF 또는 제목 아래 공문 개조식 본문이 있는 응답만 허용한다. 목록·카드 메타정보는 제외한다.
+          const parsed = parseReferenceDocument(text, info.title);
+          if (parsed && (extracted.payload.method === 'pdf' || /^\s*(?:1[.．]|□|○)\s+/m.test(parsed.body)) &&
+            !/^(?:결재경로|관련정보|문서관리카드|보고일자)\s*[:：]?/m.test(parsed.body)) {
+            content = { content: parsed.body, title: parsed.title, attachments: parsed.attachments };
+          }
         }
       }
-    }
-    return null;
-  } finally {
-    if (workTabId !== undefined) {
-      const children = tabsSpawnedBy(workTabId);
-      await chrome.tabs.remove([workTabId, ...children]).catch(() => undefined);
-      for (const id of [workTabId, ...children]) forgetWorkTab(id);
-    }
+      const current = await chrome.tabs.get(tab.id!).catch(() => null);
+      if (content && current?.url === tab.url) matches.push(content);
+    } catch { /* 접근 불가·닫힌 문서는 건너뛴다. */ }
   }
+  if (matches.length > 1 && !info.id) return { content: '', error: '같은 제목의 원문이 여러 창에 있어 문서를 구분하지 못했습니다. 참고할 원문 하나만 남긴 뒤 다시 읽어 주세요.' };
+  return matches[0] ?? null;
 }
 
-/** 기안기에서 선택한 관련정보 문서의 전체 본문을 조회한다. */
+/** 직접 조회, 열린 원문, 임시 원문 탭 순으로 본문을 회수한다. */
 export async function handleFetchRelatedDocContent(
-  docInfo: any,
-  callerTabId?: number
-): Promise<{ content: string; title?: string; attachments?: string[]; error?: string }> {
-  if (!docInfo || !docInfo.title) {
-    return { content: '', error: '문서 정보가 없습니다.' };
+  docInfo: { title?: string; id?: string; url?: string } | null,
+  callerTabId?: number,
+): Promise<ReferenceContent> {
+  const title = docInfo?.title?.trim();
+  if (!title) return { content: '', error: '문서 정보가 없습니다.' };
+  if (callerTabId === undefined) return { content: '', error: '원문을 조회할 온나라 탭을 확인할 수 없습니다.' };
+  const source = await chrome.tabs.get(callerTabId).catch(() => null);
+  if (!source?.url || !/^https?:/.test(source.url)) return { content: '', error: '온나라 로그인 화면을 확인해 주세요.' };
+  const control: RequestControl = { id: crypto.randomUUID(), deadline: Date.now() + 25_000, expectedUrl: source.url };
+  const reply = await sendToFrame(callerTabId, 0, {
+    type: 'FETCH_RELATED_DOCUMENT', doc: { title, id: docInfo?.id, url: docInfo?.url }, control,
+  }, 25_000);
+  let error = reply.type === 'FAILED' ? reply.error.message : '';
+  let result: ReferenceContent | null = null;
+  if (reply.type === 'RELATED_DOCUMENT_SOURCES') {
+    error = reply.sources.error || '';
+    const texts = [...reply.sources.texts];
+    for (const pdfSource of reply.sources.pdf) {
+      if (!pdfSource.base64) continue;
+      const pdf = await pdfText({ ...pdfSource, url: 'reference:' + control.id + ':' + pdfSource.url });
+      if (pdf.error || pdf.pages > PDF_MAX_PAGES || !pdf.text.trim()) {
+        error = pdf.error || (pdf.pages > PDF_MAX_PAGES ? '원문 PDF가 ' + PDF_MAX_PAGES + '쪽을 넘어 전체 본문을 확인할 수 없습니다.' : 'PDF에서 글자를 찾지 못했습니다. 스캔 문서는 별도 문자 인식이 필요합니다.');
+        continue;
+      }
+      texts.unshift(pdf.text);
+    }
+    for (const text of texts) {
+      const parsed = parseReferenceDocument(text, title);
+      if (parsed) { result = { content: parsed.body, title: parsed.title, attachments: parsed.attachments }; break; }
+    }
   }
-
-  const rawTitle = String(docInfo.title || '').trim();
-  const titleNorm = rawTitle.toLowerCase();
-
-  // 검색용 키워드 분리 (대괄호/소괄호/기호 제거 및 주요 단어 추출)
-  const cleanedTitle = rawTitle
-    .replace(/\[[^\]]+\]/g, ' ')
-    .replace(/\([^\)]+\)/g, ' ')
-    .replace(/[^\w\s가-힣]/g, ' ')
-    .trim();
-  const stopWords = new Set(['문서', '보고', '계획', '결과', '안내', '요청', '수립', '관련', '대한', '위한', '따른', '시행', '개최', '알림']);
-  const keywords = cleanedTitle
-    .split(/\s+/)
-    .map(w => w.trim())
-    .filter(w => w.length >= 2 && !stopWords.has(w));
-
-  let callerOrigin = '';
-  if (callerTabId && typeof chrome !== 'undefined' && chrome.tabs?.get) {
+  if (!result) result = await readAlreadyOpenReference({ title, id: docInfo?.id || (reply.type === 'RELATED_DOCUMENT_SOURCES' ? reply.sources.documentId : undefined) }, callerTabId, source.url);
+  if (!result) {
+    const resolvedId = docInfo?.id || (reply.type === 'RELATED_DOCUMENT_SOURCES' ? reply.sources.documentId : undefined);
     try {
-      const callerTab = await chrome.tabs.get(callerTabId);
-      if (callerTab?.url) {
-        try { callerOrigin = new URL(callerTab.url).origin; } catch {}
-      }
-    } catch {}
+      result = await readTemporaryReference({ title, id: resolvedId, url: docInfo?.url }, callerTabId, source.url,
+        (tabId, deadline) => readAlreadyOpenReference({ title, id: resolvedId }, callerTabId, source.url!, tabId, deadline));
+    } catch (failure) { error = failure instanceof Error ? failure.message : String(failure); }
   }
-
-  // 원문 URL 또는 작업용 복제 탭을 사용한다. 사용자가 직접 문서를 열 필요가 없다.
-  if (callerTabId && (docInfo.url || typeof chrome.tabs?.duplicate === 'function')) {
-    if (docInfo.url) {
-      const linkedResult = await readRelatedDocInBackground(docInfo, callerTabId, 15_000).catch(() => null);
-      if (linkedResult?.content) return linkedResult;
-    }
-    if (/^DCT[A-F0-9]{32}$/i.test(String(docInfo.id || '')) && typeof chrome.tabs?.duplicate === 'function') {
-      const formResult = await readRelatedDocInBackground({ title: rawTitle, id: docInfo.id }, callerTabId, 25_000, 'report-form').catch(() => null);
-      if (formResult?.content) return formResult;
-    }
-    if (typeof chrome.tabs?.duplicate === 'function') {
-      const duplicatedResult = await readRelatedDocInBackground({ title: rawTitle, id: docInfo.id, openFunction: docInfo.openFunction }, callerTabId).catch(() => null);
-      if (duplicatedResult?.content) return duplicatedResult;
-    }
-  }
-
-  // 이미 열려 있는 상세 문서도 읽을 수 있게 유지한다.
-  // 1. 이미 열려 있는 탭 목록 조회 및 후보 탭 스코어링
-  const allTabs = await chrome.tabs.query({}).catch(() => []);
-  const scoredCandidates: Array<{ tab: chrome.tabs.Tab; score: number }> = [];
-
-  for (const tab of allTabs) {
-    if (!tab.id) continue;
-    const tabUrl = (tab.url || '').toLowerCase();
-    const tabTitle = (tab.title || '').toLowerCase();
-
-    if (isRestrictedUrl(tabUrl) || tabUrl.startsWith('chrome:') || tabUrl.startsWith('edge:') || tabUrl.startsWith('about:')) {
-      continue;
-    }
-
-    let score = 0;
-    if (callerOrigin && tabUrl.startsWith(callerOrigin.toLowerCase())) {
-      score += 60;
-    }
-    if (tabUrl.includes('bms') || tabUrl.includes('onnara') || tabUrl.includes('sanctn') || tabUrl.includes('doc')) {
-      score += 40;
-    }
-    if (titleNorm.length >= 4 && tabTitle.includes(titleNorm)) {
-      score += 100;
-    }
-    for (const kw of keywords) {
-      if (tabTitle.includes(kw.toLowerCase())) score += 25;
-      if (tabUrl.includes(kw.toLowerCase())) score += 15;
-    }
-    if (docInfo.id && (tabUrl.includes(String(docInfo.id).toLowerCase()) || tabTitle.includes(String(docInfo.id).toLowerCase()))) {
-      score += 80;
-    }
-
-    if (score >= 40) scoredCandidates.push({ tab, score });
-  }
-
-  scoredCandidates.sort((a, b) => b.score - a.score);
-
-  // 2. 상위 후보 탭들에 대해 심층 본문 추출 시도
-  for (const { tab } of scoredCandidates) {
-    if (!tab.id) continue;
-    try {
-      const control: RequestControl = {
-        id: crypto.randomUUID(),
-        deadline: Date.now() + 8000,
-        expectedUrl: tab.url,
-      };
-      const extracted = await withContentScript(tab.id, {
-        type: 'EXTRACT',
-        purpose: 'document-detail',
-        budgetTokens: 100_000,
-        targetTitle: rawTitle,
-        control,
-      }).catch(() => null);
-
-      let hwpText = '';
-      if (typeof chrome !== 'undefined' && chrome.scripting?.executeScript) {
-        try {
-          const hwpResults = await chrome.scripting.executeScript({
-            target: { tabId: tab.id, allFrames: true },
-            world: 'MAIN',
-            func: () => {
-              try {
-                const w = window as any;
-                const h = w.HwpCtrl || w.pHwpCtrl || w.vHwpCtrl || w.hwpCtrl || w.WebHwpCtrl ||
-                          document.getElementById('HwpCtrl') || document.getElementById('hwpCtrl');
-                if (h) {
-                  if (typeof h.GetFieldText === 'function') {
-                    const f = h.GetFieldText('본문');
-                    if (f && f.trim().length > 10) return f.trim();
-                  }
-                  if (typeof h.GetTextFile === 'function') {
-                    try {
-                      const t = h.GetTextFile('TEXT', '');
-                      if (typeof t === 'string' && t.trim().length > 10) return t.trim();
-                    } catch {}
-                  }
-                }
-              } catch {}
-              return null;
-            },
-          }).catch(() => []);
-          for (const r of hwpResults ?? []) {
-            if (r?.result && typeof r.result === 'string') {
-              hwpText = r.result;
-              break;
-            }
-          }
-        } catch {}
-      }
-
-      const text = (hwpText || (extracted?.type === 'EXTRACTED' ? extracted.payload.text : '') || '').trim();
-      const pageTitle = ((extracted?.type === 'EXTRACTED' ? extracted.payload.title : '') || tab.title || '').trim();
-
-      if (text.length >= 20) {
-        const textNorm = text.toLowerCase();
-        const pageTitleNorm = pageTitle.toLowerCase();
-
-        // 1) 제목 직접 매칭
-        const titleDirectMatched = (titleNorm.length >= 4 && (pageTitleNorm.includes(titleNorm) || textNorm.includes(titleNorm)));
-
-        // 2) 키워드 2개 이상 또는 전체 키워드의 50% 이상 매칭
-        const matchedKw = keywords.filter(kw => textNorm.includes(kw.toLowerCase()) || pageTitleNorm.includes(kw.toLowerCase()));
-        const keywordMatched = keywords.length > 0 && (matchedKw.length >= Math.min(2, Math.ceil(keywords.length * 0.5)));
-
-        if (titleDirectMatched || keywordMatched) {
-          const parsed = parseReferenceDocument(text, rawTitle);
-          if (parsed && extracted?.type === 'EXTRACTED' && !extracted.payload.truncated &&
-            !extracted.payload.text.includes(`앞 ${PDF_MAX_PAGES}쪽만 읽음`)) {
-            return { content: parsed.body, title: parsed.title, attachments: parsed.attachments };
-          }
-        }
-      }
-    } catch {
-      // 계속 다음 탭 탐색
-    }
-  }
-
-  return {
-    content: '',
-    error: '선택한 참고문서의 원문 본문을 백그라운드에서 확인하지 못했습니다. 관련정보 항목의 원문 링크 또는 문서 식별자를 확인해 주세요.',
-  };
+  const current = await chrome.tabs.get(callerTabId).catch(() => null);
+  if (current?.url !== source.url) return { content: '', error: '조회 중 온나라 화면이 변경되었습니다. 다시 시도해 주세요.' };
+  return result ?? { content: '', error: (error || '원문 본문을 확인하지 못했습니다.') + ' 원문 자동 열람으로도 본문을 확인하지 못했습니다. [다시 읽기]를 눌러 주세요.' };
 }
 
 // 탭별로 사이드카가 확장되기 전의 원래 창 크기 및 위치 저장
@@ -3059,14 +2879,14 @@ class ReadFailure extends Error {
   constructor(readonly appError: AppError) { super(appError.message); }
 }
 
-async function sendToFrame(tabId: number, frameId: number, msg: SWToContent): Promise<ContentToSW> {
+async function sendToFrame(tabId: number, frameId: number, msg: SWToContent, timeoutMs = FRAME_TIMEOUT_MS): Promise<ContentToSW> {
   try {
     return await frameTimeout((async () => {
       assertCurrent(msg.control, msg.control.expectedUrl ?? '', cancelled.has(msg.control.id));
       await chrome.scripting.executeScript({ target: { tabId, frameIds: [frameId] }, files: [INJECTED_SCRIPT] });
       assertCurrent(msg.control, msg.control.expectedUrl ?? '', cancelled.has(msg.control.id));
       return await chrome.tabs.sendMessage(tabId, msg, { frameId }) as ContentToSW;
-    })(), msg.control);
+    })(), msg.control, timeoutMs);
   } catch (error) {
     return { type: 'FAILED', error: accessError(error) };
   }
@@ -3114,9 +2934,9 @@ function delay(ms: number): Promise<void> {
 const FRAME_TIMEOUT_MS = 8000;
 
 /** 프레임 하나의 주입·응답 대기를 요청 마감과 프레임 한도 중 이른 쪽에서 끊는다. */
-async function frameTimeout<T>(work: Promise<T>, control: RequestControl): Promise<T> {
+async function frameTimeout<T>(work: Promise<T>, control: RequestControl, timeoutMs = FRAME_TIMEOUT_MS): Promise<T> {
   work.catch(() => undefined);
-  const ms = Math.max(0, Math.min(FRAME_TIMEOUT_MS, control.deadline - Date.now()));
+  const ms = Math.max(0, Math.min(timeoutMs, control.deadline - Date.now()));
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([

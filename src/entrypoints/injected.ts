@@ -1,3 +1,4 @@
+import { fetchRelatedDocument } from '@/lib/onnara/related-document-fetch';
 import { assertCurrent, validAction, validControl } from '@/lib/browser/guards';
 import { createApprovalRegistry } from '@/lib/browser/approval';
 import { requiresApproval, type RequestControl } from '@/lib/messaging/protocol';
@@ -23,7 +24,6 @@ import { markReadButton, selectMarkReadRows } from '@/lib/onnara/mark-read';
 import { fitToBudget } from '@/lib/extract/budget';
 import { collectDocumentText } from '@/lib/extract/document-text';
 import { findPdfUrls, readPdfSources } from '@/lib/extract/pdf-source';
-import { findRelatedDocumentOpener } from '@/lib/onnara/related-info';
 import {
   extractStructuredDocumentList,
   describeOpenFailure,
@@ -122,6 +122,10 @@ export default defineUnlistedScript(() => {
                   hint: '온나라 공유/공람 > 받은문서 목록이 화면에 보이는 상태에서 다시 지정하세요.',
                 },
               } satisfies ContentToSW);
+        } else if (msg.type === 'FETCH_RELATED_DOCUMENT') {
+          const sources = await fetchRelatedDocument(msg.doc, AbortSignal.timeout(Math.max(1, msg.control.deadline - Date.now())));
+          assertCurrent(msg.control, location.href, cancelled.has(msg.control.id));
+          sendResponse({ type: 'RELATED_DOCUMENT_SOURCES', sources } satisfies ContentToSW);
         } else if (msg.type === 'FETCH_INBOX_PAGE') {
           const page = await fetchInboxPage(msg.location, AbortSignal.timeout(Math.max(1, Math.min(7500, msg.control.deadline - Date.now()))));
           assertCurrent(msg.control, location.href, cancelled.has(msg.control.id));
@@ -173,16 +177,6 @@ export default defineUnlistedScript(() => {
             // 응답 포트가 닫힌 뒤 실행해야 같은 프레임 이동에도 성공 응답이 보존된다.
             setTimeout(() => {
               if (Date.now() < msg.control.deadline && !cancelled.has(msg.control.id)) openDocumentTarget(target);
-            }, 0);
-          }
-        } else if (msg.type === 'OPEN_RELATED_DOCUMENT') {
-          const opener = findRelatedDocumentOpener(document, msg.title);
-          if (!opener) {
-            sendResponse({ type: 'FAILED', error: { code: 'UNKNOWN', message: '작업 탭에서 관련정보 문서를 찾지 못했습니다.' } } satisfies ContentToSW);
-          } else {
-            sendResponse({ type: 'OPENING_RELATED_DOCUMENT', title: msg.title } satisfies ContentToSW);
-            setTimeout(() => {
-              if (Date.now() < msg.control.deadline && !cancelled.has(msg.control.id)) opener.click();
             }, 0);
           }
         } else if (msg.type === 'ACT' && validAction(msg.action)) {

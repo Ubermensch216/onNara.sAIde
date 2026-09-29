@@ -36,6 +36,7 @@ export interface ReferencePickerProps {
   onToggleSelect: (key: string) => void;
   onClearAll: () => void;
   onToggleExpand: (key: string) => void;
+  onRetry?: (doc: RelatedDocInfo) => void;
   // 온나라 관련정보
   relatedDocs: RelatedDocInfo[];
   fetchingTitle: string | null;
@@ -62,7 +63,7 @@ export interface ReferencePickerProps {
 
 function OnnaraRefItem({
   doc, index, selected, selectDisabled, expanded, fetching, summary, summarizing, memo,
-  onToggleSelect, onToggleExpand, onMemo,
+  onToggleSelect, onToggleExpand, onMemo, onRetry, retryDisabled,
 }: {
   doc: RelatedDocInfo;
   index: number;
@@ -76,6 +77,8 @@ function OnnaraRefItem({
   onToggleSelect: () => void;
   onToggleExpand: () => void;
   onMemo: (memo: string) => void;
+  onRetry?: () => void;
+  retryDisabled: boolean;
 }) {
   const [showRaw, setShowRaw] = useState(false);
   return (
@@ -134,7 +137,7 @@ function OnnaraRefItem({
             )
           ) : fetching ? (
             <div className="p-3 bg-white border border-slate-200 rounded text-center text-blue-700 text-xs">
-              <span className="animate-pulse font-medium">열린 탭에서 본문을 조회하고 요약하는 중입니다...</span>
+              <span className="animate-pulse font-medium">원문을 읽는 중입니다. 필요하면 임시 탭이 열리고 자동으로 닫힙니다.</span>
             </div>
           ) : (
             <div className="p-2.5 bg-amber-50 border border-amber-200 rounded text-xs text-amber-800 space-y-1">
@@ -143,8 +146,9 @@ function OnnaraRefItem({
                 <span>참고문서 본문을 읽지 못했습니다.</span>
               </p>
               <p className="text-[11px] text-amber-700 leading-normal">
-                {doc.errorMessage || '관련정보의 원문을 열 수 없습니다. 문서 열기 상태를 확인한 뒤 [내용]을 다시 눌러주세요.'}
+                {doc.errorMessage || '원문을 확인하지 못했습니다. 로그인 상태와 열린 원문을 확인한 뒤 [다시 읽기]를 눌러 주세요.'}
               </p>
+              {onRetry && <button type="button" onClick={onRetry} disabled={retryDisabled} className="underline font-medium cursor-pointer disabled:opacity-50">다시 읽기</button>}
             </div>
           )}
 
@@ -228,6 +232,8 @@ export function ReferencePicker(props: ReferencePickerProps) {
                 memo={props.onnaraMemos[doc.title] ?? ''}
                 onToggleSelect={() => props.onToggleSelect(key)}
                 onToggleExpand={() => props.onToggleExpand(key)}
+                onRetry={props.onRetry ? () => props.onRetry!(doc) : undefined}
+                retryDisabled={Boolean(props.fetchingTitle)}
                 onMemo={(memo) => props.onOnnaraMemo(doc.title, memo)}
               />
             );
