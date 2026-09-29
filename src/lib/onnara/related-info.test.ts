@@ -309,3 +309,25 @@ describe('parseReferencePdf', () => {
     expect(parseReferencePdf('제목 다른 행사 알림\n1. 다른 행사 안내입니다. 참고 바랍니다.', title)).toBeNull();
   });
 });
+
+describe('extractRelatedDocuments — 실제 기안기 관련정보 칸(2026-09-29 확인)', () => {
+  const row = (items: Array<[string, string]>) => `<table><tbody><tr><th scope="row">관련정보</th><td colspan="3"><div class="inwrap"><div class="fl">${
+    items.map(([id, title]) => `<div id="sourcetext~100" name="sourcetext"><input type="hidden" name="chkInfoDesc" value="${id}"><img src="/ref/images/icon/icot_date32.png">&nbsp;<a href="javascript:viewEnfDoc('${id}','N')" class="file_link">${title}</a><br></div>`).join('')
+  }<div id="sourcefilework~100" name="sourcefilework"><table><tbody></tbody></table></div></div><div class="fr"><a href="javascript:infoSrcPopup();" class="btnClick" title="관련정보 선택"></a></div></div></td></tr></tbody></table>`;
+
+  it('문서가 2건이면 링크마다 한 건씩, 링크 글자 그대로의 제목과 ID로 읽는다', () => {
+    document.body.innerHTML = row([
+      ['ENF6989F09F81B3945218AD080C4645FC55', '2026년 핑크문화데이 운영 홍보 협조 요청(10월)'],
+      ['ENF44B34718EBC5F8DC32435716D7479CBB', '[10월] 부산 공연 문화혜택 안내'],
+    ]);
+    expect(extractRelatedDocuments(document).map(({ title, id, type, openFunction }) => ({ title, id, type, openFunction }))).toEqual([
+      { title: '2026년 핑크문화데이 운영 홍보 협조 요청(10월)', id: 'ENF6989F09F81B3945218AD080C4645FC55', type: '문서', openFunction: 'viewEnfDoc' },
+      { title: '[10월] 부산 공연 문화혜택 안내', id: 'ENF44B34718EBC5F8DC32435716D7479CBB', type: '문서', openFunction: 'viewEnfDoc' },
+    ]);
+  });
+
+  it('선택 버튼(infoSrcPopup)은 문서로 읽지 않는다', () => {
+    document.body.innerHTML = row([['ENFC5A47338FB613A1419BB9317CECD8815', '「제12회 부산R＆D주간」행사 개최 안내 및 홍보 요청']]);
+    expect(extractRelatedDocuments(document).map(doc => doc.title)).toEqual(['「제12회 부산R＆D주간」행사 개최 안내 및 홍보 요청']);
+  });
+});

@@ -220,6 +220,21 @@ export function extractRelatedDocuments(rootDoc: Document = document): RelatedDo
       }
 
       if (valueContainer) {
+        // 실제 기안기: 문서마다 <a href="javascript:viewEnfDoc('ENF…','N')">제목</a>이 있다.
+        // 링크 글자가 곧 제목이다. '[10월] …'을 [구분] 제목으로 쪼개거나, 여러 문서를 감싼 div를 한 문서로 읽지 않는다.
+        const openers = [...valueContainer.querySelectorAll<HTMLAnchorElement>('a[href^="javascript:"]')].flatMap(link => {
+          const call = (link.getAttribute('href') ?? '').match(/^javascript:\s*((?:view|open|fn_view|fn_open)\w*)\(\s*['"]([A-Z]{3}[A-F0-9]{32})['"]/i);
+          const title = (link.textContent ?? '').replace(/\s+/g, ' ').trim();
+          return call && title ? [{ title, id: call[2]!, openFunction: call[1]! }] : [];
+        });
+        if (openers.length) {
+          for (const opener of openers) {
+            if (seenTitles.has(opener.title)) continue;
+            seenTitles.add(opener.title);
+            results.push({ ...opener, type: '문서', rawText: opener.title, source: 'dom', status: 'idle' });
+          }
+          continue;
+        }
         // 컨테이너 내부의 개별 항목(span, a, li, div) 탐색
         const itemEls = Array.from(valueContainer.querySelectorAll<HTMLElement>('a, span, li, p, div'));
         const targetedEls = itemEls.length > 0 ? itemEls : [valueContainer];
