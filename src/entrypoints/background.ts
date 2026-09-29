@@ -2,6 +2,8 @@ import { readTemporaryReference } from '@/lib/onnara/temporary-reference';
 import type { HwpInsertResult } from '@/lib/onnara/draft-editor';
 import type { StyledInsertPayload } from '@/lib/template-format/apply';
 import { readOpenReferenceFrame } from '@/lib/onnara/open-reference';
+import { runReferenceProbe } from '@/lib/onnara/reference-diagnosis';
+import { captureRelatedOpenRequest } from '@/lib/onnara/related-open-capture';
 import { assertCurrent, captureTab, trustedPanel, validPanelRequest } from '@/lib/browser/guards';
 import { committedSince, duplicateWorkTab, forgetWorkTab, panelTab, registerWorkTabListeners, tabsSpawnedBy, workTabs } from '@/lib/browser/work-tabs';
 import { forgetPanelSpawn, isReportedPanelTab, notePanelSpawn, panelOpener, rememberPanelTab } from '@/lib/browser/panel-sync';
@@ -17,7 +19,7 @@ import { firstInboxPage } from '@/lib/onnara/inbox-pages';
 import { isWorkTabBusy, runExclusive } from '@/lib/browser/sw-lock';
 import { fitToBudget } from '@/lib/extract/budget';
 import { generatePdfFromText, pdfText, withPdfSections } from '@/lib/extract/pdf-offscreen';
-import { PDF_MAX_PAGES } from '@/lib/extract/pdf-text';
+import { PDF_MAX_BYTES, PDF_MAX_PAGES } from '@/lib/extract/pdf-text';
 import type { DocumentListLocation } from '@/lib/onnara/document-navigation';
 /**
  * Service Worker — 계획서 §3 설계 결정 ①
@@ -44,7 +46,7 @@ import {
 } from '@/lib/messaging/protocol';
 
 import { isExactDraftPath } from '@/lib/onnara/draft-route';
-import { parseReferenceDocument } from '@/lib/onnara/related-info';
+import { parseReferenceDocument, parseReferencePdf } from '@/lib/onnara/related-info';
 
 const INJECTED_SCRIPT = 'injected.js';
 const DRAWER_SCRIPT = 'drawer.js';
@@ -971,6 +973,38 @@ async function handleMainWorldHwpReplaceSelection(
 
 type ReferenceContent = { content: string; title?: string; attachments?: string[]; error?: string };
 
+/** executeScript(MAIN)에 그대로 넘긴다. 원문 창과 같은 출처·로그인으로 PDF를 받아 base64로 돌려준다. */
+async function fetchSameOriginPdf(url: string, maxBytes: number): Promise<{ base64: string; bytes: number } | null> {
+  if (new URL(url, location.href).origin !== location.origin) return null;
+  const response = await fetch(url, { credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(15_000) });
+  if (!response.ok) return null;
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  if (bytes.length > maxBytes || !String.fromCharCode(...bytes.subarray(0, 1024)).includes('%PDF-')) return null;
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return { base64: btoa(binary), bytes: bytes.length };
+}
+
+/** 열린 원문 창의 같은 출처 PDF 프레임(변환 본문)을 읽는다. 제목 행이 요청한 문서와 맞아야 한다. */
+async function readOpenPdfFrame(tabId: number, title: string, originUrl: string, control: RequestControl): Promise<ReferenceContent | null> {
+  const frames = await chrome.webNavigation?.getAllFrames({ tabId }).catch(() => null);
+  const urls = [...new Set((frames ?? []).map(frame => frame.url).filter(url => {
+    try { return sameOrigin(url, originUrl) && /\.pdf$/i.test(new URL(url).pathname); } catch { return false; }
+  }))];
+  for (const url of urls.slice(0, 3)) {
+    const fetched = await frameTimeout(chrome.scripting.executeScript({
+      target: { tabId, frameIds: [0] }, world: 'MAIN', func: fetchSameOriginPdf, args: [url, PDF_MAX_BYTES],
+    }), control).catch(() => []);
+    const source = fetched?.[0]?.result;
+    if (!source?.base64) continue;
+    const pdf = await pdfText({ url: `reference:${control.id}:${url}`, base64: source.base64, bytes: source.bytes });
+    if (pdf.error || pdf.pages > PDF_MAX_PAGES || !pdf.text.trim()) continue;
+    const parsed = parseReferencePdf(pdf.text, title);
+    if (parsed) return { content: parsed.body, title: parsed.title, attachments: parsed.attachments };
+  }
+  return null;
+}
+
 /** 이미 열린 같은 온나라 출처의 상세 문서만 읽는다. 창/탭/포커스를 바꾸지 않는다. */
 async function readAlreadyOpenReference(info: { title: string; id?: string }, callerTabId: number, originUrl: string, onlyTabId?: number, readDeadline?: number): Promise<ReferenceContent | null> {
   const tabs = onlyTabId === undefined ? (await chrome.tabs.query({}).catch(() => []) ?? []) : [await chrome.tabs.get(onlyTabId)].filter(Boolean);
@@ -989,6 +1023,16 @@ async function readAlreadyOpenReference(info: { title: string; id?: string }, ca
     const control: RequestControl = { id: crypto.randomUUID(), deadline, expectedUrl: tab.url };
     let content: ReferenceContent | null = null;
     try {
+      // 접수문서 카드는 본문을 변환 PDF 프레임으로 보여 준다. 브라우저 PDF 뷰어 프레임은 스크립트로 읽을 수 없어
+      // 같은 주소를 원문 창에서 다시 받아 pdf.js로 읽는다.
+      if (tab.id !== callerTabId) {
+        const pdf = await readOpenPdfFrame(tab.id!, info.title, originUrl, control).catch(() => null);
+        if (pdf) {
+          const current = await chrome.tabs.get(tab.id!).catch(() => null);
+          if (current?.url === tab.url) matches.push(pdf);
+          continue;
+        }
+      }
       const frames = await frameTimeout(chrome.scripting.executeScript({
         target: { tabId: tab.id!, allFrames: true }, world: 'MAIN', func: readOpenReferenceFrame,
       }), control).catch(() => []);
@@ -1038,8 +1082,15 @@ export async function handleFetchRelatedDocContent(
   const source = await chrome.tabs.get(callerTabId).catch(() => null);
   if (!source?.url || !/^https?:/.test(source.url)) return { content: '', error: '온나라 로그인 화면을 확인해 주세요.' };
   const control: RequestControl = { id: crypto.randomUUID(), deadline: Date.now() + 25_000, expectedUrl: source.url };
+  // 관련정보 링크의 열기 함수가 보낼 조회 요청을 창 없이 기록해 그대로 fetch한다(주소·필드를 추측하지 않는다).
+  const open = docInfo?.id ? await probeTimeout(chrome.scripting.executeScript({
+    target: { tabId: callerTabId, frameIds: [0] }, world: 'MAIN', func: captureRelatedOpenRequest, args: [docInfo.id],
+  }), 3000).then(results => {
+    const value = Array.isArray(results) ? results[0]?.result : undefined;
+    return value && 'url' in value ? value : undefined;
+  }).catch(() => undefined) : undefined;
   const reply = await sendToFrame(callerTabId, 0, {
-    type: 'FETCH_RELATED_DOCUMENT', doc: { title, id: docInfo?.id, url: docInfo?.url }, control,
+    type: 'FETCH_RELATED_DOCUMENT', doc: { title, id: docInfo?.id, url: docInfo?.url, ...(open ? { open } : {}) }, control,
   }, 25_000);
   let error = reply.type === 'FAILED' ? reply.error.message : '';
   let result: ReferenceContent | null = null;
@@ -1056,7 +1107,7 @@ export async function handleFetchRelatedDocContent(
       texts.unshift(pdf.text);
     }
     for (const text of texts) {
-      const parsed = parseReferenceDocument(text, title);
+      const parsed = parseReferencePdf(text, title);
       if (parsed) { result = { content: parsed.body, title: parsed.title, attachments: parsed.attachments }; break; }
     }
   }
@@ -1071,6 +1122,96 @@ export async function handleFetchRelatedDocContent(
   const current = await chrome.tabs.get(callerTabId).catch(() => null);
   if (current?.url !== source.url) return { content: '', error: '조회 중 온나라 화면이 변경되었습니다. 다시 시도해 주세요.' };
   return result ?? { content: '', error: (error || '원문 본문을 확인하지 못했습니다.') + ' 원문 자동 열람으로도 본문을 확인하지 못했습니다. [다시 읽기]를 눌러 주세요.' };
+}
+
+/** 프레임 하나가 로딩 중이어도 진단 전체가 멈추지 않게 짧게 끊는다. */
+function probeTimeout<T>(work: Promise<T>, ms = 8000): Promise<T | { timeout: true }> {
+  return Promise.race([work, new Promise<{ timeout: true }>(resolve => setTimeout(() => resolve({ timeout: true }), ms))]);
+}
+
+/**
+ * 관련정보 원문 진단 파일을 만든다. 읽기 전용이며 창·탭·포커스를 바꾸지 않는다.
+ * 원문을 자동으로 읽지 못할 때 실제 온나라 원문 화면의 구조를 확인하기 위한 것이다.
+ */
+export async function diagnoseRelatedDocument(
+  doc: { title?: string; id?: string; url?: string; type?: string } | null,
+  callerTabId: number,
+): Promise<{ filename?: string; error?: string }> {
+  const caller = await chrome.tabs.get(callerTabId).catch(() => null);
+  if (!caller?.url || !/^https?:/.test(caller.url)) return { error: '진단할 온나라 탭을 확인할 수 없습니다.' };
+  const origin = new URL(caller.url).origin;
+  const windowOf = async (windowId: number) => {
+    const win = await chrome.windows?.get(windowId).catch(() => null);
+    return win ? { type: win.type, state: win.state, focused: win.focused } : null;
+  };
+  const probeTab = async (tab: chrome.tabs.Tab) => {
+    const frames = await chrome.webNavigation.getAllFrames({ tabId: tab.id! }).catch(() => null) ?? [];
+    // 프레임마다 따로 짧게 끊는다. 한글 컨트롤·PDF 뷰어 프레임은 건드리지 않는다(경고창·응답 없음).
+    const probes = await Promise.all(frames.map(async frame => {
+      if (!/^https?:/.test(frame.url) || /hwpctrl|webhwp|\.pdf(?:$|[?#])/i.test(frame.url)) return { frameId: frame.frameId, skipped: true };
+      const result = await probeTimeout(chrome.scripting.executeScript({
+        target: { tabId: tab.id!, frameIds: [frame.frameId] }, world: 'MAIN', func: runReferenceProbe, args: ['frame'],
+      }), 5000).catch(error => ({ error: String(error) }));
+      return { frameId: frame.frameId, result: Array.isArray(result) ? result[0]?.result : result };
+    }));
+    return {
+      tabId: tab.id, isCaller: tab.id === callerTabId, url: tab.url, title: tab.title, active: tab.active, status: tab.status,
+      openerTabId: tab.openerTabId, window: await windowOf(tab.windowId),
+      frames: frames.map(frame => ({ frameId: frame.frameId, parentFrameId: frame.parentFrameId, url: frame.url })),
+      probes,
+    };
+  };
+
+  const captured = doc?.id ? await probeTimeout(chrome.scripting.executeScript({
+    target: { tabId: callerTabId, frameIds: [0] }, world: 'MAIN', func: captureRelatedOpenRequest, args: [doc.id],
+  }), 3000).then(results => Array.isArray(results) ? results[0]?.result : results).catch(error => ({ error: String(error) })) : undefined;
+  const open = captured && typeof captured === 'object' && 'url' in captured ? captured : undefined;
+  const fetchProbe = await probeTimeout(chrome.scripting.executeScript({
+    target: { tabId: callerTabId, frameIds: [0] }, world: 'MAIN', func: runReferenceProbe,
+    args: ['fetch', doc?.id ?? '', doc?.url ?? '', ...(open ? [open] : [])] as ['fetch', string, string],
+  }), 45_000).catch(error => ({ error: String(error) }));
+
+  // 실제 읽기 경로(직접 조회 → PDF → 제목 검증)를 그대로 돌려 단계별 결과를 남긴다.
+  const pipelineControl: RequestControl = { id: crypto.randomUUID(), deadline: Date.now() + 30_000, expectedUrl: caller.url };
+  const reply = doc?.title ? await sendToFrame(callerTabId, 0, {
+    type: 'FETCH_RELATED_DOCUMENT', doc: { title: doc.title, id: doc.id, url: doc.url, ...(open ? { open } : {}) }, control: pipelineControl,
+  }, 30_000) : undefined;
+  let pipeline: unknown = reply;
+  if (reply?.type === 'RELATED_DOCUMENT_SOURCES') {
+    const sources = reply.sources;
+    const firstPdf = sources.pdf.find(item => item.base64);
+    const pdf = firstPdf ? await pdfText({ ...firstPdf, url: `diagnosis:${pipelineControl.id}:${firstPdf.url}` }) : undefined;
+    pipeline = {
+      error: sources.error, trace: sources.trace,
+      texts: sources.texts.map(text => ({ length: text.length, sample: text.slice(0, 200) })),
+      pdf: sources.pdf.map(item => ({ url: item.url.slice(0, 300), bytes: item.bytes, error: item.error })),
+      pdfText: pdf ? {
+        pages: pdf.pages, error: pdf.error, length: pdf.text.length, sample: pdf.text.slice(0, 300),
+        parsed: Boolean(doc?.title && parseReferencePdf(pdf.text, doc.title)),
+      } : undefined,
+    };
+  }
+
+  const tabs = (await chrome.tabs.query({}).catch(() => [])).filter(tab => typeof tab.id === 'number' && sameOrigin(tab.url, origin));
+  const report = {
+    kind: 'onnara-saide-reference-diagnosis', version: 1, createdAt: new Date().toISOString(),
+    extensionVersion: chrome.runtime.getManifest?.().version, userAgent: navigator.userAgent,
+    doc, origin,
+    // 필드 값은 식별자류만 남긴다(나머지는 길이).
+    capturedOpen: open ? { ...open, fields: open.fields.map(([name, value]) => [name, /(?:id|flag|type|gubun|gb|cmd|seq)$/i.test(name) ? value : `(${value.length}자)`]) } : captured,
+    pipeline,
+    fetch: Array.isArray(fetchProbe) ? fetchProbe[0]?.result : fetchProbe,
+    tabs: await Promise.all(tabs.slice(0, 10).map(probeTab)),
+  };
+  const json = JSON.stringify(report, null, 2);
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+/, '').replace('T', '-');
+  const filename = `onnara-reference-diagnosis-${stamp}.json`;
+  try {
+    await chrome.downloads.download({ url: 'data:application/json;charset=utf-8,' + encodeURIComponent(json), filename, saveAs: false });
+  } catch (error) {
+    return { error: `진단 파일을 저장하지 못했습니다: ${error instanceof Error ? error.message : String(error)}` };
+  }
+  return { filename };
 }
 
 // 탭별로 사이드카가 확장되기 전의 원래 창 크기 및 위치 저장
@@ -1231,6 +1372,18 @@ export default defineBackground(() => {
       handleFetchRelatedDocContent(docInfo, sender.tab?.id)
         .then(res => sendResponse(res))
         .catch(err => sendResponse({ content: '', error: String(err) }));
+      return true;
+    }
+    // 관련정보 원문 진단 파일 저장. 확장 페이지(드로어)에서 온 요청만 받는다.
+    if (msg && typeof msg === 'object' && (msg as any).type === 'DIAGNOSE_RELATED_DOC') {
+      const tabId = sender.tab?.id;
+      if (sender.id !== chrome.runtime.id || !sender.url?.startsWith(chrome.runtime.getURL('')) || tabId === undefined) {
+        sendResponse({ error: '허용되지 않은 요청입니다' });
+        return false;
+      }
+      diagnoseRelatedDocument((msg as any).doc ?? null, tabId)
+        .then(res => sendResponse(res))
+        .catch(err => sendResponse({ error: String(err) }));
       return true;
     }
     // 기안 코파일럿이 사용자가 올린 PDF를 오프스크린 pdf.js로 읽는다.
@@ -2266,7 +2419,7 @@ export async function markDocumentsRead(tabId: number, titles: string[], control
 
   let buttonFrameId = frameId;
   if (!prepared.buttonMarked) {
-    const frames = await chrome.webNavigation.getAllFrames({ tabId }).catch(() => null);
+    const frames = await chrome.webNavigation?.getAllFrames({ tabId }).catch(() => null);
     const byId = new Map(frames?.map(frame => [frame.frameId, frame]) ?? []);
     let parentId = byId.get(frameId)?.parentFrameId ?? -1;
     let buttonFound = false;
@@ -3057,7 +3210,7 @@ async function waitForDocumentList(
       if (tab?.status !== 'loading' || since >= RESTORE_LOADING_LIMIT_MS) {
         restores++;
         lastRestore = Date.now();
-        const frames = await chrome.webNavigation.getAllFrames({ tabId }).catch(() => null);
+        const frames = await chrome.webNavigation?.getAllFrames({ tabId }).catch(() => null);
         // 부모 경로가 맞는 프레임 하나만 실제로 전송한다. 느린 프레임이 다른 프레임을 막지 않게 동시에 묻는다.
         const replies = await Promise.all((frames?.length ? frames : [{ frameId: 0 }]).map(frame =>
           sendToFrame(tabId, frame.frameId, { type: 'RESTORE_DOCUMENT_LIST', location, control })));

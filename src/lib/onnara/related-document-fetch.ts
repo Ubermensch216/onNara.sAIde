@@ -2,22 +2,30 @@
 import { extractFileBytes, decodeText, UPLOAD_MAX_CHARS } from '@/lib/extract/files';
 import { bytesToBase64, isPdfBytes, PDF_MAX_BYTES, type PdfSource } from '@/lib/extract/pdf-text';
 import type { RelatedDocInfo } from './related-info';
+import type { CapturedOpenRequest } from './related-open-capture';
 import { extractRelatedDocuments, parseReferenceDocument } from './related-info';
 
-export type RelatedDocumentRequest = Pick<RelatedDocInfo, 'id' | 'title' | 'url'>;
+export type RelatedDocumentRequest = Pick<RelatedDocInfo, 'id' | 'title' | 'url'> & {
+  /** 기안기 관련정보 링크의 열기 함수가 보내려던 요청(related-open-capture). 가장 먼저 시도한다. */
+  open?: CapturedOpenRequest;
+};
 export interface RelatedDocumentSources {
   documentId?: string;
   texts: string[];
   pdf: PdfSource[];
   error?: string;
+  /** 진단용 요청 기록(경로·상태·형식·크기). 본문·필드 값은 담지 않는다. */
+  trace?: Array<{ method: string; path: string; status?: number; contentType?: string; bytes?: number; pdf?: boolean; error?: string }>;
 }
-type Request = { url: string; fields?: Array<[string, string]>; depth: number };
+type Request = { url: string; fields?: Array<[string, string]>; depth: number; captured?: boolean };
 const MAX_REQUESTS = 8;
 const MAX_DEPTH = 3;
 // 발견한 링크 중 조회·본문 파일 경로만 따른다. 저장/삭제 등의 동작은 실행하지 않는다.
 const READ_PATH = /\/(?:view[^/]*|select[^/]*|get[^/]*|download[^/]*|filedown[^/]*|[^/]*body[^/]*)\.do$/i;
 const FILE_PATH = /\.(?:pdf|hwpx|docx|hwp)(?:$|[?#])/i;
 const MUTATION_PATH = /(?:delete|remove|insert|update|save|add|modify|approve|sign|logout|markread)/i;
+/** 문서 식별자 필드. 접수문서(ENF)는 enfdocid로 조회한다. */
+const ID_FIELD = /^(?:docid|documentid|reportid|enfdocid)$/i;
 const TOKEN_NAME = /^(?:_csrf|csrf(?:token)?|csrftoken|requestverificationtoken|__requestverificationtoken)$/i;
 
 function allowedUrl(raw: string, base: string): string | null {
@@ -120,7 +128,7 @@ function children(doc: Document, request: Request): Request[] {
     if (!action || !READ_PATH.test(new URL(action).pathname)) continue;
     const fields: Array<[string, string]> = [...form.querySelectorAll<HTMLInputElement>('input[type="hidden"][name]')]
       .filter(input => !input.disabled).map(input => [input.name, input.value]);
-    if (!fields.some(([name]) => /^(?:docid|documentid|reportid)$/i.test(name))) continue;
+    if (!fields.some(([name]) => ID_FIELD.test(name))) continue;
     if (form.method.toLowerCase() === 'post') add(action, fields);
     else {
       const url = new URL(action);
@@ -130,9 +138,27 @@ function children(doc: Document, request: Request): Request[] {
   }
   // 본문 URL이 상수로 들어 있는 경우만 지원한다. 문자열 결합/함수 호출을 평가하지 않는다.
   for (const script of doc.querySelectorAll('script:not([src])')) {
+    // 접수문서 카드는 변환된 본문 PDF(/bms/dctenf/Document.pdf?sFileName=…_docconv.pdf) 주소를 문자열로 넣는다.
+    for (const match of (script.textContent ?? '').matchAll(/["']((?:\/|https?:\/\/)[^"'\s<>]*\.pdf\?[^"'\s<>]*[^"'\s<>=&?])["']/gi)) add(match[1]!);
     for (const match of (script.textContent ?? '').matchAll(/\b(?:pdfUrl|bodyUrl|documentUrl|fileUrl|src|url)\s*[:=]\s*["']((?:\/|https?:\/\/)[^"'\s<>]+)["']/gi)) {
       const raw = match[1]!;
       if (FILE_PATH.test(raw) || /\/bms\/dct\/viewreportbodyview\.do\?[^"']*docid=/i.test(raw)) add(raw);
+    }
+  }
+  // 접수문서 카드가 PDF 주소를 문자열 결합으로 만드는 경우: 서버가 넣어 둔 변환 파일명으로 같은 뷰어 주소를 만든다.
+  //   실제 카드: encodeURI(httpBaseURL + "/bms/dctenf/Document.pdf?sFileName=" + sfilename + "&docTitle=" + strFileName + "&transFlag=N")
+  //   파일명은 new objf("파일ID", "…_docconv.pdf", "표시 이름.pdf", "savebody", …)에, 제목은 var strFileName = "….pdf"에 있다.
+  if (/\/bms\/dctenf\//i.test(new URL(request.url).pathname)) {
+    const html = doc.documentElement?.innerHTML ?? '';
+    const strFileName = html.match(/\bstrFileName\s*=\s*"([^"]+)"/)?.[1];
+    const files = new Map<string, string>();
+    for (const match of html.matchAll(/new\s+objf\(\s*"[^"]*"\s*,\s*"([0-9A-F]{32}_docconv\.pdf)"\s*,\s*"([^"]*)"/gi)) files.set(match[1]!, match[2]!);
+    for (const name of html.match(/\b[0-9A-F]{32}_docconv\.pdf\b/gi) ?? []) if (!files.has(name)) files.set(name, '');
+    for (const [name, display] of [...files].slice(0, 2)) {
+      const docTitle = strFileName || display;
+      // 화면과 똑같이 encodeURI로 만든다(서블릿이 docTitle을 받는다). 제목 없는 주소는 예비로 둔다.
+      if (docTitle) add(encodeURI(`/bms/dctenf/Document.pdf?sFileName=${name}&docTitle=${docTitle}&transFlag=N`));
+      add(`/bms/dctenf/Document.pdf?sFileName=${name}&transFlag=N`);
     }
   }
   return found;
@@ -145,12 +171,26 @@ export async function fetchRelatedDocument(info: RelatedDocumentRequest, signal:
     const matches = extractRelatedDocuments(document).filter(doc => compact(doc.title) === compact(info.title) && (!info.id || !doc.id || doc.id === info.id));
     if (matches.length === 1) info = { ...info, id: info.id || matches[0]!.id, url: info.url || matches[0]!.url };
   }
-  const result: RelatedDocumentSources = { texts: [], pdf: [], ...(info.id ? { documentId: info.id } : {}) };
+  const result: RelatedDocumentSources = { texts: [], pdf: [], trace: [], ...(info.id ? { documentId: info.id } : {}) };
   const queue: Request[] = [];
+  if (info.open) {
+    // 기안기가 실제로 보내려던 조회 요청이므로 주소 이름 규칙(READ_PATH)은 보지 않되, 출처·변경 동작은 똑같이 막는다.
+    const url = allowedUrl(info.open.url, location.href);
+    if (url) queue.push(info.open.method === 'POST'
+      ? { url, fields: [...tokens(document), ...info.open.fields.filter(([name]) => !TOKEN_NAME.test(name))], depth: 0, captured: true }
+      : { url, depth: 0, captured: true });
+  }
   if (info.url) {
     const url = allowedUrl(info.url, location.href);
     if (url) queue.push({ url, depth: 0 });
     else result.error = '원문 링크가 현재 온나라 출처의 조회 주소가 아닙니다.';
+  }
+  if (/^ENF[A-F0-9]{32}$/i.test(info.id ?? '')) {
+    // 접수문서(ENF)는 온나라 목록의 openDocWindow와 같은 주소·필드로 조회한다(viewreport.do는 생산문서 DCT 전용).
+    queue.push({
+      url: new URL('/bms/dctenf/BmsDctEnfReceiptCardDetail.do', location.origin).href,
+      fields: [...tokens(document), ['enfdocid', info.id!], ['paperdocflag', 'N'], ['popupflag', 'Y']], depth: 0,
+    });
   }
   if (/^DCT[A-F0-9]{32}$/i.test(info.id ?? '')) {
     const url = new URL('/bms/dct/viewreport.do', location.origin).href;
@@ -167,8 +207,11 @@ export async function fetchRelatedDocument(info: RelatedDocumentRequest, signal:
     if (seen.has(key) || request.depth > MAX_DEPTH) continue;
     if (request.fields?.some(([name, value]) => /^(?:action|method|cmd|mode)$/i.test(name) && MUTATION_PATH.test(value))) continue;
     const requestIds = [...new URL(request.url).searchParams, ...(request.fields ?? [])]
-      .filter(([name]) => /^(?:docid|documentid|reportid)$/i.test(name)).map(([, value]) => value);
-    if (info.id && requestIds.some(value => value && value !== info.id)) {
+      .filter(([name]) => ID_FIELD.test(name)).map(([, value]) => value);
+    // 기안기 열기 함수가 만든 요청은 원 생산문서 ID 등 다른 ID 필드를 함께 보낼 수 있어, 선택한 ID가 들어 있는지만 본다.
+    if (info.id && (request.captured
+      ? !requestIds.includes(info.id) && !request.url.includes(info.id)
+      : requestIds.some(value => value && value !== info.id))) {
       result.error = '원문 조회 주소의 문서 ID가 선택한 참고문서와 다릅니다.';
       continue;
     }
@@ -178,9 +221,16 @@ export async function fetchRelatedDocument(info: RelatedDocumentRequest, signal:
         method: request.fields ? 'POST' : 'GET', credentials: 'same-origin', cache: 'no-store',
         redirect: 'error', signal, ...(request.fields ? { body: new URLSearchParams(request.fields) } : {}),
       });
+      const step: NonNullable<RelatedDocumentSources['trace']>[number] = {
+        method: request.fields ? 'POST' : 'GET', path: new URL(request.url).pathname.slice(0, 120),
+        status: response.status, contentType: response.headers.get('content-type') ?? '',
+      };
+      result.trace!.push(step);
       if (!response.ok) throw new Error(`원문 조회 실패 (HTTP ${response.status}). 로그인 상태와 문서 열람 권한을 확인해 주세요.`);
       const bytes = await readBytes(response, PDF_MAX_BYTES - received, signal);
       received += bytes.length;
+      step.bytes = bytes.length;
+      step.pdf = isPdfBytes(bytes);
       if (isPdfBytes(bytes)) {
         result.pdf.push({ url: request.url, base64: bytesToBase64(bytes), bytes: bytes.length });
         break; // 원본을 확보하면 추가 조회 대신 오프스크린 검증으로 넘긴다.
@@ -197,8 +247,10 @@ export async function fetchRelatedDocument(info: RelatedDocumentRequest, signal:
       }
       const doc = htmlDocument(bytes, contentType);
       if (doc.querySelector('input[type="password"]')) throw new Error('온나라 로그인이 만료되었습니다. 다시 로그인한 뒤 재시도해 주세요.');
-      const returnedId = doc.querySelector<HTMLInputElement>('input[name="docid"], input[name="docId"]')?.value;
-      if (info.id && returnedId && returnedId !== info.id) throw new Error('응답 문서 ID가 선택한 참고문서와 다릅니다.');
+      // 카드에는 원 생산문서 등 다른 ID가 함께 있을 수 있어, 선택한 ID가 하나라도 있으면 같은 문서로 본다.
+      const returnedIds = [...doc.querySelectorAll<HTMLInputElement>('input[name="enfdocid"], input[name="docid"], input[name="docId"]')]
+        .map(input => input.value).filter(Boolean);
+      if (info.id && returnedIds.length && !returnedIds.includes(info.id)) throw new Error('응답 문서 ID가 선택한 참고문서와 다릅니다.');
       const next = children(doc, request);
       queue.unshift(...next);
       const body = doc.querySelector('#reportBody, #div_report_body, .reportBody, #divBodyContent, .doc_body, article');
@@ -219,6 +271,9 @@ export async function fetchRelatedDocument(info: RelatedDocumentRequest, signal:
     } catch (error) {
       signal.throwIfAborted();
       result.error = error instanceof Error ? error.message : String(error);
+      const last = result.trace!.at(-1);
+      if (last && !last.error && last.path === new URL(request.url).pathname.slice(0, 120)) last.error = result.error;
+      else result.trace!.push({ method: request.fields ? 'POST' : 'GET', path: new URL(request.url).pathname.slice(0, 120), error: result.error });
     }
     if (result.texts.length) break;
   }

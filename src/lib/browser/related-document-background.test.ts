@@ -165,3 +165,21 @@ it('한글 MAIN 월드 접근이 실패해도 열린 PDF 추출은 계속한다'
   } as any : { type: 'RELATED_DOCUMENT_SOURCES', sources: { texts: [], pdf: [] } });
   expect((await handleFetchRelatedDocContent({ title }, 1)).content).toContain('10월 1일부터');
 });
+
+it('열린 접수문서 카드의 변환 본문 PDF 프레임을 원문 창에서 다시 받아 읽는다', async () => {
+  const { tabs, executeScript, windows } = harness({ texts: [], pdf: [], error: '직접 조회 실패' });
+  const cardUrl = 'https://onnara.test/bms/dctenf/BmsDctEnfReceiptCardDetail.do';
+  const pdfUrl = 'https://onnara.test/bms/dctenf/Document.pdf?sFileName=5EC27A4B_docconv.pdf&transFlag=N';
+  tabs.query.mockResolvedValue([{ id: 2, url: cardUrl, title: '문서관리카드온나라 시스템' } as chrome.tabs.Tab]);
+  tabs.get.mockImplementation(async (tabId?: number) => ({ id: tabId || 1, url: tabId === 2 ? cardUrl : url }));
+  vi.stubGlobal('chrome', { ...(globalThis as any).chrome, webNavigation: {
+    getAllFrames: vi.fn(async ({ tabId }: { tabId: number }) => tabId === 2 ? [{ frameId: 0, url: cardUrl }, { frameId: 7, url: pdfUrl }] : []),
+  } });
+  executeScript.mockImplementation(async (opts?: any) => opts?.args?.[0] === pdfUrl ? [{ frameId: 0, result: { base64: 'JVBERi0=', bytes: 5 } }] as any : []);
+  const parse = vi.spyOn(pdf, 'pdfText').mockResolvedValue({ text: `수신 수신자 참조\n제목\n${title}\n1. 10월 1일부터 7일까지 행사를 개최합니다.\n끝.`, pages: 1 });
+  const result = await handleFetchRelatedDocContent({ title, id: 'ENF6989F09F81B3945218AD080C4645FC55' }, 1);
+  expect(result.content).toContain('10월 1일부터');
+  expect(executeScript).toHaveBeenCalledWith(expect.objectContaining({ target: { tabId: 2, frameIds: [0] }, world: 'MAIN', args: [pdfUrl, expect.any(Number)] }));
+  expect(parse).toHaveBeenCalledWith(expect.objectContaining({ base64: 'JVBERi0=' }));
+  for (const fn of [tabs.create, tabs.duplicate, tabs.update, tabs.remove, windows.create, windows.update]) expect(fn).not.toHaveBeenCalled();
+});

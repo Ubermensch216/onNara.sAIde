@@ -311,6 +311,23 @@ export function DrawerApp() {
     setStatusMsg(`'${doc.title}' 본문을 조회하는 중입니다...`);
   };
 
+  // 원문을 읽지 못한 관련정보의 실제 화면 구조를 진단 파일로 저장한다(읽기 전용).
+  const [diagnosing, setDiagnosing] = useState(false);
+  const handleDiagnoseRef = (doc: RelatedDocInfo) => {
+    if (diagnosing || typeof chrome === 'undefined' || !chrome.runtime?.sendMessage) return;
+    setDiagnosing(true);
+    setStatusMsg(`'${doc.title}' 원문 화면을 진단하는 중입니다...`);
+    chrome.runtime.sendMessage(
+      { type: 'DIAGNOSE_RELATED_DOC', doc: { title: doc.title, id: doc.id, url: doc.url, type: doc.type } },
+      (response?: { filename?: string; error?: string }) => {
+        setDiagnosing(false);
+        const error = response?.error || chrome.runtime.lastError?.message;
+        setStatusMsg(error ? `진단 실패: ${error}` : `진단 파일을 다운로드 폴더에 저장했습니다: ${response?.filename ?? ''}`);
+        setTimeout(() => setStatusMsg(''), 8000);
+      },
+    );
+  };
+
   // 선택한 관련정보 중 본문이 없는 것을 하나씩 읽어 온다(동시에 여러 원문을 요청하지 않는다).
   useEffect(() => {
     if (fetchingTitle) return;
@@ -833,6 +850,8 @@ export function DrawerApp() {
                 onClearAll={() => { setSelectedKeys([]); setExpandedKey(null); setTongdalRefs([]); }}
                 onToggleExpand={handleToggleExpand}
                 onRetry={handleFetchRefContent}
+                onDiagnose={handleDiagnoseRef}
+                diagnosing={diagnosing}
                 relatedDocs={relatedDocs}
                 fetchingTitle={fetchingTitle}
                 refDocSummaries={refDocSummaries}

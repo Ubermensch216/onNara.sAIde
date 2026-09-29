@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   parseRelatedDocText,
   parseInfoDesSource,
+  parseReferencePdf,
   parseReferenceDocument,
   extractRelatedDocuments,
   findRelatedDocumentOpener,
@@ -294,4 +295,17 @@ it('대소문자가 다른 infodessource textarea의 URL 인코딩 값도 읽는
   const doc = document.implementation.createHTMLDocument();
   doc.body.innerHTML = `<textarea name="infoDesSource">${encodeURIComponent(id + '|문서「감사 유공 표창 알림」')}</textarea><table><tr><th>관련정보</th><td><span>[문서] 감사 유공 표창 알림</span></td></tr></table>`;
   expect(extractRelatedDocuments(doc)[0]?.id).toBe(id);
+});
+
+describe('parseReferencePdf', () => {
+  const title = '2026년 핑크문화데이 운영 홍보 협조 요청(10월)';
+  it('pdf.js가 제목을 여러 조각·줄로 나눠도 제목 행을 찾는다', () => {
+    const text = '부 산 광 역 시\n수신 수신자 참조\n제목\n2026년 핑크문화데이\n운영 홍보 협조 요청(10월)\n1. 귀 기관의 무궁한 발전을 기원합니다.\n2. 10월 핑크문화데이 운영을 홍보해 주시기 바랍니다.\n끝.';
+    const parsed = parseReferencePdf(text, title);
+    expect(parsed?.body).toContain('1. 귀 기관의 무궁한 발전을 기원합니다.');
+    expect(parsed?.body).not.toContain('핑크문화데이\n운영');
+  });
+  it('제목이 다른 문서는 받아들이지 않는다', () => {
+    expect(parseReferencePdf('제목 다른 행사 알림\n1. 다른 행사 안내입니다. 참고 바랍니다.', title)).toBeNull();
+  });
 });

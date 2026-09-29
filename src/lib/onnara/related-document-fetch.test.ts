@@ -180,3 +180,47 @@ it('드로어가 제목만 전달했어도 현재 관련정보 DOM에서 식별�
   expect(result.documentId).toBe(id);
   expect(fetcher).toHaveBeenCalledTimes(1);
 });
+
+it('접수문서(ENF) ID는 BmsDctEnfReceiptCardDetail.do로 조회하고 카드의 변환 본문 PDF를 받는다', async () => {
+  const enfId = 'ENF6989F09F81B3945218AD080C4645FC55';
+  const pdfPath = '/bms/dctenf/Document.pdf?sFileName=5EC27A4B_docconv.pdf&docTitle=%ED%96%89%EC%82%AC.pdf&transFlag=N';
+  const fetcher = vi.fn(async (address: string, _init?: RequestInit) => new Response(address.includes('BmsDctEnfReceiptCardDetail.do')
+    ? `<input type="hidden" name="enfdocid" value="${enfId}"><input type="hidden" name="docid" value="DCT00000000000000000000000000000000"><script>jQuery("#bodyFrame").attr("src", "${pdfPath}");</script>`
+    : address.includes('Document.pdf') ? '%PDF-1.7 body' : '<html></html>'));
+  vi.stubGlobal('fetch', fetcher);
+  const result = await fetchRelatedDocument({ title, id: enfId }, signal());
+  const [cardUrl, init] = fetcher.mock.calls[0] as unknown as [string, RequestInit];
+  expect(cardUrl).toBe(`${location.origin}/bms/dctenf/BmsDctEnfReceiptCardDetail.do`);
+  expect(init).toMatchObject({ method: 'POST', credentials: 'same-origin' });
+  expect((init.body as URLSearchParams).get('enfdocid')).toBe(enfId);
+  expect(fetcher.mock.calls.some(([address]) => String(address).includes('/bms/dct/viewreport.do'))).toBe(false);
+  expect(result.pdf).toEqual([expect.objectContaining({ url: `${location.origin}${pdfPath}` })]);
+});
+
+it('기안기 열기 함수에서 기록한 요청을 먼저 보내고, 카드 스크립트와 같은 방식으로 본문 PDF 주소를 만든다', async () => {
+  const enfId = 'ENF6989F09F81B3945218AD080C4645FC55';
+  const cardUrl = `${location.origin}/bms/dctenf/BmsDctEnfReceiptCardDetail.do`;
+  const pdfTitle = '2026년 핑크문화데이 운영 홍보 협조 요청(10월).pdf';
+  // 실제 접수문서 카드(2026-09-29 진단 파일)에서 본 스크립트 모양
+  const card = `<input type="hidden" name="enfdocid" value="${enfId}"><input type="hidden" name="docid" value="DCT6391A82FB7617A64F66D0C3ADAFB6820">
+    <iframe id="pdfViewerArea" src=""></iframe><script>
+    var strFileName = "${pdfTitle}";
+    var pdfUrl = encodeURI( httpBaseURL + "/bms/dctenf/Document.pdf?sFileName=" + pdfCommFileInfo.sfilename + "&docTitle=" + strFileName + "&transFlag=N");
+    initfileobj = new objf("14151da88dcadb1e80ea67c8640bc53f", "3AE35419512A920B7EE1CAC7AA0574D7.odt", "2026년 핑크문화데이 운영 홍보 협조 요청(10월).odt", "savebody", "64851", "0", "0", "0");
+    initfileobj = new objf("bb281ea43b18aec40cca83a5f54ed7e0", "5EC27A4B1608F63657FABD7FFEB90E46_docconv.pdf", "${pdfTitle}", "savebody", "148870", "0", "0", "0");
+    </script>`;
+  const expectedPdf = `${location.origin}${encodeURI(`/bms/dctenf/Document.pdf?sFileName=5EC27A4B1608F63657FABD7FFEB90E46_docconv.pdf&docTitle=${pdfTitle}&transFlag=N`)}`;
+  const fetcher = vi.fn(async (address: string, _init?: RequestInit) => new Response(address === cardUrl ? card
+    : address === expectedPdf ? '%PDF-1.7 body' : '<html>잘못된 요청</html>'));
+  vi.stubGlobal('fetch', fetcher);
+  const result = await fetchRelatedDocument({
+    title, id: enfId,
+    open: { method: 'POST', url: cardUrl, fields: [['cmd', 'viewreport'], ['docid', ''], ['enfdocid', enfId], ['procgb', 'ctrl'], ['popupflag', 'Y']] },
+  }, signal());
+  const [firstUrl, init] = fetcher.mock.calls[0] as unknown as [string, RequestInit];
+  expect(firstUrl).toBe(cardUrl);
+  expect((init.body as URLSearchParams).get('procgb')).toBe('ctrl');
+  expect(fetcher.mock.calls.some(([address]) => String(address).endsWith('/Document.pdf?sFileName='))).toBe(false);
+  expect(result.pdf).toEqual([expect.objectContaining({ url: expectedPdf })]);
+  expect(result.trace).toEqual(expect.arrayContaining([expect.objectContaining({ path: '/bms/dctenf/Document.pdf', status: 200, pdf: true })]));
+});

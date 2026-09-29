@@ -37,6 +37,9 @@ export interface ReferencePickerProps {
   onClearAll: () => void;
   onToggleExpand: (key: string) => void;
   onRetry?: (doc: RelatedDocInfo) => void;
+  /** 원문을 읽지 못했을 때 실제 원문 화면 구조를 진단 파일로 저장한다. */
+  onDiagnose?: (doc: RelatedDocInfo) => void;
+  diagnosing?: boolean;
   // 온나라 관련정보
   relatedDocs: RelatedDocInfo[];
   fetchingTitle: string | null;
@@ -63,7 +66,7 @@ export interface ReferencePickerProps {
 
 function OnnaraRefItem({
   doc, index, selected, selectDisabled, expanded, fetching, summary, summarizing, memo,
-  onToggleSelect, onToggleExpand, onMemo, onRetry, retryDisabled,
+  onToggleSelect, onToggleExpand, onMemo, onRetry, retryDisabled, onDiagnose, diagnosing,
 }: {
   doc: RelatedDocInfo;
   index: number;
@@ -79,6 +82,8 @@ function OnnaraRefItem({
   onMemo: (memo: string) => void;
   onRetry?: () => void;
   retryDisabled: boolean;
+  onDiagnose?: () => void;
+  diagnosing?: boolean;
 }) {
   const [showRaw, setShowRaw] = useState(false);
   return (
@@ -145,7 +150,14 @@ function OnnaraRefItem({
                 <MaterialIcon name="warning" size={13} className="text-amber-600" />
                 <span>문서 내용을 확인하려면 '관련정보'에서 해당 문서를 연 후, '다시 읽기'를 눌러 주세요.</span>
               </p>
-              {onRetry && <button type="button" onClick={onRetry} disabled={retryDisabled} className="underline font-medium cursor-pointer disabled:opacity-50">다시 읽기</button>}
+              <div className="flex items-center gap-3">
+                {onRetry && <button type="button" onClick={onRetry} disabled={retryDisabled} className="underline font-medium cursor-pointer disabled:opacity-50">다시 읽기</button>}
+                {onDiagnose && (
+                  <button type="button" onClick={onDiagnose} disabled={diagnosing || retryDisabled} className="underline cursor-pointer disabled:opacity-50" title="원문 화면 구조를 진단 파일(JSON)로 다운로드 폴더에 저장합니다. 본문은 앞부분 일부만 담깁니다.">
+                    {diagnosing ? '진단 중...' : '원문 진단 파일 저장'}
+                  </button>
+                )}
+              </div>
             </div>
           )}
 
@@ -231,6 +243,8 @@ export function ReferencePicker(props: ReferencePickerProps) {
                 onToggleExpand={() => props.onToggleExpand(key)}
                 onRetry={props.onRetry ? () => props.onRetry!(doc) : undefined}
                 retryDisabled={Boolean(props.fetchingTitle)}
+                onDiagnose={props.onDiagnose ? () => props.onDiagnose!(doc) : undefined}
+                diagnosing={props.diagnosing}
                 onMemo={(memo) => props.onOnnaraMemo(doc.title, memo)}
               />
             );

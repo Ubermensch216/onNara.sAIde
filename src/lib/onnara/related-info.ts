@@ -150,6 +150,22 @@ function getAllFrameDocuments(rootDoc: Document): Document[] {
   return docs;
 }
 
+/**
+ * PDF에서 뽑은 원문. pdf.js는 '제목'과 제목 글자를 여러 줄·조각으로 나눠 내보낼 수 있어,
+ * 줄바꿈·공백을 무시하고 '제목 + 요청한 제목'을 찾아 한 줄로 합친 뒤 같은 규칙으로 검증한다.
+ */
+export function parseReferencePdf(text: string, expectedTitle: string): { title: string; body: string; attachments: string[] } | null {
+  const direct = parseReferenceDocument(text, expectedTitle);
+  if (direct) return direct;
+  const chars = [...expectedTitle.replace(/\s+/g, '')];
+  if (chars.length < 4) return null;
+  const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const titled = new RegExp(`제\\s*목\\s*[:：]?\\s*${chars.map(escape).join('\\s*')}`).exec(text);
+  if (!titled) return null;
+  const joined = `${text.slice(0, titled.index)}\n제목 ${expectedTitle.trim()}\n${text.slice(titled.index + titled[0].length)}`;
+  return parseReferenceDocument(joined, expectedTitle);
+}
+
 /** 온나라 문서관리카드의 infodessource 값: DCT 문서ID|문서종류「제목」. */
 export function parseInfoDesSource(value: string): Array<{ id: string; label: string }> {
   try { value = decodeURIComponent(value); } catch { /* 이미 디코딩된 값 */ }
