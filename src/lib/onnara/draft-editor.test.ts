@@ -48,6 +48,36 @@ describe('draft-editor adapter system', () => {
     expect(capability).toBe('cursor');
   });
 
+  it('contenteditable도 승인 당시 선택 위치에 넣고, 본문이 바뀌었으면 거부한다', async () => {
+    // createHTMLDocument()에는 Selection이 없어 전역 document를 쓴다.
+    const doc = document;
+    doc.body.innerHTML = '';
+    const div = doc.createElement('div');
+    div.setAttribute('contenteditable', 'true');
+    div.textContent = '앞부분뒷부분';
+    doc.body.appendChild(div);
+    const ctx = captureDraftContext(doc, dummyTab);
+    const adapter = new ContenteditableEditorAdapter();
+
+    const range = doc.createRange();
+    range.setStart(div.firstChild!, 3);
+    range.collapse(true);
+    doc.getSelection()!.removeAllRanges();
+    doc.getSelection()!.addRange(range);
+    const prepared = await adapter.prepare(ctx, '[초안]', 'cursor', doc);
+
+    doc.getSelection()!.removeAllRanges(); // 승인하는 사이 선택이 사라짐
+    const op = { text: '[초안]', mode: 'cursor' as const, approvalToken: 't', target: prepared.target };
+    expect((await adapter.apply(ctx, op, doc)).status).toBe('applied');
+    expect(div.textContent).toBe('앞부분[초안]뒷부분');
+
+    // 같은 승인으로 한 번 더: 본문이 이미 바뀌었으므로 거부
+    const again = await adapter.apply(ctx, op, doc);
+    expect(again.status).toBe('rejected');
+    expect(div.textContent).toBe('앞부분[초안]뒷부분');
+    doc.body.innerHTML = '';
+  });
+
   it('에디터가 없고 [본문작성] 버튼이 있으면 needsOpenBody=true를 알린다', async () => {
     const doc = document.implementation.createHTMLDocument();
     doc.body.innerHTML = `

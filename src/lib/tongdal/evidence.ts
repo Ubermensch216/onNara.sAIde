@@ -10,7 +10,13 @@ import { estimateTokens } from '@/lib/extract/budget';
 import type { KnowledgeEvidence } from '@/lib/prompts/knowledge';
 import type { TongdalSearchHit } from './types';
 
-/** 답변 카드에 남기는 출처. 대화 기록에 저장된다(StoredMessage.sources). */
+/**
+ * 답변 카드에 남기는 출처. 대화 기록에 저장된다(StoredMessage.sources).
+ *
+ * ★ 문서 ID만으로는 사후 추적이 안 된다. 원본이 고쳐지면 "그때 무엇을 근거로 답했는지"를 알 수 없다.
+ *   그래서 답변 당시의 판본(versionId·versionLabel·contentHash)과, 모델에게 실제로 준 발췌문의
+ *   해시(excerptHash)를 함께 남긴다. 판본 필드는 2026-09-30 이전 기록·이전 TONGDAL에는 없다.
+ */
 export interface KnowledgeSource {
   n: number;
   documentId: string | null;
@@ -19,6 +25,13 @@ export interface KnowledgeSource {
   sectionPath: string;
   pageStart: number | null;
   pageEnd: number | null;
+  /** 근거가 색인된 판본. TONGDAL이 알려 주지 않으면 null. */
+  versionId?: string | null;
+  versionLabel?: string | null;
+  /** 그 판본 원본 파일의 SHA-256. 지금 판본과 대조해 답변 뒤 수정 여부를 가린다(provenance.ts). */
+  contentHash?: string | null;
+  /** 모델에게 준 발췌문(잘린 뒤) 그대로의 SHA-256. 같은 글을 보고 답했는지 증명한다. */
+  excerptHash?: string;
 }
 
 /** 근거 한 건에 적어도 이만큼은 준다. 이보다 작으면 문맥 없는 조각이 되어 오히려 해롭다. */
@@ -66,6 +79,23 @@ export function selectEvidence(hits: TongdalSearchHit[], budgetTokens: number): 
       sectionPath: hit.sectionPath,
       pageStart: hit.pageStart,
       pageEnd: hit.pageEnd,
+      versionId: hit.sourceVersionId ?? null,
+      versionLabel: hit.versionLabel ?? null,
+      contentHash: hit.contentHash ?? null,
     })),
   };
+}
+
+async function sha256Hex(text: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+/** 출처마다 모델에게 준 발췌문의 해시를 붙인다. evidence와 sources는 selectEvidence가 만든 같은 순서다. */
+export async function pinExcerpts(evidence: KnowledgeEvidence[], sources: KnowledgeSource[]): Promise<KnowledgeSource[]> {
+  const byN = new Map(evidence.map(item => [item.n, item.text]));
+  return Promise.all(sources.map(async source => {
+    const text = byN.get(source.n);
+    return text === undefined ? source : { ...source, excerptHash: await sha256Hex(text) };
+  }));
 }

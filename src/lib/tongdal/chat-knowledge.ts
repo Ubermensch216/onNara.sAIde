@@ -10,40 +10,48 @@ import { t } from '@/lib/i18n';
 import type { KnowledgeEvidence } from '@/lib/prompts/knowledge';
 import { search, TongdalError } from './client';
 import { isPaired, loadConnection } from './connection';
-import { selectEvidence, MIN_TOKENS_PER_ITEM, type KnowledgeSource } from './evidence';
+import { pinExcerpts, selectEvidence, MIN_TOKENS_PER_ITEM, type KnowledgeSource } from './evidence';
+
+/** 근거를 붙이지 못한 사유. 근거 필수 모드가 거절 문구를 고를 때 쓴다(grounding.ts). */
+export type KnowledgeMissing = 'noBudget' | 'notPaired' | 'unavailable' | 'noResults';
 
 export interface GatheredKnowledge {
   evidence: KnowledgeEvidence[];
   sources: KnowledgeSource[];
   /** 답변 위에 남길 안내. 근거를 정상적으로 붙였으면 키워드 전용 여부만 알린다. */
   notice?: string;
+  /** 근거가 비었을 때만 있다. */
+  missing?: { code: KnowledgeMissing; reason?: string };
 }
 
 /** 검색할 결과 수. 예산이 모자라면 selectEvidence가 더 줄인다. */
 const SEARCH_TOP_K = 4;
 
 export async function gatherKnowledge(question: string, budgetTokens: number, signal?: AbortSignal): Promise<GatheredKnowledge> {
-  const empty = (notice: string): GatheredKnowledge => ({ evidence: [], sources: [], notice });
-  if (budgetTokens < MIN_TOKENS_PER_ITEM) return empty(t('tongdal.chat.noBudget'));
+  const empty = (code: KnowledgeMissing, reason?: string): GatheredKnowledge => ({
+    evidence: [], sources: [],
+    notice: code === 'unavailable' ? t('tongdal.chat.unavailable', { reason: reason ?? '' }) : t(`tongdal.chat.${code}`),
+    missing: { code, ...(reason ? { reason } : {}) },
+  });
+  if (budgetTokens < MIN_TOKENS_PER_ITEM) return empty('noBudget');
 
   const connection = await loadConnection();
-  if (!isPaired(connection)) return empty(t('tongdal.chat.notPaired'));
+  if (!isPaired(connection)) return empty('notPaired');
 
   let result;
   try {
     result = await search(connection, { query: question.slice(0, 500), topK: SEARCH_TOP_K, maxChars: 3000 }, signal);
   } catch (error) {
     if (error instanceof TongdalError && error.code === 'aborted') throw error;
-    const reason = error instanceof Error ? error.message : String(error);
-    return empty(t('tongdal.chat.unavailable', { reason }));
+    return empty('unavailable', error instanceof Error ? error.message : String(error));
   }
 
-  if (!result.results.length) return empty(t('tongdal.chat.noResults'));
+  if (!result.results.length) return empty('noResults');
   const { evidence, sources } = selectEvidence(result.results, budgetTokens);
-  if (!evidence.length) return empty(t('tongdal.chat.noBudget'));
+  if (!evidence.length) return empty('noBudget');
   return {
     evidence,
-    sources,
+    sources: await pinExcerpts(evidence, sources),
     notice: result.searchMode === 'keyword' ? t('tongdal.chat.keywordOnly') : undefined,
   };
 }

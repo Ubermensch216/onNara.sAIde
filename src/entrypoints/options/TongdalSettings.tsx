@@ -12,6 +12,7 @@ import { pair } from '@/lib/tongdal/client';
 import { forgetToken, isPaired, normalizeBridgeUrl, saveConnection } from '@/lib/tongdal/connection';
 import type { TongdalState } from '@/lib/tongdal/status';
 import type { TongdalScope } from '@/lib/tongdal/types';
+import type { Settings } from '@/lib/storage/settings';
 import { useTongdal } from '@/lib/tongdal/useTongdal';
 
 const STATE_KEYS: Record<TongdalState, MessageKey> = {
@@ -30,7 +31,10 @@ const SCOPE_KEYS: Record<TongdalScope, MessageKey> = {
   delete: 'opt.tongdal.scope.delete',
 };
 
-export function TongdalSettings() {
+export function TongdalSettings({ grounding, onGrounding }: {
+  grounding: Settings['knowledgeGrounding'];
+  onGrounding: (value: Settings['knowledgeGrounding']) => void;
+}) {
   const t = useT();
   const { connection, health, loading, refresh } = useTongdal();
   const [url, setUrl] = useState(connection.baseUrl);
@@ -122,6 +126,18 @@ export function TongdalSettings() {
           <p className="desc">{waiting ? t('opt.tongdal.waiting') : t('opt.tongdal.codeDesc')}</p>
         </div>
       )}
+
+      <div className="field">
+        <div className="row">
+          <label htmlFor="tongdal-grounding">{t('opt.tongdal.grounding')}</label>
+          <select id="tongdal-grounding" value={grounding}
+            onChange={e => onGrounding(e.target.value as Settings['knowledgeGrounding'])}>
+            <option value="regulation">{t('opt.tongdal.grounding.regulation')}</option>
+            <option value="always">{t('opt.tongdal.grounding.always')}</option>
+          </select>
+        </div>
+        <p className="desc">{t('opt.tongdal.groundingDesc')}</p>
+      </div>
 
       {note && <p className="desc" role="status">{note}</p>}
     </section>

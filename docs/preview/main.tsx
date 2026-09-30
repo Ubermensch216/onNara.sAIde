@@ -352,7 +352,11 @@ if (mode.startsWith('options') || OPTION_VIEWS.includes(mode)) {
     createRoot(document.getElementById('root')!).render(<div className="wrap"><PresetEditor /></div>);
   } else if (mode === 'options-tongdal') {
     const { TongdalSettings } = await import('@/entrypoints/options/TongdalSettings');
-    createRoot(document.getElementById('root')!).render(<div className="wrap"><TongdalSettings /></div>);
+    function TongdalSettingsDemo() {
+      const [grounding, setGrounding] = React.useState(DEFAULT_SETTINGS.knowledgeGrounding);
+      return <TongdalSettings grounding={grounding} onGrounding={setGrounding} />;
+    }
+    createRoot(document.getElementById('root')!).render(<div className="wrap"><TongdalSettingsDemo /></div>);
   } else {
     const { default: OptionsApp } = await import('@/entrypoints/options/OptionsApp');
     createRoot(document.getElementById('root')!).render(<OptionsApp />);
@@ -848,6 +852,10 @@ if (mode.startsWith('options') || OPTION_VIEWS.includes(mode)) {
         sources: tongdalHits.slice(0, 2).map((hit, index) => ({
           n: index + 1, documentId: hit.sourceDocumentId, title: hit.title, relativePath: hit.relativePath,
           sectionPath: hit.sectionPath, pageStart: hit.pageStart, pageEnd: hit.pageEnd,
+          // [1]은 현행(v2, 표본 상세의 해시 'abc'), [2]는 답변 뒤 개정된 v1 — "판본 대조"에서 둘이 갈린다.
+          versionId: `sv_${index + 1}`, versionLabel: index === 0 ? 'v2' : 'v1',
+          contentHash: index === 0 ? 'abc' : '5e1f0c2d9a7b4e3f8c6d1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d',
+          excerptHash: '9f2c4e1a7b3d5f6e8a0c2b4d6f8e1a3c5b7d9f0e2a4c6b8d0f1e3a5c7b9d0f2e',
         })),
       } as never,
     );

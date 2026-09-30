@@ -60,6 +60,7 @@ import {
 import { gatherKnowledge } from '@/lib/tongdal/chat-knowledge';
 import type { KnowledgeSource } from '@/lib/tongdal/evidence';
 import { wrapKnowledgeQuestion } from '@/lib/prompts/knowledge';
+import { citationNotice, isRegulationQuestion, refusalMessage, requiresGrounding } from '@/lib/tongdal/grounding';
 import { isRestrictedUrl, sameDocument, sendToSW } from '@/lib/messaging/protocol';
 import { fitToBudget } from '@/lib/extract/budget';
 import type { ApprovalRequest, AppError, ExtractedPage } from '@/lib/messaging/protocol';
@@ -1320,6 +1321,8 @@ async function runActionCard(set: Set, get: Get, settings: Settings, title: stri
  *
  * ★ 근거 예산은 **이미 들어갈 컨텍스트를 뺀 나머지**다. 페이지 본문이 붙은 대화라면 근거 몫이 줄어들고,
  *   모자라면 근거 없이 답하되 그 사실을 알린다(gatherKnowledge).
+ * ★ 근거 필수 질문(업무 규정 등, tongdal/grounding.ts)은 근거가 없으면 답하지 않는다. `refusal`이 오면
+ *   호출부는 모델을 부르지 않고 그 문구를 답으로 남긴다. 붙인 페이지가 있으면 그 본문이 근거이므로 예외다.
  */
 async function withKnowledge(
   set: Set,
@@ -1327,7 +1330,7 @@ async function withKnowledge(
   settings: Settings,
   attachment: Attachment,
   signal: AbortSignal,
-): Promise<{ messages: ContextInput[]; sources?: KnowledgeSource[]; notice?: string }> {
+): Promise<{ messages: ContextInput[]; sources?: KnowledgeSource[]; notice?: string; refusal?: string; required?: boolean }> {
   const index = findLastIndex(messages, m => m.role === 'user');
   if (index < 0) return { messages };
   const question = messages[index]!.content;
@@ -1344,10 +1347,16 @@ async function withKnowledge(
       if (signal.aborted) return { messages };
       throw error;
     }
-    if (!knowledge.evidence.length) return { messages, notice: knowledge.notice };
+    const required = requiresGrounding(question, settings.knowledgeGrounding);
+    if (!knowledge.evidence.length) {
+      if (required && knowledge.missing && !attachment.page) {
+        return { messages, notice: t('tongdal.strict.notice'), refusal: refusalMessage(isRegulationQuestion(question), knowledge.missing) };
+      }
+      return { messages, notice: knowledge.notice };
+    }
     const next = messages.slice();
-    next[index] = { ...next[index]!, content: wrapKnowledgeQuestion(question, knowledge.evidence) };
-    return { messages: next, sources: knowledge.sources, notice: knowledge.notice };
+    next[index] = { ...next[index]!, content: wrapKnowledgeQuestion(question, knowledge.evidence, { strict: required }) };
+    return { messages: next, sources: knowledge.sources, notice: knowledge.notice, required };
   } finally {
     set({ documentProgress: null });
   }
@@ -1365,11 +1374,20 @@ async function runGeneration(set: Set, get: Get, settings: Settings, options?: S
   let messages: ContextInput[] = contextMessages(get());
   let sources: KnowledgeSource[] | undefined;
   let knowledgeNotice: string | undefined;
+  let groundingRequired = false;
   if (options?.knowledge) {
     const knowledge = await withKnowledge(set, messages, settings, attachment, abort.signal);
+    if (knowledge.refusal) {
+      // 근거 필수인데 근거가 없다. 모델을 부르지 않고 답하지 않은 사유를 답으로 남긴다.
+      const refusal = { conversationId: conv.id, role: 'assistant' as const, content: knowledge.refusal, notice: knowledge.notice, createdAt: nextStamp(get()) };
+      const id = await addMessage(refusal);
+      set(s => ({ messages: [...s.messages, { ...refusal, id }], lastContext: null }));
+      return { content: refusal.content };
+    }
     messages = knowledge.messages;
     sources = knowledge.sources;
     knowledgeNotice = knowledge.notice;
+    groundingRequired = knowledge.required ?? false;
   }
   // 검색이 끝난 뒤에 찍는다. 답변 자리의 시각이 검색 시간만큼 질문보다 앞서면 순서가 뒤집힌다.
   const startedAt = nextStamp(get());
@@ -1462,13 +1480,17 @@ async function runGeneration(set: Set, get: Get, settings: Settings, options?: S
     cancelScheduled();
     flush();
 
+    // 근거를 붙여 받은 답은 인용 번호를 근거 목록과 대조한다. 없는 번호·번호 없는 규정 답은 알린다.
+    const citeNotice = sources?.length ? citationNotice(content, sources.length, groundingRequired) : undefined;
+    const finalNotice = [notice, citeNotice].filter(Boolean).join(' ') || undefined;
+
     const id = await addMessage({
       conversationId: conv.id,
       clientId: String(placeholder.id),
       role: 'assistant',
       content,
       thinking: thinking || undefined,
-      notice,
+      notice: finalNotice,
       perf: perf ?? undefined,
       sources,
       createdAt: startedAt,
@@ -1482,7 +1504,7 @@ async function runGeneration(set: Set, get: Get, settings: Settings, options?: S
               id,
               content,
               thinking: thinking || undefined,
-              notice,
+              notice: finalNotice,
               perf: perf ?? undefined,
               sources,
               streaming: false,

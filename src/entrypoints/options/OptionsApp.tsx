@@ -509,7 +509,7 @@ export default function OptionsApp() {
         </div>
       </section>
 
-      <TongdalSettings />
+      <TongdalSettings grounding={s.knowledgeGrounding} onGrounding={(knowledgeGrounding) => patch({ knowledgeGrounding })} />
 
       <BackupPanel />
 

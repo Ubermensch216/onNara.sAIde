@@ -30,6 +30,13 @@ export interface TongdalPairResult {
 
 export interface TongdalSearchHit {
   sourceDocumentId: string | null;
+  /**
+   * 이 결과가 **색인된 판본**(현재 판본이 아닐 수 있다). contentHash는 원본 파일 SHA-256으로
+   * documents/{id}의 versions[].contentHash와 같은 값이다. 2026-09-30에 추가되어 이전 TONGDAL은 보내지 않는다.
+   */
+  sourceVersionId?: string | null;
+  versionLabel?: string | null;
+  contentHash?: string | null;
   title: string;
   fileName: string;
   relativePath: string;

@@ -39,10 +39,48 @@ export function describeStyleResult(res: HwpInsertResult): string {
 
 export type EditorCapability = 'read-only' | 'copy-only' | 'cursor' | 'selection' | 'append';
 
+/**
+ * 승인(prepare) 시점에 고정한 삽입 대상.
+ *
+ * ★ 사용자가 승인 버튼을 누르면 포커스가 서랍으로 옮겨 가고, 그사이 본문을 고치거나 커서를 옮길 수 있다.
+ *   삽입 시점의 커서를 그대로 쓰면 승인한 곳이 아닌 엉뚱한 자리에 들어간다. 그래서 승인 당시의
+ *   요소·본문 해시·선택 구간을 잡아 두고, 삽입 직전에 같은 요소·같은 본문인지 다시 확인한 뒤
+ *   **승인 당시 구간에** 넣는다. 하나라도 다르면 넣지 않고 다시 준비하게 한다.
+ */
+export interface InsertTarget {
+  element: HTMLElement;
+  /** 승인 당시 본문 해시(computeRevisionHash). */
+  revision: string;
+  /** textarea: 승인 당시 선택 구간. */
+  selectionStart?: number;
+  selectionEnd?: number;
+  /** contenteditable: 승인 당시 선택 범위(편집기 밖이었으면 본문 끝). */
+  range?: Range;
+}
+
 export interface ApprovedInsertOperation {
   text: string;
   mode: InsertMode;
   approvalToken: string;
+  /** 있으면 어댑터는 이 대상과 현재 편집기를 대조하고, 다르면 넣지 않는다(status 'rejected'). */
+  target?: InsertTarget;
+}
+
+/** 승인 후 편집기가 바뀌었을 때 안내. */
+export const STALE_TARGET_MESSAGE = '승인한 뒤 본문 내용이나 입력 위치가 바뀌어 삽입하지 않았습니다. 다시 준비하세요.';
+
+/** 승인 당시 대상과 지금 편집기가 같은가. 요소가 교체되었거나 본문이 한 글자라도 바뀌었으면 거짓. */
+function sameTarget(target: InsertTarget, current: HTMLElement | null, currentText: string): boolean {
+  return target.element === current && current.isConnected && target.revision === computeRevisionHash(currentText);
+}
+
+/** textarea 값의 [start, end) 구간에 초안을 넣은 결과와 삽입 뒤 커서 위치. 앞 글자가 줄바꿈이 아니면 줄을 바꾼다. */
+export function spliceDraft(value: string, start: number, end: number, text: string): { value: string; caret: number } {
+  const from = Math.max(0, Math.min(start, value.length));
+  const to = Math.max(from, Math.min(end, value.length));
+  const before = value.slice(0, from);
+  const head = before + (before.length && !before.endsWith('\n') ? '\n' : '') + text;
+  return { value: head + value.slice(to), caret: head.length };
 }
 
 export interface DraftEditorAdapter {
@@ -62,12 +100,13 @@ export interface DraftEditorAdapter {
     text: string,
     mode: InsertMode,
     doc: Document
-  ): Promise<{ targetLabel: string; expectedRevision: string; preview: string }>;
+  ): Promise<{ targetLabel: string; expectedRevision: string; preview: string; target?: InsertTarget }>;
+  /** op.target이 있으면 삽입 전에 대조하고, 다르면 아무것도 바꾸지 않고 'rejected'를 돌려준다. */
   apply(
     ctx: DraftContext,
     op: ApprovedInsertOperation,
     doc: Document
-  ): Promise<{ status: 'applied' | 'unconfirmed'; observedRevision?: string; message?: string }>;
+  ): Promise<{ status: 'applied' | 'unconfirmed' | 'rejected'; observedRevision?: string; message?: string }>;
   verify?(
     ctx: DraftContext,
     op: ApprovedInsertOperation,
@@ -125,32 +164,38 @@ export class TextareaEditorAdapter implements DraftEditorAdapter {
   async prepare(_ctx: DraftContext, text: string, _mode: InsertMode, doc: Document) {
     const ta = this.findTextarea(doc);
     const current = ta?.value || '';
-    const preview = current ? `${current}\n\n[추가 초안]\n${text}` : text;
+    const expectedRevision = computeRevisionHash(current);
+    if (!ta) return { targetLabel: '본문 텍스트 입력창', expectedRevision, preview: text };
+    // 승인 당시 선택 구간을 고정한다. 미리보기도 실제로 들어갈 결과 그대로 보여 준다.
+    const selectionStart = ta.selectionStart ?? current.length;
+    const selectionEnd = ta.selectionEnd ?? selectionStart;
     return {
       targetLabel: '본문 텍스트 입력창',
-      expectedRevision: computeRevisionHash(current),
-      preview,
+      expectedRevision,
+      preview: spliceDraft(current, selectionStart, selectionEnd, text).value,
+      target: { element: ta, revision: expectedRevision, selectionStart, selectionEnd },
     };
   }
 
   async apply(_ctx: DraftContext, op: ApprovedInsertOperation, doc: Document) {
     const ta = this.findTextarea(doc);
     if (!ta) return { status: 'unconfirmed' as const, message: '입력창을 찾을 수 없습니다.' };
+    const target = op.target;
+    if (target && !sameTarget(target, ta, ta.value)) return { status: 'rejected' as const, message: STALE_TARGET_MESSAGE };
 
+    // 승인 대상이 있으면 지금 커서가 아니라 승인 당시 구간에 넣는다. 본문이 같음을 위에서 확인했다.
+    const start = target?.selectionStart ?? ta.selectionStart ?? ta.value.length;
+    const end = target?.selectionEnd ?? ta.selectionEnd ?? start;
+    const { value, caret } = spliceDraft(ta.value, start, end, op.text);
+    ta.value = value;
     ta.focus();
-    const start = ta.selectionStart ?? ta.value.length;
-    const end = ta.selectionEnd ?? ta.value.length;
-    const before = ta.value.substring(0, start);
-    const after = ta.value.substring(end);
-
-    const inserted = before + (before.length && !before.endsWith('\n') ? '\n' : '') + op.text + after;
-    ta.value = inserted;
+    ta.setSelectionRange(caret, caret);
     ta.dispatchEvent(new Event('input', { bubbles: true }));
     ta.dispatchEvent(new Event('change', { bubbles: true }));
 
     return {
       status: 'applied' as const,
-      observedRevision: computeRevisionHash(inserted),
+      observedRevision: computeRevisionHash(value),
       message: '본문 입력창에 삽입되었습니다.',
     };
   }
@@ -191,19 +236,43 @@ export class ContenteditableEditorAdapter implements DraftEditorAdapter {
   async prepare(_ctx: DraftContext, text: string, _mode: InsertMode, doc: Document) {
     const el = this.findElement(doc);
     const current = el?.textContent || '';
+    const expectedRevision = computeRevisionHash(current);
+    const preview = current ? `${current}\n\n[추가 초안]\n${text}` : text;
+    if (!el) return { targetLabel: '본문 에디터', expectedRevision, preview };
+    // 승인 당시 편집기 안의 선택을 고정한다. 편집기 밖이었으면 본문 끝(미리보기와 같은 자리)에 넣는다.
+    const selection = el.ownerDocument.getSelection();
+    const live = selection && selection.rangeCount ? selection.getRangeAt(0) : null;
+    let range: Range;
+    if (live && el.contains(live.startContainer) && el.contains(live.endContainer)) {
+      range = live.cloneRange();
+    } else {
+      range = el.ownerDocument.createRange();
+      range.selectNodeContents(el);
+      range.collapse(false);
+    }
     return {
       targetLabel: '본문 에디터',
-      expectedRevision: computeRevisionHash(current),
-      preview: current ? `${current}\n\n[추가 초안]\n${text}` : text,
+      expectedRevision,
+      preview,
+      target: { element: el, revision: expectedRevision, range },
     };
   }
 
   async apply(_ctx: DraftContext, op: ApprovedInsertOperation, doc: Document) {
     const el = this.findElement(doc);
     if (!el) return { status: 'unconfirmed' as const, message: '에디터를 찾을 수 없습니다.' };
+    const target = op.target;
+    if (target && !sameTarget(target, el, el.textContent || '')) return { status: 'rejected' as const, message: STALE_TARGET_MESSAGE };
 
     el.focus();
     const ownerDoc = el.ownerDocument;
+    // focus()가 선택을 옮겨 놓으므로 그 뒤에 승인 당시 범위를 되돌린다. execCommand는 이 범위에 넣는다.
+    const range = target?.range;
+    if (range && el.contains(range.startContainer) && el.contains(range.endContainer)) {
+      const selection = ownerDoc.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+    }
     let applied = false;
     const html = draftToHtml(op.text);
 
@@ -222,7 +291,13 @@ export class ContenteditableEditorAdapter implements DraftEditorAdapter {
     }
 
     if (!applied) {
-      el.appendChild(createDomFragmentFromText(ownerDoc, op.text));
+      const fragment = createDomFragmentFromText(ownerDoc, op.text);
+      if (range && el.contains(range.startContainer)) {
+        range.deleteContents();
+        range.insertNode(fragment);
+      } else {
+        el.appendChild(fragment);
+      }
     }
 
     return {

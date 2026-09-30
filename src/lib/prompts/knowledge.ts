@@ -17,7 +17,8 @@ export interface KnowledgeEvidence {
   text: string;
 }
 
-export function wrapKnowledgeQuestion(question: string, evidence: KnowledgeEvidence[]): string {
+/** strict: 근거 필수 질문(tongdal/grounding.ts). 자료 밖 내용을 한 문장도 섞지 말라고 더 세게 이른다. */
+export function wrapKnowledgeQuestion(question: string, evidence: KnowledgeEvidence[], options: { strict?: boolean } = {}): string {
   const blocks = evidence.map(item => [`[${item.n}] ${item.title}${item.location ? ` (${item.location})` : ''}`, item.text].join('\n'));
   return [
     '<my_knowledge>',
@@ -29,6 +30,9 @@ export function wrapKnowledgeQuestion(question: string, evidence: KnowledgeEvide
     '',
     '위 자료를 근거로 답한다. 근거로 쓴 자료는 문장 끝에 [1]처럼 번호로 밝힌다.',
     '자료에 없는 내용은 추측하지 말고 "내 지식에서 찾지 못했다"고 밝힌다. 금액·날짜·수치는 자료에 적힌 그대로 옮긴다.',
+    ...(options.strict
+      ? ['이 질문은 업무 규정에 관한 것이다. 자료에 적힌 내용만 답하고 모든 문장 끝에 근거 번호를 단다. 자료로 답할 수 없으면 "내 지식에서 찾지 못했다"라고만 답한다.']
+      : []),
     '',
     `질문: ${question}`,
   ].join('\n');

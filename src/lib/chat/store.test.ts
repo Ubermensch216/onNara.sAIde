@@ -978,6 +978,52 @@ it('내 지식을 쓸 수 없으면 근거 없이 답하되 그 사실을 답변
   expect(answer.sources).toBeUndefined();
 });
 
+it('근거 필수: 업무 규정 질문에 근거가 없으면 모델을 부르지 않고 답하지 않았음을 남긴다', async () => {
+  vi.spyOn(knowledge, 'gatherKnowledge').mockResolvedValue({ evidence: [], sources: [], notice: '찾지 못해', missing: { code: 'noResults' } });
+  const generate = vi.spyOn(stream, 'streamChat');
+  await useChat.getState().openForTab(1, 'https://a.test');
+  await useChat.getState().send('출장 여비 한도가 얼마야?', DEFAULT_SETTINGS, { knowledge: true });
+
+  expect(generate).not.toHaveBeenCalled();
+  const answer = useChat.getState().messages.at(-1)!;
+  expect(answer.role).toBe('assistant');
+  expect(answer.content).toContain('답하지 않았습니다');
+  expect(answer.notice).toContain('근거 필수');
+  expect(useChat.getState().streaming).toBe(false);
+  const stored = await storage.listMessages(useChat.getState().conversation!.id);
+  expect(stored.at(-1)!.content).toContain('답하지 않았습니다');
+});
+
+it('근거 필수: 규정 질문이 아니면 예전처럼 근거 없이 답하고, always 설정이면 규정 밖 질문도 거절한다', async () => {
+  vi.spyOn(knowledge, 'gatherKnowledge').mockResolvedValue({ evidence: [], sources: [], notice: '찾지 못해', missing: { code: 'noResults' } });
+  const generate = vi.spyOn(stream, 'streamChat').mockImplementation(async (_endpoint, _request, handlers) => { handlers.onToken?.('답변'); return null; });
+  await useChat.getState().openForTab(1, 'https://a.test');
+  await useChat.getState().send('회의 일정 정리해줘', DEFAULT_SETTINGS, { knowledge: true });
+  expect(generate).toHaveBeenCalledTimes(1);
+
+  await useChat.getState().send('회의 일정 다시 정리해줘', { ...DEFAULT_SETTINGS, knowledgeGrounding: 'always' }, { knowledge: true });
+  expect(generate).toHaveBeenCalledTimes(1);
+  expect(useChat.getState().messages.at(-1)!.content).toContain('답하지 않았습니다');
+});
+
+it('근거 필수: 근거를 붙인 규정 답에 근거 번호가 없으면 안내를 붙인다', async () => {
+  vi.spyOn(knowledge, 'gatherKnowledge').mockResolvedValue({
+    evidence: [{ n: 1, title: '여비 규정', location: '', text: '일비는 2만 원이다.' }],
+    sources: [{ n: 1, documentId: 'doc_1', title: '여비 규정', relativePath: 'raw/a.hwpx', sectionPath: '', pageStart: null, pageEnd: null }],
+  });
+  let last = '';
+  vi.spyOn(stream, 'streamChat').mockImplementation(async (_endpoint, request, handlers) => {
+    last = request.messages.at(-1)!.content;
+    handlers.onToken?.('일비는 3만 원입니다.');
+    return null;
+  });
+  await useChat.getState().openForTab(1, 'https://a.test');
+  await useChat.getState().send('출장 일비 지급 기준은?', DEFAULT_SETTINGS, { knowledge: true });
+
+  expect(last).toContain('모든 문장 끝에 근거 번호');
+  expect(useChat.getState().messages.at(-1)!.notice).toContain('근거 번호가 없습니다');
+});
+
 it('내 지식을 켜지 않으면 검색하지 않는다', async () => {
   const gather = vi.spyOn(knowledge, 'gatherKnowledge');
   vi.spyOn(stream, 'streamChat').mockImplementation(async (_endpoint, _request, handlers) => { handlers.onToken?.('답변'); return null; });

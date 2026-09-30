@@ -46,6 +46,55 @@ describe('DraftTransactionController', () => {
     expect(retry.ok).toBe(false);
   });
 
+  function setup(value: string) {
+    const doc = document.implementation.createHTMLDocument();
+    const ta = doc.createElement('textarea');
+    ta.name = 'body';
+    ta.value = value;
+    doc.body.appendChild(ta);
+    return { doc, ta, ctx: captureDraftContext(doc, dummyTab), controller: new DraftTransactionController() };
+  }
+
+  it('승인 뒤 커서가 옮겨져도 승인 당시 위치에 넣는다', async () => {
+    const { doc, ta, ctx, controller } = setup('가나다\n라마바');
+    ta.setSelectionRange(3, 3); // "가나다" 뒤
+    const plan = await controller.prepare(ctx, '초안', 'cursor', doc);
+    expect(plan.preview).toBe('가나다\n초안\n라마바');
+
+    ta.setSelectionRange(0, 0); // 승인 버튼을 누르는 사이 커서가 맨 앞으로 옮겨짐
+    const res = await controller.commit(ctx, plan.approvalToken, '초안', doc);
+
+    expect(res.ok).toBe(true);
+    expect(ta.value).toBe('가나다\n초안\n라마바');
+  });
+
+  it('승인 뒤 본문이 바뀌면 넣지 않고 거부한다', async () => {
+    const { doc, ta, ctx, controller } = setup('가나다');
+    ta.setSelectionRange(3, 3);
+    const plan = await controller.prepare(ctx, '초안', 'cursor', doc);
+
+    ta.value = '가나다 추가 입력';
+    const res = await controller.commit(ctx, plan.approvalToken, '초안', doc);
+
+    expect(res.ok).toBe(false);
+    expect(res.message).toContain('다시 준비');
+    expect(ta.value).toBe('가나다 추가 입력');
+  });
+
+  it('승인한 입력창이 다른 요소로 바뀌면 거부한다', async () => {
+    const { doc, ta, ctx, controller } = setup('가나다');
+    const plan = await controller.prepare(ctx, '초안', 'cursor', doc);
+
+    const replacement = doc.createElement('textarea');
+    replacement.name = 'body';
+    replacement.value = '가나다';
+    ta.replaceWith(replacement);
+    const res = await controller.commit(ctx, plan.approvalToken, '초안', doc);
+
+    expect(res.ok).toBe(false);
+    expect(replacement.value).toBe('가나다');
+  });
+
   it('텍스트 내용이 변경되면 COMMIT이 거부된다', async () => {
     const doc = document.implementation.createHTMLDocument();
     const ta = doc.createElement('textarea');

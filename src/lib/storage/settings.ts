@@ -52,6 +52,14 @@ export interface Settings {
   locale: Locale;
   theme: ThemePref;
 
+  /**
+   * "내 지식 포함" 질문에서 근거가 없을 때. 'regulation'(기본)은 업무 규정 질문만 답하지 않고,
+   * 'always'는 모든 질문에 근거를 요구한다(tongdal/grounding.ts).
+   *
+   * ★ 근거 없이 답하게 두는 선택지는 두지 않는다. 규정 질문의 지어낸 답이 이 설정의 존재 이유다.
+   */
+  knowledgeGrounding: 'regulation' | 'always';
+
   /** 패널 오픈 시 워밍업 요청을 보낼지. 콜드 21.5초를 감추는 유일한 수단. */
   warmupOnOpen: boolean;
 
@@ -162,6 +170,7 @@ export const DEFAULT_SETTINGS: Settings = {
 
   locale: 'ko',
   theme: 'system',
+  knowledgeGrounding: 'regulation',
   warmupOnOpen: true,
 
   taskAlerts: true,
@@ -219,7 +228,7 @@ export function normalizeSettings(input: unknown): Settings {
   const next = { ...DEFAULT_SETTINGS };
   const enums = {
     thinkMode: ['off', 'agent-only', 'always'], theme: ['light', 'dark', 'system'], locale: ['ko', 'en'],
-    attachmentNaming: ['browser', 'normalized'],
+    attachmentNaming: ['browser', 'normalized'], knowledgeGrounding: ['regulation', 'always'],
     briefingReadPolicy: ['keep-unread', 'mark-read'], briefingScope: ['all', 'keywords'],
   };
   for (const [key, values] of Object.entries(enums)) {

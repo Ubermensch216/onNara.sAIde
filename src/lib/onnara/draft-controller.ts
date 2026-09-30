@@ -6,15 +6,20 @@
  */
 
 import type { DraftContext } from './draft-context';
-import { computeRevisionHash, isSameDraftContext } from './draft-context';
-import type { DraftEditorAdapter, EditorCapability } from './draft-editor';
-import { resolveEditorAdapter } from './draft-editor';
+import { computeRevisionHash } from './draft-context';
+import type { EditorCapability, InsertTarget } from './draft-editor';
+import { resolveEditorAdapter, STALE_TARGET_MESSAGE } from './draft-editor';
 import type { InsertMode } from '../messaging/draft-protocol';
 
 export interface DraftApprovalToken {
   token: string;
   documentKey: string;
+  /** 승인에 쓴 어댑터. 삽입 때 다른 어댑터가 잡히면(편집기 교체) 거부한다. */
+  adapterId: string;
+  /** 승인 당시 편집기 본문 해시(어댑터가 계산). */
   editorRevision: string;
+  /** 승인 당시 삽입 대상(요소·선택 구간). 어댑터가 삽입 직전에 대조한다. */
+  target?: InsertTarget;
   textDigest: string;
   mode: InsertMode;
   expiresAt: number;
@@ -66,7 +71,9 @@ export class DraftTransactionController {
     const tokenInfo: DraftApprovalToken = {
       token,
       documentKey: ctx.documentKey || 'unidentified-doc',
-      editorRevision: ctx.editorRevision,
+      adapterId: adapter.id,
+      editorRevision: prepared.expectedRevision,
+      target: prepared.target,
       textDigest: computeRevisionHash(text),
       mode,
       expiresAt: Date.now() + 30_000, // 30초 유효
@@ -119,10 +126,17 @@ export class DraftTransactionController {
     tokenInfo.used = true;
     this.tokens.delete(token);
 
+    // 승인한 편집기·본문·입력 위치가 그대로인지는 어댑터가 삽입 직전에 대조한다(InsertTarget).
     const { adapter } = await resolveEditorAdapter(ctx, doc);
-    const op = { text, mode: tokenInfo.mode, approvalToken: token };
+    if (adapter.id !== tokenInfo.adapterId) {
+      return { ok: false, status: 'failed', message: STALE_TARGET_MESSAGE };
+    }
+    const op = { text, mode: tokenInfo.mode, approvalToken: token, target: tokenInfo.target };
 
     const applyResult = await adapter.apply(ctx, op, doc);
+    if (applyResult.status === 'rejected') {
+      return { ok: false, status: 'failed', message: applyResult.message || STALE_TARGET_MESSAGE };
+    }
 
     let verified = false;
     if (applyResult.status === 'applied' && adapter.verify) {

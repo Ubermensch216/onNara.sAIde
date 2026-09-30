@@ -16,6 +16,7 @@ import type { FeedbackVerdict } from '@/lib/feedback/store';
 import { parseDownloadLink, type DownloadLinkAction } from '@/lib/downloads/links';
 import { parsePanelLink, type PanelLink } from '@/lib/panel/links';
 import { locationOf, type KnowledgeSource } from '@/lib/tongdal/evidence';
+import { checkSourceDrift, pinnedLabel, type SourceDrift } from '@/lib/tongdal/provenance';
 import { RelatedKnowledge } from './RelatedKnowledge';
 
 interface Props {
@@ -201,25 +202,59 @@ function Message({
 
 function SourceList({ sources, onOpen }: { sources: KnowledgeSource[]; onOpen?: ((documentId: string) => void) | undefined }) {
   const t = useT();
+  const [drift, setDrift] = useState<SourceDrift[] | 'checking' | null>(null);
+  // 판본을 기록한 출처가 하나도 없으면(이전 기록·이전 TONGDAL) 대조할 것이 없다.
+  const checkable = sources.some(source => source.documentId && source.contentHash);
+  const check = async () => {
+    setDrift('checking');
+    setDrift(await checkSourceDrift(sources));
+  };
   return (
     <section className="kn-sources" aria-label={t('tongdal.sources.h')}>
-      <div className="kn-sources-head">{t('tongdal.sources.h')}</div>
+      <div className="kn-sources-head">
+        <span>{t('tongdal.sources.h')}</span>
+        {checkable && (
+          <button type="button" className="kn-link" onClick={() => void check()} disabled={drift === 'checking'} title={t('tongdal.sources.checkHint')}>
+            {drift === 'checking' ? t('tongdal.sources.checking') : t('tongdal.sources.check')}
+          </button>
+        )}
+      </div>
       <ol className="kn-sources-list">
-        {sources.map(source => (
-          <li key={source.n}>
-            <span className="kn-sources-n">[{source.n}]</span>
-            <span className="kn-sources-body">
-              <span className="kn-sources-title">{source.title}</span>
-              <span className="kn-sources-meta">{locationOf(source)}</span>
-            </span>
-            {source.documentId && onOpen && (
-              <button type="button" className="kn-link" onClick={() => onOpen(source.documentId!)}>{t('kn.openInTongdal')}</button>
-            )}
-          </li>
-        ))}
+        {sources.map((source, index) => {
+          const pinned = pinnedLabel(source);
+          const state = Array.isArray(drift) ? drift[index] : undefined;
+          return (
+            <li key={source.n}>
+              <span className="kn-sources-n">[{source.n}]</span>
+              <span className="kn-sources-body">
+                <span className="kn-sources-title">{source.title}</span>
+                <span className="kn-sources-meta">{locationOf(source)}</span>
+                {pinned && (
+                  <span className="kn-sources-meta" title={t('tongdal.sources.pinnedHint', {
+                    version: source.versionLabel || '-', hash: source.contentHash || '-', excerpt: source.excerptHash || '-',
+                  })}>{pinned}</span>
+                )}
+                {state && <span className={`kn-drift kn-drift-${state.state}`}>{driftText(t, state)}</span>}
+              </span>
+              {source.documentId && onOpen && (
+                <button type="button" className="kn-link" onClick={() => onOpen(source.documentId!)}>{t('kn.openInTongdal')}</button>
+              )}
+            </li>
+          );
+        })}
       </ol>
     </section>
   );
+}
+
+function driftText(t: ReturnType<typeof useT>, drift: SourceDrift): string {
+  switch (drift.state) {
+    case 'same': return t('tongdal.drift.same');
+    case 'revised': return t('tongdal.drift.revised', { current: drift.currentLabel || '?' });
+    case 'missing': return t('tongdal.drift.missing');
+    case 'unpinned': return t('tongdal.drift.unpinned');
+    case 'unavailable': return `${t('tongdal.drift.unavailable')}: ${drift.reason}`;
+  }
 }
 
 function MessageActions({ msg, deleteDisabled, onDelete }: {

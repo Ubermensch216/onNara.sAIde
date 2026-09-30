@@ -129,7 +129,7 @@
 
 ### 12. 테스트 및 무결성 검증 현황
 - **TypeScript 컴파일 검사 (`tsc --noEmit`) 통과**
-- **단위 및 통합 테스트 (`vitest run`) 통과: 115개 파일, 1,263개 테스트 전체 통과 (2026-09-29 재확인)**
+- **단위 및 통합 테스트 (`vitest run`) 통과: 116개 파일, 1,286개 테스트 전체 통과 (2026-09-30 재확인)**
 - **Edge MV3 빌드 검증 (`node scripts/verify-build.mjs`) 통과**
 - **WCAG AA 색상 대비 검사 (`node scripts/check-contrast.mjs`) 통과 (13개 색상 쌍 충족)**
 
@@ -162,6 +162,7 @@
 - **2단계 명시적 승인 트랜잭션 브리지 및 정밀 타깃 삽입** (`draft-controller.ts`, `draft-editor.ts`, `draft-target-insert.ts`):
   - **Fail-Closed 안전 트랜잭션**: 에디터 본문에 직접 삽입 전 승인 토큰 기반의 프리뷰 모달(`ApprovalModal`)을 통해 사람이 직접 검토하고 승인해야만 실제 에디터에 반영
   - **정밀 타깃 지정 삽입 (`directInsertAtTarget`)**: 기안기 화면의 특정 커서 위치나 목표 단락을 직접 클릭하여 원하는 위치에만 초안을 안전하게 삽입
+  - **승인 대상 고정 (2026-09-30, `InsertTarget`)**: 승인(prepare) 때 대상 요소·본문 해시·선택 구간(textarea는 `selectionStart/End`, contenteditable은 `Range`)을 토큰에 묶고, 삽입(apply) 직전에 같은 어댑터·같은 요소·같은 본문인지 다시 대조한다. 하나라도 다르면 넣지 않고 "다시 준비하세요"로 거부하며, 같으면 **지금 커서가 아니라 승인 당시 구간에** 넣는다. 승인 버튼을 누르느라 포커스가 옮겨 가거나 그사이 본문을 고쳐도 엉뚱한 자리에 들어가지 않는다. textarea 미리보기도 실제 삽입 결과 그대로 보여 준다. 이전에는 토큰에 `ctx.editorRevision`을 넣고도 삽입 때 대조하지 않았다
 - **추천 공문 제목 자동 추출 및 본 화면 반영** (`draft-title.ts`, `DRAFT_APPLY_TITLE`):
   - 생성된 초안의 핵심 취지와 서식을 바탕으로 공문 제목을 자동 추천
   - 드로어 내에서 추천 제목을 자유롭게 수정하고, '반영' 버튼 클릭 시 온나라 기안 화면의 본 제목 입력 필드에 즉시 입력
@@ -191,7 +192,9 @@
 - **채팅 "내 지식" 토글**: 질문마다 TONGDAL을 검색해 근거를 **마지막 사용자 턴에만** 싣는다(시스템·페이지 접두사 불변 → KV 캐시 유지). 예산은 남은 컨텍스트에서 계산(최대 1,500토큰), 답변에 `[n]` 출처 카드(`StoredMessage.sources`) 저장. 연결 없음·결과 없음·예산 부족·키워드 전용은 답변 위 안내로 남긴다. 에이전트 모드와는 함께 쓰지 않는다
 - **기안 서랍 "TONGDAL 서고"**(`TongdalRefGroup.tsx`): 참고문서 선택의 세 번째 묶음. 고르면 본문(최대 2만 자)을 받아 `ReferenceSource(origin: 'tongdal')`로 초안에 반영, 3건 한도 공유
 - **조치카드 "관련 내 자료"**(`RelatedKnowledge.tsx`): 출처 공문 제목으로 TONGDAL을 찾아 최대 3건. 찾은 것이 없거나 연결이 없으면 칸 자체를 그리지 않는다(조치카드는 후보가 없어도 `sourceDoc`을 남기도록 바뀜)
-- **시험**: `lib/tongdal/tongdal.test.ts` 19건, 채팅 근거 3건(`store.test.ts`), 백업 토큰 제외 1건. 문서용 미리보기에 `?view=knowledge`·`knowledge-chat`·`options-tongdal` 표본 추가
+- **근거 판본 고정 (2026-09-30, `evidence.ts`·`provenance.ts`)**: 출처(`KnowledgeSource`)에 문서 ID와 함께 **색인된 판본**(`versionId`·`versionLabel`·원본 `contentHash`)과 모델에게 준 발췌문의 SHA-256(`excerptHash`)을 남긴다. 판본은 TONGDAL 브리지 검색 응답의 새 필드(`sourceVersionId`·`versionLabel`·`contentHash`, TONGDAL.ai 쪽 `documents.source_version_id` 기준)에서 온다. 출처 카드에 `v2 · #1a2b3c4d`를 표시하고, [판본 대조]를 누르면 현재 판본 해시와 비교해 "현행과 같음 / 답변 뒤 원본 수정됨(현행 vN) / 원본 없음"을 보인다(자동 호출 없음, 같은 문서는 한 번만 조회). 이전 TONGDAL·이전 기록은 판본이 없어 "판본 기록 없음"으로 표시
+- **근거 필수 모드 (2026-09-30, `grounding.ts`)**: "내 지식" 질문이 업무 규정 질문(규정·지침·훈령·조문·여비·수당·연가·전결·수의계약 등 낱말 판정)인데 근거가 없으면 **모델을 부르지 않고** 답하지 않은 사유와 다시 묻는 방법을 답으로 남긴다. 붙인 페이지가 있으면 그 본문이 근거이므로 예외. 근거를 찾은 규정 질문은 프롬프트에서 문장마다 번호를 요구하고, 답에 근거 번호가 없거나 목록에 없는 번호를 인용하면 안내를 붙인다. 설정 › TONGDAL.ai 연동 › 근거 필수: `업무 규정 질문만`(기본) / `모든 "내 지식" 질문`
+- **시험**: `lib/tongdal/tongdal.test.ts` 19건, `grounding-provenance.test.ts` 13건, 채팅 근거 6건(`store.test.ts`), 백업 토큰 제외 1건. 문서용 미리보기에 `?view=knowledge`·`knowledge-chat`·`options-tongdal` 표본 추가(`knowledge-chat`은 판본 대조 결과가 갈리는 표본)
 - **아직 확인하지 못한 것**: 실제 Edge + 실행 중인 TONGDAL.ai로의 종단 확인(페어링 → 검색 → 채팅 근거). 미리보기는 브리지 응답을 흉내 낸 것이다
 
 ---
