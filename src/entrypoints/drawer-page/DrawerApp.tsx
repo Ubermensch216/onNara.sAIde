@@ -41,6 +41,9 @@ import { locationOf } from '@/lib/tongdal/evidence';
 import type { TongdalSearchHit } from '@/lib/tongdal/types';
 import { needsAnalysis, useUserReferences } from './hooks/useUserReferences';
 import { estimateTokens } from '@/lib/extract/budget';
+import { handoffPrompt } from '@/lib/ai/work-plan';
+import { checkRequirements, metCount, type RequirementResult } from '@/lib/ai/requirement-check';
+import { clearHandoff, loadHandoff, onHandoffChanged, type StoredHandoff } from '@/lib/storage/work-plan-handoff';
 
 /** 모델 문맥 한도(num_ctx 상한)와 초안 출력 몫. */
 const CONTEXT_LIMIT = 32768;
@@ -111,6 +114,15 @@ export function DrawerApp() {
   const [isRequestFolded, setIsRequestFolded] = useState<boolean>(false);
   const [isResultFolded, setIsResultFolded] = useState<boolean>(false);
 
+  // 업무계획(사이드패널)에서 넘어온 회신 준비 — 요구사항은 원문에서 확인한 것만 기본으로 고른다.
+  const [handoff, setHandoff] = useState<StoredHandoff | null>(null);
+  const [handoffChosen, setHandoffChosen] = useState<Set<number>>(new Set());
+  /** 작성 요청에 채운 요구사항. 초안의 요구사항 점검은 이 목록으로 한다. */
+  const [requirements, setRequirements] = useState<string[]>([]);
+  const [reqResults, setReqResults] = useState<RequirementResult[] | null>(null);
+  const [reqChecking, setReqChecking] = useState<boolean>(false);
+  const [reqError, setReqError] = useState<string | null>(null);
+
   const resultSectionRef = useRef<HTMLElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const requestedReferenceTitles = useRef<Set<string>>(new Set());
@@ -144,6 +156,18 @@ export function DrawerApp() {
     return onDraftTemplatesChanged((list) => {
       setTemplates(list);
     });
+  }, []);
+
+  // 업무계획에서 보낸 회신 준비를 받는다. 드로어가 열려 있는 동안 새로 보내면 그것으로 바꾼다.
+  // ★ 지운 신호(null)로는 카드를 치우지 않는다. 작성 요청에 채운 뒤 저장소를 비워도 화면의 카드는 남아야 한다.
+  useEffect(() => {
+    const accept = (next: StoredHandoff | null) => {
+      if (!next) return;
+      setHandoff(next);
+      setHandoffChosen(new Set(next.requirements.flatMap((item, index) => (item.verified ? [index] : []))));
+    };
+    loadHandoff().then(accept).catch(() => {});
+    return onHandoffChanged(accept);
   }, []);
 
   const selectedTemplate = templates.find((t) => t.id === selectedTemplateId) || null;
@@ -455,6 +479,50 @@ export function DrawerApp() {
       }];
     });
 
+  /**
+   * 넘어온 회신 준비로 작성 요청을 채운다. 고른 요구사항은 초안을 만든 뒤 점검 목록이 된다.
+   * ★ 채우면 저장소의 묶음은 지운다 — 다음에 여는 다른 기안에 같은 요구사항이 다시 뜨지 않게 한다.
+   */
+  const applyHandoff = () => {
+    if (!handoff) return;
+    const chosen = handoff.requirements.filter((_, index) => handoffChosen.has(index)).map((item) => item.text);
+    setPrompt(handoffPrompt(handoff, chosen));
+    setRequirements(chosen);
+    setReqResults(null);
+    setReqError(null);
+    setIsRequestFolded(false);
+    void clearHandoff();
+    setStatusMsg('업무계획의 회신 요구사항을 작성 요청에 채웠습니다. 내용을 확인한 뒤 초안을 생성하세요.');
+    setTimeout(() => setStatusMsg(''), 3500);
+  };
+
+  const dismissHandoff = () => {
+    void clearHandoff();
+    setHandoff(null);
+  };
+
+  const toggleHandoffItem = (index: number) => {
+    setHandoffChosen((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) next.delete(index); else next.add(index);
+      return next;
+    });
+  };
+
+  // 초안이 요구사항을 담았는지 점검한다. 모델의 판정은 초안에서 인용을 확인한 것만 충족으로 센다.
+  const handleCheckRequirements = async () => {
+    if (!generatedDraft.trim() || !requirements.length || reqChecking) return;
+    setReqChecking(true);
+    setReqError(null);
+    try {
+      setReqResults(await checkRequirements(settings, requirements, generatedDraft));
+    } catch (e) {
+      setReqError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setReqChecking(false);
+    }
+  };
+
   // 초안 생성 실행 (로컬 Ollama)
   const handleGenerate = async (force = false) => {
     if (!prompt.trim()) return;
@@ -487,6 +555,9 @@ export function DrawerApp() {
     setTitleApplyError(null);
     setUnsupportedFacts([]);
     setPartialRefs([]);
+    // 지난 초안의 점검 결과를 새 초안에 붙여 두지 않는다.
+    setReqResults(null);
+    setReqError(null);
 
     // 긴 관련정보 원문은 모든 구간을 읽힌 사실 노트를 함께 넣는다(한 번 만든 노트는 다시 쓰지 않는다).
     try {
@@ -775,6 +846,67 @@ export function DrawerApp() {
                   현재 화면은 문서관리카드입니다. 본문 안에 초안을 삽입하시려면 기안기 상단의 <strong>[본문작성]</strong> 버튼을 먼저 클릭해 본문 편집창을 열어주세요.
                 </p>
               </div>
+            )}
+
+            {/* 업무계획(사이드패널)에서 넘어온 회신 준비. 고른 요구사항으로 작성 요청을 채운다. */}
+            {handoff && (
+              <section aria-labelledby="handoff-title" className="p-3 bg-white border border-blue-200 rounded-lg shadow-2xs space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <h2 id="handoff-title" className="font-bold text-slate-900 text-xs sm:text-[13px] flex items-center gap-1.5 min-w-0">
+                    <MaterialIcon name="assignment" size={15} className="text-blue-600 shrink-0" />
+                    <span className="truncate">업무계획에서 넘어온 회신 준비</span>
+                  </h2>
+                  <button
+                    type="button"
+                    onClick={dismissHandoff}
+                    className="text-slate-400 hover:text-slate-700 p-0.5 rounded cursor-pointer"
+                    title="회신 준비 닫기"
+                    aria-label="회신 준비 닫기"
+                  >
+                    <MaterialIcon name="close" size={14} />
+                  </button>
+                </div>
+                <p className="text-xs text-slate-700 leading-relaxed">
+                  <strong className="text-slate-900">{handoff.source.title}</strong>
+                  {handoff.requester ? ` · ${handoff.requester}` : ''} · {handoff.requestType}
+                </p>
+                {handoff.requirements.length > 0 ? (
+                  <ul className="space-y-1" aria-label="회신에 담을 요구사항">
+                    {handoff.requirements.map((item, index) => (
+                      <li key={`${item.text}-${index}`}>
+                        <label className="flex items-start gap-2 text-xs text-slate-800 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={handoffChosen.has(index)}
+                            onChange={() => toggleHandoffItem(index)}
+                            className="mt-0.5 accent-blue-600"
+                          />
+                          <span className="flex-1">{item.text}</span>
+                          <span className={`shrink-0 text-[11px] font-semibold px-1.5 rounded border ${item.verified ? 'text-emerald-700 bg-emerald-50 border-emerald-200' : 'text-amber-800 bg-amber-50 border-amber-200'}`}>
+                            {item.verified ? '원문 확인' : '원문 미확인'}
+                          </span>
+                        </label>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-xs text-slate-500">업무계획에서 회신 요구사항을 찾지 못했습니다. 요지와 기한만 채웁니다.</p>
+                )}
+                {handoff.deadlines.some((deadline) => deadline.verified) && (
+                  <p className="text-[11px] text-slate-600">
+                    기한: {handoff.deadlines.filter((deadline) => deadline.verified).map((deadline) => deadline.text).join(' / ')}
+                  </p>
+                )}
+                <div className="flex items-center justify-end gap-1.5">
+                  <button
+                    type="button"
+                    onClick={applyHandoff}
+                    className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-semibold transition cursor-pointer"
+                  >
+                    작성 요청에 채우기
+                  </button>
+                </div>
+              </section>
             )}
 
             {/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1163,6 +1295,57 @@ export function DrawerApp() {
                     {partialRefs.length > 0 && (
                       <p className="text-[11px] text-amber-800">분량이 많아 관련 구간만 반영한 참고자료: {partialRefs.join(', ')}</p>
                     )}
+                  </div>
+                )}
+
+                {/* 3-D. 업무계획 요구사항 점검: 초안에서 인용을 확인한 것만 충족으로 센다 */}
+                {generatedDraft && requirements.length > 0 && (
+                  <div className="p-3 bg-white border border-slate-200 rounded-lg shadow-2xs space-y-2" aria-labelledby="requirement-check-title">
+                    <div className="flex items-center justify-between gap-2">
+                      <p id="requirement-check-title" className="font-bold text-slate-900 text-xs sm:text-[13px] flex items-center gap-1.5">
+                        <MaterialIcon name="taskAlt" size={15} className="text-blue-600" />
+                        <span>요구사항 점검</span>
+                        {reqResults && (
+                          <span className="text-[11px] font-semibold text-blue-700 bg-blue-50 border border-blue-200 px-1.5 rounded">
+                            {metCount(reqResults)}/{reqResults.length} 충족
+                          </span>
+                        )}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => void handleCheckRequirements()}
+                        disabled={reqChecking}
+                        className="px-2.5 py-1 border border-blue-300 bg-white hover:bg-blue-50 disabled:text-slate-400 text-blue-700 rounded text-xs font-semibold transition cursor-pointer disabled:cursor-not-allowed"
+                      >
+                        {reqChecking ? '점검 중...' : reqResults ? '다시 점검' : '요구사항 점검'}
+                      </button>
+                    </div>
+                    <ul className="space-y-1.5">
+                      {requirements.map((requirement, index) => {
+                        const result = reqResults?.[index];
+                        const label = !result ? '점검 전' : result.status === 'met' ? '충족' : result.status === 'missing' ? '빠짐' : '확인 못함';
+                        const tone = !result
+                          ? 'text-slate-600 bg-slate-50 border-slate-200'
+                          : result.status === 'met'
+                          ? 'text-emerald-700 bg-emerald-50 border-emerald-200'
+                          : result.status === 'missing'
+                          ? 'text-rose-700 bg-rose-50 border-rose-200'
+                          : 'text-amber-800 bg-amber-50 border-amber-200';
+                        return (
+                          <li key={`${requirement}-${index}`} className="text-xs text-slate-800">
+                            <div className="flex items-start gap-2">
+                              <span className="flex-1">{requirement}</span>
+                              <span className={`shrink-0 text-[11px] font-semibold px-1.5 rounded border ${tone}`}>{label}</span>
+                            </div>
+                            {result?.quote && (
+                              <p className="mt-0.5 pl-2 border-l-2 border-slate-300 text-[11px] text-slate-500">{result.quote}</p>
+                            )}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                    {reqError && <p className="text-[11px] text-rose-700" role="alert">{reqError}</p>}
+                    <p className="text-[11px] text-slate-500">AI 판정 중 초안에서 인용을 확인한 것만 충족으로 셉니다. 확인 못함은 직접 살펴보세요.</p>
                   </div>
                 )}
                 </div>

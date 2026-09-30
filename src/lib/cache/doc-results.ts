@@ -2,7 +2,7 @@
  * 문서 분석 결과 캐시 (B1). 계획서 §4.1 "문서 정체성 키" · §4.2
  *
  * ★ 왜 필요한가.
- *   `/요약`·`/조치`는 문서 한 건에 프리필 약 15초 + 생성 수십 초를 쓴다. 온나라 업무는
+ *   `/요약`·`/업무계획`은 문서 한 건에 프리필 약 15초 + 생성 수십 초를 쓴다. 온나라 업무는
  *   목록과 문서를 오가는 일이 잦아 같은 공문을 다시 분석하는 일이 흔한데, 지금까지는
  *   그때마다 같은 값을 다시 치렀다.
  *
@@ -21,6 +21,7 @@
 
 import { db } from '@/lib/storage/db';
 import type { TaskCandidate } from '@/lib/schedule/candidates';
+import type { WorkPlanHandoff } from '@/lib/ai/work-plan';
 
 /** 보관할 최대 건수. 넘치면 오래된 것부터 버린다. */
 export const MAX_DOC_RESULTS = 300;
@@ -38,6 +39,8 @@ export interface DocResult {
   /** 핵심·조치사항에서 나온 일정 후보. 카드까지 그대로 복원한다. */
   taskCandidates?: TaskCandidate[];
   sourceDoc?: { title: string; url?: string };
+  /** 업무계획의 회신 준비 묶음. `회신 기안으로 보내기`까지 그대로 복원한다. */
+  workPlan?: WorkPlanHandoff;
   createdAt: number;
 }
 
@@ -124,6 +127,7 @@ export async function saveDocResult(
     content: entry.content,
     ...(entry.taskCandidates?.length ? { taskCandidates: entry.taskCandidates } : {}),
     ...(entry.sourceDoc ? { sourceDoc: entry.sourceDoc } : {}),
+    ...(entry.workPlan ? { workPlan: entry.workPlan } : {}),
   };
   try {
     await db.docResults.put(row);

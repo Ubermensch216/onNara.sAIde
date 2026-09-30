@@ -3,7 +3,7 @@
  *
  * ★ 소형 모델(gemma4:e2b)은 자유 형식으로 쓰게 하면 항목을 빠뜨리거나 날짜를 바꿔 쓴다.
  *   그래서 JSON 스키마로만 답하게 하고, 사용자에게 보여 주기 전에 코드가 원문과 대조한다.
- *   - 근거 문장이 원문에 실제로 있는지
+ *   - 근거 문장이 원문에 실제로, 뜻이 바뀌지 않게 인용되었는지(locateEvidence)
  *   - 기한 날짜가 원문에 나오는 날짜인지
  *   - 원문의 "…까지" 기한을 모델이 빠뜨리지 않았는지(코드로 직접 추출)
  *   확인하지 못한 값은 지우지 않고 "원문에서 찾지 못함"으로 표시한다. 판단은 사용자가 한다.
@@ -49,12 +49,61 @@ function compact(text: string): string {
   return text.normalize('NFC').toLowerCase().replace(/[\s\p{P}\p{S}]/gu, '');
 }
 
-/** 근거 문장이 원문에 있는가. 모델이 앞뒤를 조금 줄이는 경우를 허용해 핵심 구간(앞 20자)으로도 확인한다. */
-export function evidenceFound(evidence: string, source: string): boolean {
+/**
+ * 원문을 문장으로 나눈다. "2026. 9. 30."처럼 날짜 안에도 마침표와 공백이 있어 ". "로는 자르지 않고
+ * 줄바꿈과 "다." 뒤에서만 나눈다. 구분자가 공백뿐이라 compact한 문장을 이으면 compact(원문)과 같다.
+ */
+function splitSentences(source: string): string[] {
+  return source.split(/(?<=다\.)\s+|\n+/).map(sentence => sentence.trim()).filter(Boolean);
+}
+
+/**
+ * 근거에서 빠진 문장 뒷부분에 있으면 뜻이 뒤집히거나 제한되는 말.
+ * "개인은 신청할 수 | 없다"처럼 부정어 앞에서 끊은 인용은 원문과 반대 뜻이 된다.
+ */
+const TRAILING_QUALIFIER = /않|없|못하|못한|못할|못함|아니|아님|불가|금지|제외|불허|말것|말고|마시|마십시오|미만|초과|이내|한하|한정/;
+/** 근거에서 빠진 문장 앞부분에 있으면 조건·예외가 사라지는 말. "…하는 경우 | 제출"을 무조건 제출로 읽게 된다. */
+const LEADING_QUALIFIER = /경우|때에는|때는|한하여|한해|다만|제외하고|제외한|아니면|않으면|않는|없으면|없는|못한|외에는|이외/;
+
+/**
+ * 근거 문장이 원문에 **그대로** 있는지 확인하고, 있으면 그 근거가 속한 원문 문장 전체를 돌려준다.
+ *
+ * ★ 앞부분 몇 글자만 맞으면 인정하던 방식은 폐기했다. "개인은 신청할 수 없다"를
+ *   "개인도 신청할 수 있다"로 바꾼 근거도 앞 20자가 같아 "원문 확인"을 받았다.
+ * - 공백·문장부호만 무시하고, 근거 전체가 원문의 연속된 구간과 글자 단위로 같아야 한다.
+ * - 모델이 원문 문장의 일부만 옮긴 경우, 빠진 뒷부분에 부정·제한어가 있거나 빠진 앞부분에
+ *   조건·예외어가 있으면 뜻이 바뀐 인용으로 보고 인정하지 않는다.
+ * - 확인하지 못하면 null. 호출부는 지우지 않고 "원문에서 찾지 못함"으로 표시한다.
+ */
+export function locateEvidence(evidence: string, source: string): string | null {
   const needle = compact(evidence);
-  if (needle.length < 6) return false;
-  const haystack = compact(source);
-  return haystack.includes(needle) || (needle.length > 20 && haystack.includes(needle.slice(0, 20)));
+  if (needle.length < 6) return null;
+  const sentences = splitSentences(source);
+  const compacted = sentences.map(compact);
+  const starts: number[] = [];
+  let offset = 0;
+  for (const sentence of compacted) { starts.push(offset); offset += sentence.length; }
+  const haystack = compacted.join('');
+  const sentenceAt = (position: number) => {
+    let index = 0;
+    while (index + 1 < starts.length && starts[index + 1]! <= position) index++;
+    return index;
+  };
+  for (let found = haystack.indexOf(needle); found !== -1; found = haystack.indexOf(needle, found + 1)) {
+    const end = found + needle.length;
+    const first = sentenceAt(found);
+    const last = sentenceAt(end - 1);
+    const leading = haystack.slice(starts[first], found);
+    const trailing = haystack.slice(end, starts[last]! + compacted[last]!.length);
+    if (TRAILING_QUALIFIER.test(trailing) || LEADING_QUALIFIER.test(leading)) continue;
+    return sentences.slice(first, last + 1).join(' ');
+  }
+  return null;
+}
+
+/** 근거 문장이 원문에 그대로, 뜻이 바뀌지 않게 인용되었는가. 기준은 {@link locateEvidence}. */
+export function evidenceFound(evidence: string, source: string): boolean {
+  return locateEvidence(evidence, source) !== null;
 }
 
 export interface FoundDate { year?: number; month: number; day: number; text: string }
@@ -88,8 +137,7 @@ export function sameDate(a: FoundDate, b: FoundDate): boolean {
 /** 원문에서 "…까지"로 끝나는 기한을 코드로 직접 뽑는다. 모델이 빠뜨린 기한을 보완한다. */
 export function findDueDates(source: string): Array<FoundDate & { sentence: string }> {
   const results: Array<FoundDate & { sentence: string }> = [];
-  // "2026. 9. 30."처럼 날짜 안에도 마침표와 공백이 있으므로 ". "로 자르면 날짜가 조각난다. 줄과 "다." 뒤에서만 나눈다.
-  for (const sentence of source.split(/(?<=다\.)\s+|\n+/)) {
+  for (const sentence of splitSentences(source)) {
     if (!/까지/.test(sentence)) continue;
     const dueClause = sentence.slice(0, sentence.lastIndexOf('까지'));
     const dates = findDates(dueClause);
@@ -97,6 +145,13 @@ export function findDueDates(source: string): Array<FoundDate & { sentence: stri
     if (last && !results.some(item => sameDate(item, last))) results.push({ ...last, sentence: sentence.trim() });
   }
   return results;
+}
+
+/**
+ * 빈칸 대신 모델이 적는 말. 실측(gemma4:e2b)에서 제출물이 없는 알림에 `["없음"]`을 내 "없음"이라는 제출물이 생겼다.
+ */
+export function isPlaceholder(value: string): boolean {
+  return /^(?:없음|없습니다|해당\s*(?:사항\s*)?없음|미정|n\/?a|-+)$/i.test(value.trim());
 }
 
 export function parseActionCard(raw: string): ActionCard | null {
@@ -108,9 +163,9 @@ export function parseActionCard(raw: string): ActionCard | null {
     return {
       summary: text(value.summary),
       actions: list(value.actions, item => text(item.task) ? { task: text(item.task), evidence: text(item.evidence) } : null),
-      deliverables: Array.isArray(value.deliverables) ? value.deliverables.map(text).filter(Boolean) : [],
+      deliverables: Array.isArray(value.deliverables) ? value.deliverables.map(text).filter(item => item && !isPlaceholder(item)) : [],
       deadlines: list(value.deadlines, item => text(item.date) ? { date: text(item.date), what: text(item.what), evidence: text(item.evidence) } : null),
-      contact: text(value.contact),
+      contact: isPlaceholder(text(value.contact)) ? '' : text(value.contact),
     };
   } catch {
     return null;
@@ -155,8 +210,10 @@ export function renderActionCard(title: string, card: ActionCard, source: string
 
   lines.push(`**문의처** ${md(card.contact || '본문에 없음')}`);
 
+  // 모델이 옮긴 조각이 아니라 확인된 원문 문장 전체를 보여 준다. 조각만 보이면 빠진 단서를 사용자가 알 수 없다.
   const evidence = [...card.actions.map(action => action.evidence), ...card.deadlines.map(deadline => deadline.evidence)]
-    .filter((sentence, index, all) => sentence && all.indexOf(sentence) === index && evidenceFound(sentence, source));
+    .map(sentence => (sentence ? locateEvidence(sentence, source) : null))
+    .filter((sentence, index, all): sentence is string => sentence !== null && all.indexOf(sentence) === index);
   if (evidence.length) {
     lines.push('', '**근거 문장**');
     for (const sentence of evidence.slice(0, 4)) lines.push(`> ${md(sentence)}`);

@@ -6,7 +6,7 @@
  */
 
 import { fitToBudget } from './budget';
-import { PDF_MAX_BYTES, bytesToBase64, formatPdfSection, isPdfBytes, type PdfSource, type PdfTextResult } from './pdf-text';
+import { PDF_MAX_BYTES, bytesToBase64, formatPdfSection, isPdfBytes, pageAnchors, type PdfSource, type PdfTextResult } from './pdf-text';
 import type { ExtractedPage } from '@/lib/messaging/protocol';
 import type { TextPdfInput } from './text-pdf';
 
@@ -108,6 +108,7 @@ export async function pdfText(source: PdfSource): Promise<PdfTextResult> {
 export function withPdfSections(page: ExtractedPage, results: PdfTextResult[], budgetTokens: number): ExtractedPage {
   const sections = results.map(formatPdfSection);
   if (!sections.length) return page;
+  const readable = results.filter(result => result.text);
   const combined = [...sections, page.text.trim()].filter(Boolean).join('\n\n');
   const fitted = fitToBudget(combined, budgetTokens);
   const charCount = sections.reduce((sum, section) => sum + section.length, 0) + page.charCount;
@@ -119,5 +120,7 @@ export function withPdfSections(page: ExtractedPage, results: PdfTextResult[], b
     keptRatio: fitted.truncated || page.truncated ? Math.min(1, fitted.text.length / Math.max(1, charCount)) : 1,
     estimatedTokens: fitted.estimatedTokens,
     method: results.some(result => result.text) ? 'pdf' : page.method,
+    // 쪽 번호는 PDF가 한 건일 때만 뜻이 있다. 두 건이면 "3쪽"이 어느 파일의 쪽인지 알 수 없다.
+    ...(readable.length === 1 && readable[0]!.pageTexts ? { pdfPageAnchors: pageAnchors(readable[0]!.pageTexts) } : {}),
   };
 }

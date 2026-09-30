@@ -8,6 +8,7 @@ import type { UiMessage } from '@/lib/chat/store';
 import type { PerfSample } from '@/types/ollama';
 import { AgentSteps } from './AgentSteps';
 import { TaskRegisterCard } from './TaskRegisterCard';
+import { WorkPlanSend } from './WorkPlanSend';
 import { Markdown } from './Markdown';
 import { CopyIcon, DeleteIcon, InsertIcon } from './ChatActionIcons';
 import { FeedbackButtons } from './FeedbackButtons';
@@ -104,7 +105,8 @@ function feedbackKey(msg: UiMessage): string {
 /** 이 답변에 평가를 받을 만한가. 자동화 실행 기록은 AI가 쓴 글이 아니므로 묻지 않는다. */
 function feedbackKindOf(msg: UiMessage): 'action-card' | 'summary' | null {
   if (msg.role !== 'assistant' || msg.origin === 'automation' || msg.streaming || !msg.content) return null;
-  return msg.taskCandidates?.length ? 'action-card' : 'summary';
+  // 업무계획은 핵심·조치사항을 흡수했다. 정확도 집계가 끊기지 않도록 같은 갈래로 센다.
+  return msg.workPlan || msg.taskCandidates?.length ? 'action-card' : 'summary';
 }
 
 function Message({
@@ -172,7 +174,7 @@ function Message({
         <Markdown text={msg.content} streaming={msg.streaming} dark={dark} />
       )}
 
-      {/* 핵심·조치사항에서 나온 일정 후보(S07). 답변 바로 아래 둔다 — 근거를 읽은 자리에서 판단한다. */}
+      {/* 업무계획에서 나온 일정 후보(S07). 답변 바로 아래 둔다 — 근거를 읽은 자리에서 판단한다. */}
       {!msg.streaming && msg.taskCandidates?.length && msg.sourceDoc ? (
         <TaskRegisterCard
           candidates={msg.taskCandidates}
@@ -183,10 +185,13 @@ function Message({
         />
       ) : null}
 
+      {/* 업무계획 4번 칸(회신 준비)을 기안 코파일럿으로 넘긴다. */}
+      {!msg.streaming && msg.workPlan ? <WorkPlanSend handoff={msg.workPlan} /> : null}
+
       {/* 답변 속 [n]이 가리키는 자료. 번호만 남고 출처가 사라지면 근거를 되짚을 길이 없다. */}
       {!msg.streaming && msg.sources?.length ? <SourceList sources={msg.sources} onOpen={onOpenSource} /> : null}
 
-      {/* 조치카드의 출처 공문으로 찾은 TONGDAL 자료(연결한 경우에만, 찾은 것이 있을 때만 보인다). */}
+      {/* 업무계획의 출처 공문으로 찾은 TONGDAL 자료(연결한 경우에만, 찾은 것이 있을 때만 보인다). */}
       {!msg.streaming && msg.sourceDoc ? <RelatedKnowledge title={msg.sourceDoc.title} /> : null}
 
       {msg.aborted && <div className="aborted">{t('msg.aborted')}</div>}

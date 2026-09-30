@@ -23,7 +23,7 @@ const CMDS = builtinCommands();
 describe('matchSlash', () => {
   it('/ 하나면 `/` 그룹 전체를 준다', () => {
     expect(matchSlash('/', CMDS).map(c => c.presetId))
-      .toEqual(['summary', 'actions', 'compare', 'read', 'refresh']);
+      .toEqual(['summary', 'workplan', 'compare', 'read', 'refresh']);
   });
 
   it('@ 하나면 `@` 그룹 전체를 준다', () => {
@@ -61,7 +61,7 @@ describe('matchSlash', () => {
 
   it('내장 명령은 온나라 목록 명령만 둔다 (웹페이지 본문 명령은 없앴다)', () => {
     expect(CMDS.every(command => command.needs === 'documents')).toBe(true);
-    expect(CMDS.map(command => command.slash)).toEqual(['/요약', '/조치', '/비교', '/읽기', '@첨부', '/새로고침']);
+    expect(CMDS.map(command => command.slash)).toEqual(['/요약', '/업무계획', '/비교', '/읽기', '@첨부', '/새로고침']);
   });
 
   it('★ 접두 문자가 어긋나면 반대 그룹에서 찾아 새 이름을 보여 준다', () => {

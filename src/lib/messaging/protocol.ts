@@ -85,6 +85,13 @@ export interface ExtractedPage {
   sourceFrameUrl?: string;
   /** 사이트 권한이 없어 읽지 못한 하위 프레임 주소. 본문이 다른 호스트의 뷰어에 있을 때 채워진다. */
   blockedFrameUrls?: string[];
+  /**
+   * 본문이 PDF 한 건에서 왔을 때 쪽마다의 첫머리 표식(pdf-text.ts `pageAnchors`). 근거 문장의 쪽 번호를 찾는 데 쓴다.
+   *
+   * ★ 글자 위치(offset)를 들고 다니지 않는 이유: 본문은 프레임 합치기·예산 절단을 거치며 앞뒤가 바뀐다.
+   *   쪽 첫머리 글자는 그 과정을 지나도 본문 안에서 다시 찾을 수 있다.
+   */
+  pdfPageAnchors?: string[];
 }
 
 /* ── 페이지 액션 (Phase 5 에이전트) ─────────────────────── */

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { expect, it } from 'vitest';
 import { renderMarkdown } from '@/lib/markdown';
-import { evidenceFound, findDates, findDueDates, parseActionCard, renderActionCard } from './action-card';
+import { evidenceFound, findDates, findDueDates, locateEvidence, parseActionCard, renderActionCard } from './action-card';
 
 const source = [
   '제목 2026년 제2회 고충상담원 역량강화 워크숍 개최 알림 및 참석자 명단 제출 요청',
@@ -25,6 +25,52 @@ it('원문의 "…까지" 기한만 골라낸다', () => {
 it('근거 문장이 원문에 있는지 공백·문장부호와 무관하게 대조한다', () => {
   expect(evidenceFound('참석자 명단을 붙임 서식에 작성하여 2026. 9. 30.(수)까지 감사담당관으로 제출', source)).toBe(true);
   expect(evidenceFound('10월 2일까지 공보관실로 회신', source)).toBe(false);
+});
+
+const eligibility = [
+  '1. 신청 자격',
+  '이번 사업의 신청 대상은 관내 소재 기업으로 한정하며 개인은 신청할 수 없다.',
+  '2. 참석을 희망하는 경우 10월 2일까지 명단을 제출한다.',
+].join('\n');
+
+it('앞부분만 같고 뒤에서 뜻이 뒤집힌 근거는 원문 확인으로 인정하지 않는다', () => {
+  // 앞 20자가 같아 예전에는 "원문 확인"을 받았다.
+  expect(evidenceFound('이번 사업의 신청 대상은 관내 소재 기업으로 한정하며 개인도 신청할 수 있다.', eligibility)).toBe(false);
+  expect(evidenceFound('이번 사업의 신청 대상은 관내 소재 기업으로 한정하며 개인은 신청할 수 있다.', eligibility)).toBe(false);
+  expect(evidenceFound('이번 사업의 신청 대상은 관내 소재 기업으로 한정하며 개인은 신청할 수 없다.', eligibility)).toBe(true);
+});
+
+it('부정어·조건 앞에서 끊은 인용은 원문에 있는 글자라도 인정하지 않는다', () => {
+  // 원문 그대로의 조각이지만 "없다"를 떼어 내 반대 뜻이 된다.
+  expect(evidenceFound('이번 사업의 신청 대상은 관내 소재 기업으로 한정하며 개인은 신청할 수', eligibility)).toBe(false);
+  // "희망하는 경우"라는 조건을 떼어 내면 모두 제출해야 하는 것처럼 읽힌다.
+  expect(evidenceFound('10월 2일까지 명단을 제출한다', eligibility)).toBe(false);
+  // 뜻을 바꾸지 않는 앞뒤 생략(항목 번호, "하여 주시기 바랍니다")은 허용한다.
+  expect(evidenceFound('참석을 희망하는 경우 10월 2일까지 명단을 제출', eligibility)).toBe(true);
+  expect(evidenceFound('신청 대상은 관내 소재 기업으로 한정하며 개인은 신청할 수 없다', eligibility)).toBe(true);
+});
+
+it('근거가 속한 원문 문장 전체를 돌려주고, 여러 줄에 걸친 인용도 찾는다', () => {
+  expect(locateEvidence('참석을 희망하는 경우 10월 2일까지 명단을 제출', eligibility)).toBe('2. 참석을 희망하는 경우 10월 2일까지 명단을 제출한다.');
+  expect(locateEvidence('신청 자격 이번 사업의 신청 대상은', eligibility)).toBeNull();
+  expect(locateEvidence('나. 장소: 시청 12층 대회의실 2. 참석자 명단을 붙임 서식에 작성하여 2026. 9. 30.(수)까지 감사담당관으로 제출하여 주시기 바랍니다.', source))
+    .toBe('나. 장소: 시청 12층 대회의실 2. 참석자 명단을 붙임 서식에 작성하여 2026. 9. 30.(수)까지 감사담당관으로 제출하여 주시기 바랍니다.');
+});
+
+it('조치카드의 근거 문장 란은 뜻이 뒤집힌 근거를 싣지 않고 확인된 원문 문장 전체를 싣는다', () => {
+  const card = parseActionCard(JSON.stringify({
+    summary: '사업 신청 안내',
+    actions: [
+      { task: '개인 신청', evidence: '이번 사업의 신청 대상은 관내 소재 기업으로 한정하며 개인도 신청할 수 있다.' },
+      { task: '명단 제출', evidence: '참석을 희망하는 경우 10월 2일까지 명단을 제출' },
+    ],
+    deliverables: [], deadlines: [], contact: '',
+  }))!;
+  const md = renderActionCard('사업 안내', card, eligibility);
+  expect(md).toContain('개인 신청 (원문에서 찾지 못함)');
+  expect(md).toContain('명단 제출 (원문 확인)');
+  expect(md).not.toContain('개인도 신청할 수 있다');
+  expect(md).toContain('> 2\\. 참석을 희망하는 경우 10월 2일까지 명단을 제출한다.');
 });
 
 it('모델 JSON을 검증해 확인된 값과 원문에 없는 값을 구분하고, 빠뜨린 기한을 코드로 보완한다', () => {

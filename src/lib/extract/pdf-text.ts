@@ -89,6 +89,26 @@ function describePdfError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** 쪽 표식 길이. 머리글이 같은 쪽들도 본문 첫 줄까지 담기면 서로 갈린다. */
+const ANCHOR_CHARS = 40;
+/** 이보다 짧은 표식은 본문 아무 데나 맞으므로 쓰지 않는다(빈 쪽·쪽 번호만 있는 쪽). */
+export const MIN_ANCHOR_CHARS = 8;
+
+/** 비교용: 공백·문장부호를 없앤다(근거 대조 규칙과 같다). */
+export function compactForAnchor(text: string): string {
+  return text.normalize('NFC').toLowerCase().replace(/[\s\p{P}\p{S}]/gu, '');
+}
+
+/**
+ * 쪽마다의 첫머리 표식. 쓸 수 없는 쪽(빈 쪽 등)은 빈 문자열로 두어 번호가 밀리지 않게 한다.
+ */
+export function pageAnchors(pageTexts: string[]): string[] {
+  return pageTexts.map(text => {
+    const anchor = compactForAnchor(text).slice(0, ANCHOR_CHARS);
+    return anchor.length >= MIN_ANCHOR_CHARS ? anchor : '';
+  });
+}
+
 /**
  * 모델에 넘길 PDF 본문 한 덩어리.
  * 읽지 못했을 때도 이유를 남긴다. 비워 두면 모델이 첨부 목록만 보고 "내용이 없다"고 지어낸다.

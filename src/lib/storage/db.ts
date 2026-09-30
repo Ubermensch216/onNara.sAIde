@@ -10,6 +10,7 @@ import type { PerfSample } from '@/types/ollama';
 import type { AgentStep } from '@/lib/agent/loop';
 import type { ScheduleTask } from '@/lib/schedule/task';
 import type { TaskCandidate } from '@/lib/schedule/candidates';
+import type { WorkPlanHandoff } from '@/lib/ai/work-plan';
 import type { DocResult } from '@/lib/cache/doc-results';
 import type { FeedbackEntry } from '@/lib/feedback/store';
 import type { InboxFeedbackExample } from '@/lib/inbox/personalize';
@@ -72,6 +73,13 @@ export interface StoredMessage {
   taskCandidates?: TaskCandidate[];
   /** 그 후보가 나온 공문. 일정 항목의 출처가 된다. */
   sourceDoc?: { title: string; url?: string };
+  /**
+   * 업무계획 카드의 회신 준비 묶음(4번 칸). 비인덱스 필드.
+   *
+   * ★ `회신 기안으로 보내기`가 이 값을 기안 코파일럿에 넘긴다. 답변 문자열만 남기면 패널을 다시 열었을 때
+   *   버튼이 사라진다. 원문 대조까지 끝난 항목만 저장한다 — 본문은 복사해 두지 않는다.
+   */
+  workPlan?: WorkPlanHandoff;
   /**
    * 이 답변이 캐시에서 나왔다면 **처음 분석한 시각**(ms). 비인덱스 필드.
    *

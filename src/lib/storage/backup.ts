@@ -23,6 +23,7 @@ import { normalizeInboxLocation } from '@/lib/inbox/location';
 import { db } from './db';
 import { normalizeSettings } from './settings';
 import { TONGDAL_KEY } from '@/lib/tongdal/connection';
+import { WORK_PLAN_HANDOFF_KEY } from './work-plan-handoff';
 
 export const BACKUP_FORMAT = 'onnara-saide-backup';
 export const BACKUP_VERSION = 1;
@@ -34,9 +35,10 @@ export const MEMORY_TABLE = 'pageVectors';
  * 백업에서 빼는 chrome.storage.local 키.
  *
  * 데이터가 아니라 그때그때의 신호다. 되살리면 복원 직후 엉뚱한 탭이 열리거나
- * (openInbox), 오늘 몫의 기한 알림이 이미 간 것으로 처리된다(taskAlertOn).
+ * (openInbox), 오늘 몫의 기한 알림이 이미 간 것으로 처리된다(taskAlertOn). 기안 코파일럿에 걸어 둔
+ * 회신 준비(workPlanHandoff)도 되살리면 지난 요구사항이 다른 기안에 뜬다.
  */
-export const TRANSIENT_KEYS = ['saide.openInbox', 'saide.taskAlertOn'];
+export const TRANSIENT_KEYS = ['saide.openInbox', 'saide.taskAlertOn', WORK_PLAN_HANDOFF_KEY];
 
 /**
  * 백업 파일에 담지 않는 비밀 키.

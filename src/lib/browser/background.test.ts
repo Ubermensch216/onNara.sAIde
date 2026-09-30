@@ -1089,3 +1089,17 @@ it('메인 화면에서 이미 열람되어 저장된 미열람 목록에서 문
   });
   expect(response).toMatchObject({ type: 'DOCUMENTS_MARKED_READ', marked: ['이미 읽은 문서'], unconfirmed: [] });
 });
+
+it('문서 상세 프레임을 합칠 때 PDF 쪽 표식은 PDF를 품은 프레임이 하나일 때만 옮긴다', () => {
+  const payload = (text: string, anchors?: string[]) => ({ url: 'https://onnara.test/x', title: '문서', text, charCount: text.length,
+    truncated: false, keptRatio: 1, estimatedTokens: 10, extractedAt: 1, method: 'innerText' as const, ...(anchors ? { pdfPageAnchors: anchors } : {}) });
+  const candidate = (frameId: number, text: string, anchors?: string[]) =>
+    ({ frameId, frameUrl: 'https://onnara.test/x', response: { type: 'EXTRACTED' as const, payload: payload(text, anchors) } });
+  const frames = [{ frameId: 0, parentFrameId: -1 }, { frameId: 1, parentFrameId: 0 }, { frameId: 2, parentFrameId: 0 }];
+  const top = candidate(0, '제목 영역 인쇄 닫기');
+  const one = mergeDetailFrames(top, [top, candidate(1, '첫 PDF 본문 글자가 길게 이어진다 '.repeat(3), ['첫쪽표식입니다요'])], frames, 2000);
+  expect(one.pdfPageAnchors).toEqual(['첫쪽표식입니다요']);
+  const two = mergeDetailFrames(top, [top, candidate(1, '첫 PDF 본문 글자가 길게 이어진다 '.repeat(3), ['첫쪽표식입니다요']),
+    candidate(2, '둘째 PDF 본문도 길게 이어진다 '.repeat(3), ['둘째쪽표식입니다'])], frames, 2000);
+  expect(two.pdfPageAnchors).toBeUndefined();
+});

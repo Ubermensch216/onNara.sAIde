@@ -3,7 +3,7 @@ import { downloadDocumentAttachments, formatAttachmentReport, releaseWorkTab } f
 import { cancelAutomation, enqueueAutomation, recordAutomation, workTabLock } from '@/lib/automation/jobs';
 import { notifyJobFinished } from '@/lib/automation/notify';
 import { t } from '@/lib/i18n';
-import { ACTION_CARD_SCHEMA, actionCardInstruction, parseActionCard, renderActionCard } from '@/lib/ai/action-card';
+import { buildWorkPlanHandoff, parseWorkPlan, renderWorkPlan, WORK_PLAN_SCHEMA, workPlanInstruction, type WorkPlanHandoff } from '@/lib/ai/work-plan';
 import { buildTaskCandidates, type TaskCandidate } from '@/lib/schedule/candidates';
 import {
   bodyRevision,
@@ -765,7 +765,7 @@ async function runDocumentCommand(
     const startedRun = Date.now();
     const { id: jobId, finished } = enqueueAutomation({
       // 명령 id와 작업 종류는 이름이 다르다. `summary`는 명령, `summarize`는 작업이다.
-      kind: command === 'actions' ? 'actions' : 'summarize', origin: 'chat', lock: false,
+      kind: command === 'workplan' ? 'actions' : 'summarize', origin: 'chat', lock: false,
       label: targets.length === 1 ? targets[0]! : t('auto.docCount', { n: targets.length }),
       run: async jobSignal => {
         // 도구 탭에서 취소를 누르면 여기서 진행 중인 생성도 멈춰야 한다.
@@ -821,6 +821,7 @@ async function appendCachedResult(set: Set, get: Get, hit: DocResult): Promise<v
     cached: hit.createdAt,
     ...(hit.taskCandidates?.length ? { taskCandidates: hit.taskCandidates } : {}),
     ...(hit.sourceDoc ? { sourceDoc: hit.sourceDoc } : {}),
+    ...(hit.workPlan ? { workPlan: hit.workPlan } : {}),
     createdAt: nextStamp(get()),
   };
   const id = await addMessage(message);
@@ -976,13 +977,13 @@ function describeAttachedDocuments(page: ExtractedPage | null, titles: string[])
 }
 
 /**
- * 문서별 처리(/요약, /조치): 한 건 읽고 한 건 생성하기를 반복한다.
+ * 문서별 처리(/요약, /업무계획): 한 건 읽고 한 건 생성하기를 반복한다.
  *
  * ★ 여러 본문을 한꺼번에 CPU 모델에 넣지 않는다. 문서마다 문맥을 비우고 그 문서만 넣는다.
  * ★ 여러 문서는 복제한 목록 탭 하나를 끝까지 재사용한다(문서마다 목록 복원을 반복하지 않는다).
  */
 async function runDocumentBatch(set: Set, get: Get, options: {
-  command: 'summary' | 'actions';
+  command: 'summary' | 'workplan';
   settings: Settings;
   epochs: SessionEpochs;
   tabId: number;
@@ -1041,8 +1042,8 @@ async function runDocumentBatch(set: Set, get: Get, options: {
       }
     }
 
-    const outcome = command === 'actions'
-      ? await runActionCard(batchSet, get, settings, title, page, referenceOf(title))
+    const outcome = command === 'workplan'
+      ? await runWorkPlan(batchSet, get, settings, title, page, referenceOf(title), rowOf(title))
       : await runGeneration(batchSet, instructionOnly(get, documentBatchInstruction(title, instruction)), { ...settings, thinkMode: 'off' });
     if (!outcome) return;
     await saveDocResult(lookup, {
@@ -1050,6 +1051,7 @@ async function runDocumentBatch(set: Set, get: Get, options: {
       content: outcome.content,
       ...(outcome.taskCandidates ? { taskCandidates: outcome.taskCandidates } : {}),
       ...(outcome.sourceDoc ? { sourceDoc: outcome.sourceDoc } : {}),
+      ...(outcome.workPlan ? { workPlan: outcome.workPlan } : {}),
     });
   };
 
@@ -1269,38 +1271,46 @@ interface DocumentOutcome {
   content: string;
   taskCandidates?: TaskCandidate[];
   sourceDoc?: { title: string; url?: string };
+  workPlan?: WorkPlanHandoff;
 }
 
 /**
- * 핵심·조치사항 카드(S01). JSON 스키마로만 답하게 하고, 원문 대조 결과를 붙여 보여 준다.
+ * 업무계획 카드(`/업무계획`, 핵심·조치사항 S01을 흡수). JSON 스키마로만 답하게 하고, 원문 대조 결과를 붙여 보여 준다.
  * 토큰 스트림은 JSON이라 화면에 흘리지 않고 진행 표시만 한다.
+ *
+ * @param row 목록 화면에서 읽은 그 문서의 행(발신·일자). 모델에게 묻지 않고 코드가 읽은 값이다.
  */
-async function runActionCard(set: Set, get: Get, settings: Settings, title: string, page: ExtractedPage, reference: Date | null): Promise<DocumentOutcome | null> {
+async function runWorkPlan(
+  set: Set, get: Get, settings: Settings, title: string, page: ExtractedPage, reference: Date | null,
+  row?: Partial<Record<'sender' | 'reportDate', string>>,
+): Promise<DocumentOutcome | null> {
   const conv = get().conversation;
   if (!conv) return null;
   const abort = get().abort ?? new AbortController();
   const startedAt = nextStamp(get());
-  const context = buildContext([{ role: 'user', content: actionCardInstruction(title) }], settings.numCtx, toAttachment(page, null));
+  const context = buildContext([{ role: 'user', content: workPlanInstruction(title) }], settings.numCtx, toAttachment(page, null));
   const placeholder: UiMessage = { id: `streaming-${crypto.randomUUID()}`, conversationId: conv.id, role: 'assistant', content: '', createdAt: startedAt, streaming: true };
   set(s => ({ messages: [...s.messages, placeholder], streaming: true, startedAt, expectedPrefillSec: uncachedPrefillSeconds(null, context), abort, error: null }));
   let raw = '';
   try {
     const perf = await abortable(streamChat(settings.endpoint, {
       model: settings.model, messages: context, stream: true, think: false, keep_alive: settings.keepAlive,
-      format: ACTION_CARD_SCHEMA as unknown as Record<string, unknown>,
+      format: WORK_PLAN_SCHEMA as unknown as Record<string, unknown>,
       // 사실 추출이므로 표현의 다양성이 필요 없다.
       options: { temperature: 0, num_ctx: settings.numCtx },
     }, { onToken: token => { raw += token; } }, abort.signal), abort.signal);
     abort.signal.throwIfAborted();
-    const card = parseActionCard(raw);
-    if (!card) throw new Error('AI 응답을 핵심·조치사항 형식으로 읽지 못했습니다. 다시 요청해 보세요.');
-    const content = renderActionCard(title, card, page.text);
+    const card = parseWorkPlan(raw);
+    if (!card) throw new Error('AI 응답을 업무계획 형식으로 읽지 못했습니다. 다시 요청해 보세요.');
+    const content = renderWorkPlan(title, card, page.text, { sender: row?.sender, reportDate: row?.reportDate }, page.pdfPageAnchors);
     // 일정 후보(S07). 등록은 사용자가 확인 카드에서 체크한 것만 — 여기서 저장되는 것은 후보일 뿐이다.
     const candidates = buildTaskCandidates(card, page.text, reference ?? new Date());
     // 출처 공문은 후보가 없어도 남긴다. "관련 내 자료"(TONGDAL) 추천이 이 제목으로 찾는다.
+    // 4번 칸(회신 준비)은 기안 코파일럿으로 넘길 수 있게 대조를 마친 항목만 따로 남긴다.
     const extra = {
       sourceDoc: { title, ...(page.url ? { url: page.url } : {}) },
       ...(candidates.length ? { taskCandidates: candidates } : {}),
+      workPlan: buildWorkPlanHandoff(title, card, page.text, page.url || undefined),
     };
     const id = await addMessage({ conversationId: conv.id, clientId: String(placeholder.id), role: 'assistant', content, perf: perf ?? undefined, ...extra, createdAt: startedAt });
     set(s => ({

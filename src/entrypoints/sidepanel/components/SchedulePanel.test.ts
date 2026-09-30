@@ -65,7 +65,7 @@ it('기한 지남·오늘·이번 주로 나눠 보이고, 지난 기한을 맨 
 
 it('★ 등록된 일정이 없으면 어디서 등록하는지 안내한다 — 달력 보기에서도 보인다', async () => {
   await render('month');
-  expect(document.querySelector('.sched-empty-hint')!.textContent).toContain('/조치');
+  expect(document.querySelector('.sched-empty-hint')!.textContent).toContain('/업무계획');
   // 안내가 있으면 하루 칸의 "일정이 없습니다"는 접는다. 같은 말을 두 번 하지 않는다.
   expect(document.querySelector('.cal-agenda-empty')).toBeNull();
 });

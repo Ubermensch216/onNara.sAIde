@@ -45,3 +45,12 @@ it('PDF 본문을 화면 글자 앞에 붙여 예산에 맞춘다', () => {
   expect(merged.text.indexOf('창업기업')).toBeLessThan(merged.text.indexOf('붙임 1.'));
   expect(merged.charCount).toBeGreaterThan(page.charCount);
 });
+
+it('PDF 한 건의 본문이면 쪽마다의 첫머리 표식을 싣고, 두 건이면 싣지 않는다', () => {
+  const page = { url: 'https://onnara.test', title: '수신 공문', text: '붙임 목록', charCount: 5, truncated: false, keptRatio: 1, estimatedTokens: 5, method: 'innerText' as const, extractedAt: 1 };
+  const pdf = { text: '1쪽 본문 글자가 이어집니다\n\n2쪽 제출 기한을 알립니다', pages: 3, pageTexts: ['1쪽 본문 글자가 이어집니다', '- 2 -', '2쪽 제출 기한을 알립니다'] };
+  const merged = withPdfSections(page, [pdf], 2000);
+  // 빈 쪽(쪽 번호만 있는 쪽)은 빈 표식으로 남겨 번호가 밀리지 않는다.
+  expect(merged.pdfPageAnchors).toEqual(['1쪽본문글자가이어집니다', '', '2쪽제출기한을알립니다']);
+  expect(withPdfSections(page, [pdf, { ...pdf }], 2000).pdfPageAnchors).toBeUndefined();
+});

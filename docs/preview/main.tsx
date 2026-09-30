@@ -164,6 +164,36 @@ const data: Record<string, unknown> = {
   ],
 };
 
+/* ── 업무계획 표본: AI 탭 카드(workplan-chat)와 기안 코파일럿으로 넘어온 회신 준비(drafter-workplan) ── */
+const workPlanSource = [
+  '제목 2026년도 스마트 행정 혁신사업 수요조사 회신 요청',
+  '1. 관련: 행정안전부 디지털정부혁신실-1234(2026. 9. 25.)',
+  '2. 스마트 행정 혁신사업 수요를 다음과 같이 조사하오니 회신하여 주시기 바랍니다.',
+  '가. 제출 기한: 2026. 10. 15.(목) 18:00까지 제출하여 주시기 바랍니다.',
+  '나. 제출 서식: 별지 제2호 서식에 사업별 예산과 추진 일정을 작성하고 담당자 연락처를 기재한다.',
+  '3. 신청 대상은 관내 소재 기업으로 한정하며 개인은 신청할 수 없다.',
+  '4. 문의: 디지털정부혁신실 김OO(044-205-0000)',
+].join('\n');
+const workPlanSample = {
+  summary: '관내 스마트 행정 혁신사업의 예산·추진 일정을 취합해 회신 요청',
+  requester: '행정안전부 디지털정부혁신실',
+  requestType: '회신·제출' as const,
+  actions: [{ task: '사업별 예산·추진 일정 취합 후 회신', evidence: '스마트 행정 혁신사업 수요를 다음과 같이 조사하오니 회신하여 주시기 바랍니다.' }],
+  deliverables: ['별지 제2호 서식'],
+  deadlines: [{ date: '2026. 10. 15.', what: '수요조사 회신', evidence: '제출 기한: 2026. 10. 15.(목) 18:00까지 제출하여 주시기 바랍니다.' }],
+  contact: '디지털정부혁신실 김OO(044-205-0000)',
+  conditions: [{ text: '관내 기업 한정(개인 제외)', evidence: '신청 대상은 관내 소재 기업으로 한정하며 개인은 신청할 수 없다.' }],
+  requirements: [
+    { item: '별지 제2호 서식', evidence: '별지 제2호 서식에 사업별 예산과 추진 일정을 작성하고 담당자 연락처를 기재한다.' },
+    { item: '담당자 연락처', evidence: '별지 제2호 서식에 사업별 예산과 추진 일정을 작성하고 담당자 연락처를 기재한다.' },
+    { item: '산출근거', evidence: '산출근거를 붙임으로 제출한다.' },
+  ],
+};
+if (mode === 'drafter-workplan') {
+  const { buildWorkPlanHandoff } = await import('@/lib/ai/work-plan');
+  data['saide.workPlanHandoff'] = { ...buildWorkPlanHandoff('2026년도 스마트 행정 혁신사업 수요조사 회신 요청', workPlanSample, workPlanSource), sentAt: now };
+}
+
 /* ── TONGDAL.ai 연동 표본(knowledge 모드) ── */
 const knowledgeMode = mode.startsWith('knowledge') || mode === 'options-tongdal';
 if (knowledgeMode) {
@@ -362,7 +392,7 @@ if (mode.startsWith('options') || OPTION_VIEWS.includes(mode)) {
     createRoot(document.getElementById('root')!).render(<OptionsApp />);
   }
 
-} else if (['drafter', 'drawer', 'templates', 'drafter-refs', 'onnara-drafter-sidecar', 'knowledge-drafter'].includes(mode)) {
+} else if (['drafter', 'drawer', 'templates', 'drafter-refs', 'onnara-drafter-sidecar', 'knowledge-drafter', 'drafter-workplan'].includes(mode)) {
   await import('@/entrypoints/drawer-page/style.css');
   const { DrawerApp } = await import('@/entrypoints/drawer-page/DrawerApp');
   const { db } = await import('@/lib/storage/db');
@@ -857,6 +887,21 @@ if (mode.startsWith('options') || OPTION_VIEWS.includes(mode)) {
           contentHash: index === 0 ? 'abc' : '5e1f0c2d9a7b4e3f8c6d1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d',
           excerptHash: '9f2c4e1a7b3d5f6e8a0c2b4d6f8e1a3c5b7d9f0e2a4c6b8d0f1e3a5c7b9d0f2e',
         })),
+      } as never,
+    );
+  }
+  if (mode === 'workplan-chat') {
+    const { buildWorkPlanHandoff, renderWorkPlan } = await import('@/lib/ai/work-plan');
+    const { buildTaskCandidates } = await import('@/lib/schedule/candidates');
+    const title = '2026년도 스마트 행정 혁신사업 수요조사 회신 요청';
+    messages.splice(0, messages.length,
+      { id: 1, conversationId: 1, role: 'user' as const, content: '/업무계획', createdAt: now } as never,
+      {
+        id: 2, conversationId: 1, role: 'assistant' as const, createdAt: now + 1,
+        content: renderWorkPlan(title, workPlanSample, workPlanSource, { reportDate: '2026-09-29' }),
+        taskCandidates: buildTaskCandidates(workPlanSample, workPlanSource, new Date(2026, 8, 29)),
+        sourceDoc: { title, url: sampleTab.url },
+        workPlan: buildWorkPlanHandoff(title, workPlanSample, workPlanSource, sampleTab.url),
       } as never,
     );
   }

@@ -26,7 +26,7 @@ export type CommandPrefix = '/' | '@';
 /** `@` 명령의 주화면. AI 창은 여기 없다 — 그것이 `/`와 `@`를 가르는 기준이다. */
 export type PanelTab = 'schedule' | 'automation' | 'inbox';
 
-export type DocumentCommandId = 'summary' | 'actions' | 'compare' | 'read' | 'attachments' | 'refresh';
+export type DocumentCommandId = 'summary' | 'workplan' | 'compare' | 'read' | 'attachments' | 'refresh';
 
 export interface DocumentCommand {
   id: DocumentCommandId;
@@ -57,12 +57,13 @@ export const DOCUMENT_COMMANDS: DocumentCommand[] = [
     takesArg: true,
   },
   {
-    id: 'actions',
+    // 핵심·조치사항(`/조치`)을 흡수한 명령이다. 예전 이름은 별칭으로 남겨 손에 익은 입력이 그대로 통한다.
+    id: 'workplan',
     prefix: '/',
-    slash: '/조치',
-    aliases: ['/actions', '/a'],
-    label: '핵심·조치사항',
-    hint: '할 일·제출물·기한을 원문과 대조해 정리합니다',
+    slash: '/업무계획',
+    aliases: ['/workcard', '/w', '/조치', '/actions', '/a'],
+    label: '업무계획',
+    hint: '요청·할 일·기한·근거·회신 요구사항을 원문과 대조해 한 장에 정리합니다',
     usesModel: true,
     takesArg: false,
   },

@@ -470,7 +470,7 @@ it('여러 문서 요약이 모두 끝나면 늦게 도착한 표시 갱신이 �
 });
 
 
-it('핵심·조치사항 요청은 문서마다 JSON 스키마로 생성하고 원문과 대조한 카드를 남긴다', async () => {
+it('업무계획 요청은 문서마다 JSON 스키마로 생성하고 원문과 대조한 카드를 남긴다', async () => {
   const common = { url: 'https://onnara.test/main', title: '받은문서', text: '목록', charCount: 100,
     truncated: false, keptRatio: 1, estimatedTokens: 30, method: 'innerText' as const, extractedAt: Date.now() };
   const body = '2. 참석자 명단을 붙임 서식에 작성하여 2026. 9. 30.(수)까지 감사담당관으로 제출하여 주시기 바랍니다.';
@@ -491,13 +491,16 @@ it('핵심·조치사항 요청은 문서마다 JSON 스키마로 생성하고 �
     return null;
   });
   await useChat.getState().openForTab(1, common.url);
-  await useChat.getState().runCommand('/조치', 'actions', '', DEFAULT_SETTINGS);
+  await useChat.getState().runCommand('/업무계획', 'workplan', '', DEFAULT_SETTINGS);
   expect(formats).toHaveLength(2);
-  expect(formats[0]).toMatchObject({ type: 'object', required: expect.arrayContaining(['actions', 'deadlines']) });
+  expect(formats[0]).toMatchObject({ type: 'object', required: expect.arrayContaining(['actions', 'deadlines', 'requestType', 'requirements']) });
   const cards = useChat.getState().messages.filter(message => message.role === 'assistant');
   expect(cards).toHaveLength(1);
   expect(cards[0]!.content).toContain('참석자 명단 제출 (원문 확인)');
   expect(cards[0]!.content).toContain('AI가 빠뜨려 코드가 찾음');
+  expect(cards[0]!.content).toContain('**4. 회신 준비**');
+  // 요구사항을 따로 뽑지 못하면 제출물이 회신 요구사항이 되고, 이름이 원문에 있어 확인된 것으로 넘어간다.
+  expect(cards[0]!.workPlan?.requirements).toEqual([{ text: '참석자 명단', verified: true }]);
   expect(useChat.getState().error?.message).toContain('통계 알림');
   expect(useChat.getState().streaming).toBe(false);
 });

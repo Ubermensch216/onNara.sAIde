@@ -2028,8 +2028,12 @@ export function mergeDetailFrames(
   if (merged.length <= 1) return base;
   const fitted = fitToBudget(merged.map(segment => segment.text).join('\n\n'), budgetTokens);
   const truncated = fitted.truncated || segments.some(segment => segment.truncated);
+  // PDF 쪽 표식은 PDF를 품은 프레임이 하나일 때만 옮긴다. 둘이면 쪽 번호가 어느 PDF의 것인지 알 수 없다.
+  const withPages = merged.filter(segment => segment.pdfPageAnchors);
+  const { pdfPageAnchors: _baseAnchors, ...baseRest } = base;
   return {
-    ...base,
+    ...baseRest,
+    ...(withPages.length === 1 ? { pdfPageAnchors: withPages[0]!.pdfPageAnchors } : {}),
     method: merged.some(segment => segment.method === 'pdf') ? 'pdf' : base.method,
     text: fitted.text,
     charCount,

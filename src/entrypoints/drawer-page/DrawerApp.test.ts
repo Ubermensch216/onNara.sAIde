@@ -676,3 +676,85 @@ it('본문 서식이 등록된 서식을 고르면 초안을 그 서식으로 �
   });
   post.mockRestore();
 });
+
+describe('업무계획에서 넘어온 회신 준비', () => {
+  const handoff = {
+    sentAt: Date.now(),
+    source: { title: '스마트 행정 수요조사 회신 요청' },
+    requester: '행정안전부',
+    requestType: '회신·제출',
+    summary: '수요조사 회신 요청',
+    requirements: [{ text: '별지 제2호 서식', verified: true }, { text: '산출근거', verified: false }],
+    deliverables: [],
+    deadlines: [{ text: '2026. 10. 15. · 제출', verified: true }],
+    conditions: [],
+  };
+
+  function withHandoff() {
+    const remove = vi.fn(async () => undefined);
+    vi.stubGlobal('chrome', {
+      storage: {
+        local: {
+          get: vi.fn(async (key?: string) => (key === 'saide.workPlanHandoff' ? { 'saide.workPlanHandoff': handoff } : {})),
+          set: vi.fn(async () => undefined),
+          remove,
+        },
+        onChanged: { addListener: vi.fn(), removeListener: vi.fn() },
+      },
+      runtime: { id: 'test-saide-id', getURL: vi.fn((path: string) => `chrome-extension://test/${path}`), sendMessage: vi.fn() },
+    });
+    return remove;
+  }
+
+  const button = (label: string) => [...document.querySelectorAll('button')].find((b) => b.textContent?.includes(label));
+
+  it('원문에서 확인한 요구사항만 기본으로 골라 작성 요청을 채우고, 채운 뒤 걸어 둔 묶음을 지운다', async () => {
+    const remove = withHandoff();
+    await act(() => root.render(createElement(DrawerApp)));
+    await settle();
+
+    expect(document.body.textContent).toContain('업무계획에서 넘어온 회신 준비');
+    expect(document.body.textContent).toContain('스마트 행정 수요조사 회신 요청');
+    const boxes = [...document.querySelectorAll<HTMLInputElement>('[aria-label="회신에 담을 요구사항"] input[type="checkbox"]')];
+    expect(boxes.map((box) => box.checked)).toEqual([true, false]);
+
+    await act(async () => button('작성 요청에 채우기')?.click());
+    const prompt = (document.getElementById('draft-prompt-textarea') as HTMLTextAreaElement).value;
+    expect(prompt).toContain('별지 제2호 서식');
+    expect(prompt).not.toContain('산출근거');
+    expect(prompt).toContain('기한: 2026. 10. 15. · 제출');
+    expect(remove).toHaveBeenCalledWith('saide.workPlanHandoff');
+    // 저장소를 비워도 화면의 카드는 남아 선택을 다시 볼 수 있다.
+    expect(document.body.textContent).toContain('업무계획에서 넘어온 회신 준비');
+  });
+
+  it('초안을 만든 뒤 요구사항 점검은 인용을 확인한 것만 충족으로 센다', async () => {
+    withHandoff();
+    const draft = '1. 위 호와 관련하여 수요조사 결과를 별지 제2호 서식에 따라 제출합니다.\n붙임 수요조사서 1부. 끝.';
+    const bodies: Array<Record<string, unknown>> = [];
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(init.body as string) as Record<string, unknown>;
+      bodies.push(body);
+      const content = body.format
+        ? JSON.stringify({ items: [{ index: 1, met: true, quote: '수요조사 결과를 별지 제2호 서식에 따라 제출합니다.' }, { index: 2, met: true, quote: '산출근거를 붙임' }] })
+        : draft;
+      return { ok: true, json: async () => ({ message: { content } }) };
+    }));
+    await act(() => root.render(createElement(DrawerApp)));
+    await settle();
+
+    // 두 항목을 모두 골라 채운다.
+    const boxes = [...document.querySelectorAll<HTMLInputElement>('[aria-label="회신에 담을 요구사항"] input[type="checkbox"]')];
+    await act(async () => boxes[1]!.click());
+    await act(async () => button('작성 요청에 채우기')?.click());
+    await act(async () => button('초안 생성')?.click());
+    await settle();
+    expect(document.body.textContent).toContain('요구사항 점검');
+
+    await act(async () => button('요구사항 점검')?.click());
+    await settle();
+    expect(bodies.at(-1)).toMatchObject({ stream: false, options: { temperature: 0 } });
+    expect(document.body.textContent).toContain('1/2 충족');
+    expect(document.body.textContent).toContain('확인 못함');
+  });
+});
