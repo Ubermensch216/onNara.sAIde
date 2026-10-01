@@ -2185,6 +2185,8 @@ export async function readDocumentInBackground(
     let readableSince = 0;
     let readable: { payload: ExtractedPage; tabId: number } | undefined;
     let blockedStreak = 0;
+    // undefined: 아직 확인 전, null: 카드에 '본문보기'가 없음, 객체: 눌렀고 본문을 기다리는 중.
+    let bodyView: { card: ExtractedPage; tabId: number; at: number; target?: string } | null | undefined;
     while (Date.now() < detailDeadline) {
       assertCurrent(taskControl, '', cancelled.has(control.id));
       await delay(300);
@@ -2251,6 +2253,13 @@ export async function readDocumentInBackground(
       if (blockedStreak >= 2) return { type: 'ERROR', error: blockedFramesError(blocked) };
       if (result.payload.structuredData) { Object.assign(observed, { state: 'list', chars: result.payload.charCount }); continue; }
 
+      // '본문보기'를 누른 뒤에도 카드 화면 그대로면 본문이 아직 뜨지 않은 것이다. 카드를 본문으로 받아들이지 않는다.
+      if (bodyView && targetTabId === bodyView.tabId && sameScreenText(result.payload, bodyView.card)) {
+        if (Date.now() - bodyView.at >= BODY_VIEW_WAIT_MS) break;
+        Object.assign(observed, { state: 'card', chars: result.payload.charCount });
+        continue;
+      }
+
       // 상세 화면에 접근 불가/권한 안내 문구 등이 뜬 경우 즉시 실패 처리한다.
       if (result.payload.charCount < 300 && ACCESS_DENIED_PATTERN.test(result.payload.text)) {
         return {
@@ -2274,12 +2283,32 @@ export async function readDocumentInBackground(
       readableSince ||= now;
       if (stableChars !== result.payload.charCount) { stableChars = result.payload.charCount; stableSince = now; }
       if (now - stableSince < DETAIL_STABLE_MS && now - readableSince < DETAIL_SETTLE_LIMIT_MS) continue;
-      return await finish(result.payload, targetTabId);
+      // 클라우드 온나라는 여기까지가 문서카드다. '본문보기'가 있으면 눌러 본문까지 따라간다.
+      // 첨부 받기 등 후속 작업은 붙임 목록이 있는 카드 화면에서 하므로 건드리지 않는다.
+      if (bodyView === undefined && !onDetail) {
+        const target = await openBodyView(targetTabId, taskControl);
+        bodyView = target === undefined ? null : { card: result.payload, tabId: targetTabId, at: Date.now(), ...(target ? { target } : {}) };
+        if (bodyView) {
+          readable = undefined;
+          stableChars = -1;
+          readableSince = 0;
+          continue;
+        }
+      }
+      return await finish(bodyView ? withDocumentCard(result.payload, bodyView.card, budgetTokens) : result.payload, targetTabId);
     }
 
-    if (readable) return await finish(readable.payload, readable.tabId);
+    if (readable) return await finish(bodyView ? withDocumentCard(readable.payload, bodyView.card, budgetTokens) : readable.payload, readable.tabId);
 
     keptWorkTabId = undefined;
+    if (bodyView) {
+      return { type: 'ERROR', error: {
+        code: 'UNKNOWN',
+        message: `문서카드의 '본문보기'를 눌렀지만 본문을 읽지 못했습니다: ${title}`,
+        hint: `누른 요소: ${bodyView.target ?? '확인 불가'}, 마지막 화면 상태: ${observed.state}(${observed.chars}자)${observed.error ? `, ${observed.error}` : ''}. `
+          + '본문이 한글 뷰어 등 글자를 읽을 수 없는 방식으로 표시되거나 팝업이 차단됐을 수 있습니다. 문서의 본문보기 창을 직접 띄운 뒤 다시 요청해 보세요.',
+      } };
+    }
     return { type: 'ERROR', error: readTimeoutError(stage, observed) };
   } catch (error) {
     keptWorkTabId = undefined;
@@ -2752,7 +2781,7 @@ type ReadStage = 'source' | 'list' | 'open' | 'detail' | 'followUp';
 type DetailObservation = {
   popup: boolean;
   frameChanged: boolean;
-  state: 'none' | 'failed' | 'list' | 'short' | 'mismatch';
+  state: 'none' | 'failed' | 'list' | 'short' | 'mismatch' | 'card';
   chars: number;
   error?: string;
   /** 문서를 열려고 실제로 누른 요소. 반응이 없을 때 엉뚱한 요소를 눌렀는지 알 수 있다. */
@@ -2763,6 +2792,51 @@ const DETAIL_WAIT_MS = 60_000;
 const NO_REACTION_MS = 4_000;
 const DETAIL_STABLE_MS = 1000;
 const DETAIL_SETTLE_LIMIT_MS = 10_000;
+/** '본문보기'를 누른 뒤 같은 창이 카드 그대로일 때 기다리는 시간. 새 창이 뜨면 그 창을 상세 대기 한도까지 읽는다. */
+const BODY_VIEW_WAIT_MS = 15_000;
+const BODY_VIEW_PROBE_MS = 3000;
+
+/**
+ * 문서카드의 '본문보기'를 누른다. 누른 요소 설명을 돌려주고, 버튼이 없으면 undefined다.
+ * 카드가 프레임 안에 그려지는 판본이 있어 최상위부터 모든 프레임에 묻고, 처음 찾은 곳에서만 누른다.
+ */
+async function openBodyView(tabId: number, control: RequestControl): Promise<string | undefined> {
+  const frames = await chrome.webNavigation?.getAllFrames({ tabId }).catch(() => null);
+  const frameIds = [...new Set([0, ...(frames ?? []).map(frame => frame.frameId)])];
+  for (const frameId of frameIds) {
+    const reply = await sendToFrame(tabId, frameId, { type: 'OPEN_BODY_VIEW', control }, BODY_VIEW_PROBE_MS);
+    if (reply.type === 'BODY_VIEW_OPENING' && reply.clicked) return reply.target ?? '';
+  }
+  return undefined;
+}
+
+/** 같은 화면을 다시 읽은 것인가. 시계처럼 조금씩 바뀌는 글자는 같은 화면으로 본다. */
+function sameScreenText(current: ExtractedPage, card: ExtractedPage): boolean {
+  if (current.method !== card.method) return false;
+  return Math.abs(current.charCount - card.charCount) < 100 &&
+    compactText(current.text.slice(0, 300)) === compactText(card.text.slice(0, 300));
+}
+
+/**
+ * 본문 뒤에 문서카드(제목·보고경로·붙임 목록)를 붙인다. 본문이 먼저라 예산을 넘으면 카드 쪽이 잘린다.
+ * 본문 화면이 카드 내용을 이미 품고 있으면 다시 붙이지 않는다.
+ */
+function withDocumentCard(body: ExtractedPage, card: ExtractedPage, budgetTokens: number): ExtractedPage {
+  const probe = compactText(card.text.slice(0, 200));
+  const base = { ...body, title: card.title || body.title, attachments: card.attachments ?? body.attachments };
+  if (!probe || compactText(body.text).includes(probe)) return base;
+  const fitted = fitToBudget(`${body.text}\n\n[문서카드]\n${card.text}`, budgetTokens);
+  const charCount = body.charCount + card.charCount;
+  const truncated = fitted.truncated || body.truncated;
+  return {
+    ...base,
+    text: fitted.text,
+    charCount,
+    truncated,
+    keptRatio: truncated ? Math.min(1, fitted.text.length / Math.max(1, charCount)) : 1,
+    estimatedTokens: fitted.estimatedTokens,
+  };
+}
 
 const ACCESS_DENIED_PATTERN = /과제\s*미지정|열람\s*권한|열람하실\s*수\s*없습니다|접근\s*권한|권한이\s*없습니다|존재하지\s*않는\s*문서|삭제된\s*문서|처리\s*권한|오류가\s*발생/i;
 

@@ -19,6 +19,7 @@ import { requiresApproval, type RequestControl } from '@/lib/messaging/protocol'
 import { Readability } from '@mozilla/readability';
 import { clickAttachment, listAttachments, scanAttachments } from '@/lib/onnara/attachments';
 import { captureDocumentListLocation, captureListLocation, restoreDocumentListLocation } from '@/lib/onnara/document-navigation';
+import { findBodyViewButton } from '@/lib/onnara/body-view';
 import { fetchInboxPage } from '@/lib/onnara/inbox-pages';
 import { markReadButton, selectMarkReadRows } from '@/lib/onnara/mark-read';
 import { fitToBudget } from '@/lib/extract/budget';
@@ -179,6 +180,13 @@ export default defineUnlistedScript(() => {
               if (Date.now() < msg.control.deadline && !cancelled.has(msg.control.id)) openDocumentTarget(target);
             }, 0);
           }
+        } else if (msg.type === 'OPEN_BODY_VIEW') {
+          const button = findBodyViewButton();
+          sendResponse({ type: 'BODY_VIEW_OPENING', clicked: Boolean(button), ...(button ? { target: describeOpenTarget(button) } : {}) } satisfies ContentToSW);
+          // 문서 열기와 같이 응답 포트를 먼저 닫아야 같은 창 이동에도 응답이 보존된다.
+          if (button) setTimeout(() => {
+            if (Date.now() < msg.control.deadline && !cancelled.has(msg.control.id)) button.click();
+          }, 0);
         } else if (msg.type === 'ACT' && validAction(msg.action)) {
           sendResponse({
             type: 'ACTED',

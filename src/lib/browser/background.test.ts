@@ -196,7 +196,7 @@ it.each(['success', 'missing', 'cancelled'] as const)('복제 목록 복원(%s):
   }
   // 복원 요청은 모든 프레임에 동시에 묻고(부모 경로가 맞는 프레임만 실제 전송), 목록이 없으면 최대 3회 반복한다.
   expect(sendMessage.mock.calls.filter(([, msg]) => msg.type === 'RESTORE_DOCUMENT_LIST')).toHaveLength({ cancelled: 0, success: 2, missing: 6 }[outcome]);
-  expect(sendMessage.mock.calls.filter(([id, msg]) => id === 1).every(([, msg]) => ['EXTRACT', 'LOCATE_DOCUMENT', 'OPEN_DOCUMENT', 'CHECK_DIALOG'].includes(msg.type))).toBe(true);
+  expect(sendMessage.mock.calls.filter(([id, msg]) => id === 1).every(([, msg]) => ['EXTRACT', 'LOCATE_DOCUMENT', 'OPEN_DOCUMENT', 'OPEN_BODY_VIEW', 'CHECK_DIALOG'].includes(msg.type))).toBe(true);
   expect(update).not.toHaveBeenCalled();
   expect(remove).toHaveBeenCalledWith([20]);
 });
@@ -452,6 +452,43 @@ it('openerTabId가 없는 새 창 팝업을 window.open 이벤트로 찾아 읽�
     expect(fixture.open.has(expected)).toBe(false);
   }
   expect(workTabs.size).toBe(0);
+});
+
+it.each(['본문 창이 뜬다', '본문이 뜨지 않는다'] as const)('문서카드만 열리는 판본은 본문보기를 눌러 본문까지 읽는다(%s)', async outcome => {
+  vi.useFakeTimers();
+  const fixture = popupFixture(() => { fixture.open.add(30); noteNavigationTarget({ sourceTabId: 20, tabId: 30 }); });
+  const base = { url: 'https://onnara.test/view', method: 'innerText', truncated: false, keptRatio: 1, estimatedTokens: 20, extractedAt: Date.now() };
+  const card = { ...base, title: fixture.title, text: `문서정보 제목 ${fixture.title} 과제카드명 보고경로 붙임 관리정보 `.repeat(5), charCount: 400 };
+  const body = { ...base, title: '본문', text: '1. 관련: 온천법 제16조\n2. 온천이용허가 만료에 따라 조치계획을 보고합니다. '.repeat(10), charCount: 600 };
+  const fallback = (globalThis.chrome as any).tabs.sendMessage.getMockImplementation();
+  let clicks = 0;
+  (globalThis.chrome as any).tabs.sendMessage.mockImplementation(async (id: number, msg: { type: string; purpose?: string }, options: { frameId: number }) => {
+    if (msg.type === 'OPEN_BODY_VIEW') {
+      if (id !== 30 || options.frameId !== 0) return { type: 'BODY_VIEW_OPENING', clicked: false };
+      clicks++;
+      if (outcome === '본문 창이 뜬다') { fixture.open.add(31); noteNavigationTarget({ sourceTabId: 30, tabId: 31 }); }
+      return { type: 'BODY_VIEW_OPENING', clicked: true, target: '<a> "본문보기"' };
+    }
+    if (msg.purpose === 'document-detail' && id === 30) return { type: 'EXTRACTED', payload: options.frameId === 0 ? card : { ...base, title: '', text: '', charCount: 0 } };
+    if (msg.purpose === 'document-detail' && id === 31) return { type: 'EXTRACTED', payload: options.frameId === 0 ? body : { ...base, title: '', text: '', charCount: 0 } };
+    return fallback(id, msg, options);
+  });
+  const pending = readDocumentInBackground(1, fixture.title, 2000, { id: crypto.randomUUID(), deadline: Date.now() + 90_000, expectedUrl: 'https://onnara.test/main' });
+  await vi.advanceTimersByTimeAsync(40_000);
+  const result = await pending;
+  expect(clicks).toBe(1);
+  if (outcome === '본문 창이 뜬다') {
+    expect(result).toMatchObject({ type: 'DOCUMENT_READ', payload: { title: fixture.title } });
+    const text = (result as { payload: { text: string } }).payload.text;
+    expect(text.startsWith('1. 관련: 온천법')).toBe(true);
+    expect(text).toContain('[문서카드]');
+    expect(fixture.open.has(31)).toBe(false);
+  } else {
+    // 카드 메타정보를 본문인 것처럼 넘기지 않는다.
+    expect(result).toMatchObject({ type: 'ERROR', error: { message: expect.stringContaining('본문보기') } });
+  }
+  expect(fixture.open.has(30)).toBe(false);
+  vi.useRealTimers();
 });
 
 it('같은 이름의 기존 팝업 창이 재사용되면 그 창에서 제목을 확인해 읽고 닫지 않는다', async () => {

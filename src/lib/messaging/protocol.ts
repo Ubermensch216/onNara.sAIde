@@ -292,6 +292,8 @@ export type SWToContent = (
   | { type: 'CANCEL' }
   | { type: 'EXTRACT'; budgetTokens: number; purpose?: 'page' | 'document-detail'; preferredFrameId?: number; targetTitle?: string }
   | { type: 'OPEN_DOCUMENT'; title: string }
+  /** 문서카드에 '본문보기' 버튼이 있으면 누른다(클라우드 온나라는 카드와 본문이 따로다). */
+  | { type: 'OPEN_BODY_VIEW' }
   | { type: 'FETCH_RELATED_DOCUMENT'; doc: RelatedDocumentRequest }
   | { type: 'LOCATE_DOCUMENT'; title: string }
   | { type: 'RESTORE_DOCUMENT_LIST'; location: DocumentListLocation }
@@ -317,6 +319,7 @@ export type ContentToSW =
   | { type: 'BODY_PDF'; pdf: PdfSource | null }
   /** target: 실제로 누른 요소 설명. 열기에 반응이 없을 때 원인을 알리는 데 쓴다. */
   | { type: 'OPENING_DOCUMENT'; title: string; target?: string }
+  | { type: 'BODY_VIEW_OPENING'; clicked: boolean; target?: string }
   | { type: 'RELATED_DOCUMENT_SOURCES'; sources: RelatedDocumentSources }
   | { type: 'DOCUMENT_LOCATED'; location: DocumentListLocation }
   | { type: 'INBOX_LOCATED'; location: DocumentListLocation; listName: string }
