@@ -357,7 +357,6 @@ export default function OptionsApp() {
               id="folder"
               type="checkbox"
               checked={s.attachmentFolder}
-              disabled={s.attachmentNaming !== 'normalized'}
               onChange={(e) => patch({ attachmentFolder: e.target.checked })}
             />
           </div>

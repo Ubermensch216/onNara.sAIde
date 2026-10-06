@@ -88,11 +88,14 @@ export async function queueAttachmentDownloads(options: {
  * 문서마다 파일명 정규화 계획을 만든다 (B5).
  *
  * ★ 보고일자는 목록 행에서 읽는다. 상세 화면 한 건(title이 없는 경우)은 화면 제목만 쓴다.
- * ★ 설정이 'browser'면 아무 계획도 만들지 않는다 — 그때는 브라우저가 정한 이름 그대로다.
+ * ★ 설정이 'browser'이고 하위 폴더도 끄면 아무 계획도 만들지 않는다 — 브라우저가 정한 이름 그대로다.
+ *   'browser'에 하위 폴더만 켜면 `rename: false`로 이름은 두고 폴더만 나눈다.
  */
 async function namingPlans(page: ExtractedPage, titles: Array<string | undefined>): Promise<Array<AttachmentNaming | null>> {
   const settings = await loadSettings().catch(() => null);
-  if (settings?.attachmentNaming !== 'normalized') return titles.map(() => null);
+  if (!settings) return titles.map(() => null);
+  const rename = settings.attachmentNaming === 'normalized';
+  if (!rename && !settings.attachmentFolder) return titles.map(() => null);
   const rows = page.structuredData?.rows ?? [];
   return titles.map(title => {
     const docTitle = title ?? page.title;
@@ -102,6 +105,7 @@ async function namingPlans(page: ExtractedPage, titles: Array<string | undefined
       docTitle,
       ...(reportDate ? { reportDate } : {}),
       ...(settings.attachmentFolder ? { folder: true } : {}),
+      ...(rename ? {} : { rename: false }),
     };
   });
 }

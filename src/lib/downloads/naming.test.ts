@@ -83,6 +83,25 @@ describe('경로 만들기', () => {
       .toBe('20260930_예산 편성 지침/20260930_예산 편성 지침_붙임1.hwp');
   });
 
+  // ★ 이름은 브라우저가 정한 대로 두고 폴더만 나누는 선택지.
+  it('rename이 꺼져 있으면 이름은 그대로 두고 폴더만 나눈다', () => {
+    expect(normalizedAttachmentPath('붙임1.hwp', { docTitle: '예산 편성 지침', reportDate: '2026-09-30', folder: true, rename: false }))
+      .toBe('20260930_예산 편성 지침/붙임1.hwp');
+  });
+
+  it('rename이 꺼져 있고 폴더도 없으면 원래 이름 그대로다', () => {
+    expect(normalizedAttachmentPath('붙임1 (2).hwp', { docTitle: '예산 편성 지침', rename: false })).toBe('붙임1 (2).hwp');
+  });
+
+  it('rename이 꺼져 있고 제목이 비면 폴더를 만들지 않는다', () => {
+    expect(normalizedAttachmentPath('붙임1.hwp', { docTitle: '   ', folder: true, rename: false })).toBe('붙임1.hwp');
+  });
+
+  it('rename이 꺼져 있어도 경로가 섞인 이름은 파일 이름만 남긴다', () => {
+    expect(normalizedAttachmentPath('C:\\Users\\a\\Downloads\\..\\붙임1.hwp', { docTitle: '지침', folder: true, rename: false }))
+      .toBe('지침/붙임1.hwp');
+  });
+
   // ★ 붙일 것이 없으면 원래 이름 그대로 둔다.
   it('공문 제목이 없으면 개명하지 않는다', () => {
     expect(normalizedAttachmentPath('붙임1.hwp', { docTitle: '   ' })).toBe('붙임1.hwp');

@@ -216,6 +216,8 @@ export interface AttachmentNaming {
   docTitle: string;
   reportDate?: string;
   folder?: boolean;
+  /** false면 파일 이름은 브라우저가 정한 대로 두고 폴더만 나눈다. */
+  rename?: boolean;
 }
 
 export interface AttachmentDownloadResult {

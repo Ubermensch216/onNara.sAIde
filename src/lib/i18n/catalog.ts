@@ -615,7 +615,7 @@ const ko = {
   'opt.files.naming.browser': '브라우저가 정한 이름 그대로',
   'opt.files.namingDesc': '여러 공문의 첨부를 한꺼번에 받으면 같은 이름의 붙임 파일이 여러 개 쌓입니다. 앞에 공문을 붙여 두면 나중에 찾을 수 있습니다. 확장자는 바꾸지 않습니다.',
   'opt.files.folder': '공문마다 하위 폴더',
-  'opt.files.folderDesc': '다운로드 폴더 아래에 공문 이름의 폴더를 만들어 그 안에 넣습니다.',
+  'opt.files.folderDesc': '다운로드 폴더 아래에 공문 이름의 폴더를 만들어 그 안에 넣습니다. 파일 이름 설정과 관계없이 쓸 수 있습니다.',
 
   /* ── 정확도 기록·캐시 (B4 · B1) ── */
   'quality.h': '정확도 기록',
@@ -1435,7 +1435,7 @@ const en = {
   'opt.files.naming.browser': 'Leave the browser name as is',
   'opt.files.namingDesc': 'Downloading attachments from several documents piles up identically named files. Prefixing the document keeps them findable. The extension is never changed.',
   'opt.files.folder': 'One folder per document',
-  'opt.files.folderDesc': 'Creates a folder named after the document inside your download folder.',
+  'opt.files.folderDesc': 'Creates a folder named after the document inside your download folder. Works with either file name setting.',
 
   /* ── Accuracy record & cache (B4 · B1) ── */
   'quality.h': 'Accuracy record',
