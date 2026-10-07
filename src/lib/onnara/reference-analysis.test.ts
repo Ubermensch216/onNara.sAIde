@@ -105,7 +105,7 @@ describe('실행', () => {
     const fetcher = vi.fn(async () => reply({ summary: 's', requirements: [] }));
     const progress: number[] = [];
     const analysis = await runAnalysis({
-      text, title: '긴 지침', role: 'fact', target: { endpoint: 'http://x', model: 'm' }, codeFacts: extractCodeFacts(text),
+      text, title: '긴 지침', role: 'fact', target: { endpoint: 'http://localhost:11434', model: 'm' }, codeFacts: extractCodeFacts(text),
       fetcher: fetcher as unknown as typeof fetch, onProgress: a => { progress.push(a.partials.length); },
     });
     expect(analysis.chunks).toBe(fetcher.mock.calls.length);
@@ -123,7 +123,7 @@ describe('실행', () => {
     const total = splitForAnalysis(text).length;
     const fetcher = vi.fn(async () => reply({}));
     const analysis = await runAnalysis({
-      text, title: 't', role: 'example', target: { endpoint: 'http://x', model: 'm' }, codeFacts: extractCodeFacts(text),
+      text, title: 't', role: 'example', target: { endpoint: 'http://localhost:11434', model: 'm' }, codeFacts: extractCodeFacts(text),
       previous: { role: 'example', model: 'm', analyzerVersion: ANALYZER_VERSION, chunks: total, partials: [{}] },
       fetcher: fetcher as unknown as typeof fetch,
     });
@@ -134,7 +134,7 @@ describe('실행', () => {
   it('스키마를 지키지 못한 답은 빈 결과로 두고 멈추지 않는다', async () => {
     const fetcher = vi.fn(async () => ({ ok: true, json: async () => ({ message: { content: '죄송합니다' } }) }));
     const analysis = await runAnalysis({
-      text: SOURCE, title: 't', role: 'fact', target: { endpoint: 'http://x', model: 'm' }, codeFacts: extractCodeFacts(SOURCE),
+      text: SOURCE, title: 't', role: 'fact', target: { endpoint: 'http://localhost:11434', model: 'm' }, codeFacts: extractCodeFacts(SOURCE),
       fetcher: fetcher as unknown as typeof fetch,
     });
     // 모델이 아무것도 못 줘도 코드가 기한을 채운다.
@@ -144,7 +144,7 @@ describe('실행', () => {
   it('Ollama 오류는 던진다', async () => {
     const fetcher = vi.fn(async () => ({ ok: false, status: 500 }));
     await expect(runAnalysis({
-      text: SOURCE, title: 't', role: 'fact', target: { endpoint: 'http://x', model: 'm' }, codeFacts: extractCodeFacts(SOURCE),
+      text: SOURCE, title: 't', role: 'fact', target: { endpoint: 'http://localhost:11434', model: 'm' }, codeFacts: extractCodeFacts(SOURCE),
       fetcher: fetcher as unknown as typeof fetch,
     })).rejects.toThrow(/500/);
   });

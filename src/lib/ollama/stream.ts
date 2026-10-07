@@ -1,3 +1,4 @@
+import { aiFetch } from '@/lib/llm/destination';
 import { abortable } from '@/lib/async';
 import { estimateTokens } from '@/lib/extract/budget';
 /**
@@ -116,7 +117,7 @@ async function readChat(endpoint: string, req: ChatRequest, handlers: StreamHand
   const startedAt = performance.now();
   let res: Response;
   try {
-    res = await abortable(fetch(`${endpoint}/api/chat`, {
+    res = await abortable(aiFetch(endpoint, '/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),

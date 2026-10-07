@@ -217,3 +217,15 @@ describe('draft-route', () => {
     });
   });
 });
+
+it('다른 출처의 top.document 접근이 거부되어도 현재 프레임의 본문·문서카드를 판정한다', () => {
+  const doc = document.implementation.createHTMLDocument();
+  const top = { get document() { throw new DOMException('Cross-origin', 'SecurityError'); } };
+  Object.defineProperty(doc, 'defaultView', { value: { top }, configurable: true });
+  doc.body.innerHTML = '<textarea class="editor" name="body">본문</textarea>';
+  expect(isDraftCardScreen(doc)).toBe(false);
+  expect(isBodyWritingScreen(doc)).toBe(true);
+  doc.body.innerHTML = '<input name="docTitle">';
+  expect(isDraftCardScreen(doc)).toBe(true);
+  expect(isBodyWritingScreen(doc)).toBe(false);
+});

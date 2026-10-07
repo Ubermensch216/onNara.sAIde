@@ -1,3 +1,4 @@
+import { estimateTokens } from '@/lib/extract/budget';
 /**
  * 모델에 보낼 컨텍스트 구성. 계획서 §5 Phase 2–3 / §6
  *
@@ -46,7 +47,8 @@ export interface AttachedPage {
  *   실패하는 페이지(캔버스 앱, 대시보드, 차트)에서는 오히려 화면을 보내는
  *   편이 빠르고 정확하다.
  */
-export const IMAGE_TOKEN_COST = 262;
+// 모델마다 이미지 토큰 수가 달라, 전송 검사와 동일하게 1,024토큰을 예약한다.
+export const IMAGE_TOKEN_COST = 1024;
 
 /** 대화에 고정되는 첨부물. 페이지 본문과 화면 캡처를 함께 담을 수 있다. */
 export interface Attachment {
@@ -63,7 +65,7 @@ export const PROMPT_BUDGET_RATIO = 0.7;
 
 /** 대략적인 토큰 환산. 한/영 혼재를 감안한 보수적 값. */
 function costOf(m: { content: string; images?: string[] }): number {
-  const text = Math.ceil(m.content.length / 2.5);
+  const text = estimateTokens(m.content) + 8;
   const images = (m.images?.length ?? 0) * IMAGE_TOKEN_COST;
   return text + images;
 }
@@ -87,6 +89,10 @@ export function trimToContext(
   const rest = messages.slice(pinnedCount);
 
   let total = pinned.reduce((s, m) => s + costOf(m), 0);
+  const latest = rest[rest.length - 1];
+  if (total + (latest ? costOf(latest) : 0) > budget) {
+    throw new Error('질문·본문이 입력 예산을 초과했습니다. 본문을 분리하거나 질문을 줄이고, 필요한 경우 컨텍스트 크기를 늘려 주세요.');
+  }
   const kept: ChatMessage[] = [];
 
   // 최신 것부터 담는다. 오래된 턴이 먼저 밀려난다.

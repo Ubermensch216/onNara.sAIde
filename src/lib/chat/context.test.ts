@@ -59,17 +59,10 @@ describe('trimToContext', () => {
     expect(kept.some((m) => m.content.includes('오래된-'))).toBe(false);
   });
 
-  it('시스템 프롬프트는 절대 버리지 않는다 (인젝션 가드가 들어 있다)', () => {
+  it('시스템 가드를 보존하고 예산을 초과한 최신 질문을 명시적으로 거부한다', () => {
     const huge = '나'.repeat(50_000);
-    const kept = trimToContext([sys('GUARD'), turn('user', huge)], 1024);
-    expect(kept[0]!.content).toBe('GUARD');
-  });
-
-  it('최신 메시지가 예산을 넘어도 최소 1개는 남긴다 (빈 요청 방지)', () => {
-    const huge = '다'.repeat(50_000);
-    const kept = trimToContext([sys(), turn('user', huge)], 512);
-    expect(kept).toHaveLength(2);
-    expect(kept[1]!.content).toBe(huge);
+    expect(() => trimToContext([sys('GUARD'), turn('user', huge)], 2048)).toThrow('입력 예산');
+    expect(trimToContext([sys('GUARD'), turn('user', '질문')], 2048)[0]!.content).toBe('GUARD');
   });
 
   it('빈 배열에서 터지지 않는다', () => {
@@ -88,17 +81,9 @@ describe('trimToContext', () => {
 
   /* ── 고정(pinned) 동작 — KV 캐시 보호 ── */
 
-  it('pinnedCount만큼은 예산을 넘겨도 버리지 않는다', () => {
-    // 페이지가 붙으면 [system, page, ack] 3개가 고정된다.
-    const huge = '바'.repeat(30_000);
-    const msgs = [sys(), turn('user', huge), turn('assistant', PAGE_ACK), turn('user', '질문')];
-
-    const kept = trimToContext(msgs, 2048, 3);
-
-    expect(kept[0]!.role).toBe('system');
-    expect(kept[1]!.content).toBe(huge); // 페이지 본문이 살아 있다
-    expect(kept[2]!.content).toBe(PAGE_ACK);
-    expect(kept[kept.length - 1]!.content).toBe('질문');
+  it('고정된 본문만으로 예산을 넘으면 내용을 조용히 자르지 않고 거부한다', () => {
+    const msgs = [sys(), turn('user', '바'.repeat(30_000)), turn('assistant', PAGE_ACK), turn('user', '질문')];
+    expect(() => trimToContext(msgs, 2048, 3)).toThrow('입력 예산');
   });
 
   it('고정 구간 뒤에서만 잘라낸다 (접두사 보존)', () => {
@@ -117,7 +102,7 @@ describe('trimToContext', () => {
       turn('user', '최신 질문'),
     ];
 
-    const kept = trimToContext(msgs, 2048, 3); // 예산 1,433 — 고정분만으로 이미 초과
+    const kept = trimToContext(msgs, 4096, 3); // 고정 본문과 최신 질문은 예산 안에 보존
 
     // 앞 3개는 예산을 넘겨서라도 그대로 — 접두사가 유지되어야 캐시가 산다
     expect(kept.slice(0, 3).map((m) => m.content)).toEqual(['S', page, PAGE_ACK]);

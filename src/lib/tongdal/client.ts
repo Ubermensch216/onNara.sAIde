@@ -9,6 +9,7 @@
  */
 
 import { t } from '@/lib/i18n';
+import { abortable } from '@/lib/async';
 import { forgetToken, isPaired, type TongdalConnection } from './connection';
 import type {
   TongdalDocumentDetail,
@@ -49,6 +50,7 @@ const DEFAULT_TIMEOUT_MS = 15_000;
 async function request<T>(connection: TongdalConnection, path: string, options: RequestOptions = {}): Promise<T> {
   const auth = options.auth ?? true;
   if (auth && !isPaired(connection)) throw new TongdalError('not_paired', t('tongdal.err.notPaired'));
+  if (options.signal?.aborted) throw new TongdalError('aborted', t('tongdal.err.aborted'));
 
   const controller = new AbortController();
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -61,37 +63,40 @@ async function request<T>(connection: TongdalConnection, path: string, options: 
   if (auth && connection.token) headers.Authorization = `Bearer ${connection.token}`;
   if (options.body !== undefined) headers['Content-Type'] = 'application/json';
 
-  let response: Response;
   try {
-    response = await fetch(`${connection.baseUrl}${path}`, {
+    const response = await abortable(fetch(`${connection.baseUrl}${path}`, {
       method: options.method ?? 'GET',
       headers,
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
       signal: controller.signal,
       credentials: 'omit',
       cache: 'no-store',
-    });
-  } catch {
+      redirect: 'error',
+    }), controller.signal);
+
+    let payload: unknown = null;
+    try { payload = await abortable(response.json(), controller.signal); }
+    catch (error) { if (controller.signal.aborted) throw error; }
+
+    if (!response.ok) {
+      const body = payload && typeof payload === 'object' ? payload as { code?: unknown; message?: unknown } : {};
+      const code = typeof body.code === 'string' ? body.code : `http_${response.status}`;
+      const message = typeof body.message === 'string' && body.message ? body.message : t('tongdal.err.http', { status: response.status });
+      if (code === 'unauthorized' && auth) await forgetToken().catch(() => undefined);
+      throw new TongdalError(code, message, response.status);
+    }
+    if (payload === null || typeof payload !== 'object') throw new TongdalError('bad_response', t('tongdal.err.badResponse'), response.status);
+    return payload as T;
+  } catch (error) {
     if (options.signal?.aborted) throw new TongdalError('aborted', t('tongdal.err.aborted'));
     if (timedOut) throw new TongdalError('timeout', t('tongdal.err.timeout'));
+    if (error instanceof TongdalError) throw error;
     throw new TongdalError('unreachable', t('tongdal.err.unreachable'));
   } finally {
     if (timer) clearTimeout(timer);
     options.signal?.removeEventListener('abort', relay);
   }
 
-  let payload: unknown = null;
-  try { payload = await response.json(); } catch { /* 본문이 JSON이 아니면 아래에서 처리한다 */ }
-
-  if (!response.ok) {
-    const body = payload && typeof payload === 'object' ? payload as { code?: unknown; message?: unknown } : {};
-    const code = typeof body.code === 'string' ? body.code : `http_${response.status}`;
-    const message = typeof body.message === 'string' && body.message ? body.message : t('tongdal.err.http', { status: response.status });
-    if (code === 'unauthorized' && auth) await forgetToken().catch(() => undefined);
-    throw new TongdalError(code, message, response.status);
-  }
-  if (payload === null || typeof payload !== 'object') throw new TongdalError('bad_response', t('tongdal.err.badResponse'), response.status);
-  return payload as T;
 }
 
 /** 상태 확인. 토큰이 있으면 붙인다 — 붙이면 지식 공간·엔진 상태까지 받는다. */

@@ -100,3 +100,6 @@ export async function captureTab(tabId: number, control: RequestControl, cancell
     chrome.tabs.onRemoved.removeListener(removed);
   }
 }
+
+/** 페이지 스크립트가 만든 click/keydown을 사용자의 승인으로 취급하지 않는다. */
+export function isUserInitiatedEvent(event: Event): boolean { return event.isTrusted; }

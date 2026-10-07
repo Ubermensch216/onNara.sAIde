@@ -1,3 +1,5 @@
+import { messageOrigin, validatePostMessageEvent } from '@/lib/messaging/draft-protocol';
+import { aiFetch } from '@/lib/llm/destination';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { loadSettings, DEFAULT_SETTINGS, type Settings } from '@/lib/storage/settings';
 import { cleanAdminDraft } from '@/lib/onnara/draft-cleaner';
@@ -58,6 +60,11 @@ const REFERENCE_BUDGET_MAX = 16000;
 const LONG_REFERENCE_CHARS = 12_000;
 /** [원문 진단 파일 저장] 버튼 표시. 관련정보 원문을 못 읽는 새 사례를 조사할 때만 켠다. */
 const SHOW_REFERENCE_DIAGNOSIS = false;
+
+function parentMessageOrigin(): string | null {
+  if (window.parent === window) return messageOrigin(location.href);
+  return messageOrigin(new URLSearchParams(location.search).get('parentOrigin') || document.referrer);
+}
 
 function formatLabel(ref: UserRef): string {
   return { pdf: 'PDF', hwpx: 'HWPX', docx: 'DOCX', xlsx: 'XLSX', text: 'TXT' }[ref.format];
@@ -200,8 +207,9 @@ export function DrawerApp() {
   // 부모 윈도우와 통신 리스너
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
+      const origin = parentMessageOrigin();
+      if (!origin || !validatePostMessageEvent(event, origin, window.parent)) return;
       const data = event.data;
-      if (!data || typeof data !== 'object') return;
 
       if (data.type === 'DRAFT_CONTEXT_RESPONSE') {
         if (data.title) setDocTitle(data.title);
@@ -282,17 +290,17 @@ export function DrawerApp() {
 
     window.addEventListener('message', handleMessage);
     // 부모에 초기 맥락 요청
-    window.parent.postMessage({ type: 'DRAFT_GET_CONTEXT', requestId: `req_${Date.now()}` }, '*');
+    window.parent.postMessage({ type: 'DRAFT_GET_CONTEXT', requestId: `req_${Date.now()}` }, parentMessageOrigin() ?? location.origin);
 
     return () => window.removeEventListener('message', handleMessage);
   }, []);
 
   const closeDrawer = () => {
-    window.parent.postMessage({ type: 'SAIDE_CLOSE_DRAWER' }, '*');
+    window.parent.postMessage({ type: 'SAIDE_CLOSE_DRAWER' }, parentMessageOrigin() ?? location.origin);
   };
 
   const clickOpenBody = () => {
-    window.parent.postMessage({ type: 'SAIDE_CLICK_OPEN_BODY' }, '*');
+    window.parent.postMessage({ type: 'SAIDE_CLICK_OPEN_BODY' }, parentMessageOrigin() ?? location.origin);
     setStatusMsg('기안기의 [본문작성] 버튼을 호출했습니다.');
     setTimeout(() => setStatusMsg(''), 2500);
   };
@@ -333,7 +341,7 @@ export function DrawerApp() {
   const handleFetchRefContent = (doc: RelatedDocInfo) => {
     requestedReferenceTitles.current.add(doc.title);
     setFetchingTitle(doc.title);
-    window.parent.postMessage({ type: 'DRAFT_FETCH_RELATED_DOC', doc }, '*');
+    window.parent.postMessage({ type: 'DRAFT_FETCH_RELATED_DOC', doc }, parentMessageOrigin() ?? location.origin);
     setStatusMsg(`'${doc.title}' 본문을 조회하는 중입니다...`);
   };
 
@@ -636,7 +644,7 @@ export function DrawerApp() {
     };
 
     try {
-      const res = await fetch(`${settings.endpoint}/api/chat`, {
+      const res = await aiFetch(settings.endpoint, '/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestBody),
@@ -689,7 +697,7 @@ export function DrawerApp() {
         type: 'DRAFT_APPLY_TITLE',
         title: recommendedTitle.trim(),
       },
-      '*'
+      parentMessageOrigin() ?? location.origin
     );
   };
 
@@ -700,14 +708,14 @@ export function DrawerApp() {
     const styled = buildStyled(clean);
     await copyDraftToClipboard(clean, styled);
     setIsTargetSelecting(true);
-    window.parent.postMessage({ type: 'SAIDE_START_CLICK_TARGET', text: styled?.text ?? clean, ...(styled ? { styled } : {}) }, '*');
+    window.parent.postMessage({ type: 'SAIDE_START_CLICK_TARGET', text: styled?.text ?? clean, ...(styled ? { styled } : {}) }, parentMessageOrigin() ?? location.origin);
     setStatusMsg('기안기 화면에서 초안을 넣을 위치를 클릭하세요. (Esc: 취소)');
   };
 
   // 타깃 지정 모드 취소
   const handleCancelClickTarget = () => {
     setIsTargetSelecting(false);
-    window.parent.postMessage({ type: 'SAIDE_CANCEL_CLICK_TARGET' }, '*');
+    window.parent.postMessage({ type: 'SAIDE_CANCEL_CLICK_TARGET' }, parentMessageOrigin() ?? location.origin);
     setStatusMsg('위치 지정이 취소되었습니다.');
     setTimeout(() => setStatusMsg(''), 2500);
   };
@@ -723,7 +731,7 @@ export function DrawerApp() {
         approvalToken: approvalModal.token,
         text: generatedDraft,
       },
-      '*'
+      parentMessageOrigin() ?? location.origin
     );
   };
 

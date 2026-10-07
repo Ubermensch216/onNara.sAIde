@@ -270,11 +270,12 @@ export async function saveAiPreferences(patch: AiPreferences): Promise<AiPrefere
   return next;
 }
 
-export async function loadInstitutionAiPolicy(): Promise<InstitutionAiPolicy> {
+export async function loadInstitutionAiPolicy(strict = false): Promise<InstitutionAiPolicy> {
   try {
     const stored = await chrome.storage.managed.get(AI_POLICY_KEY);
     return normalizePolicy(stored[AI_POLICY_KEY]);
-  } catch {
+  } catch (error) {
+    if (strict && typeof chrome !== 'undefined' && chrome.storage?.managed) throw error;
     // 관리형 저장소 스키마가 없는 개발 환경은 정책 없음으로 처리한다.
     return {};
   }

@@ -57,7 +57,7 @@ it('Ollama를 구조화 출력·온도 0으로 한 번 부른다', async () => {
 
 it('응답 형식이 어긋나면 오류로 알린다', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ message: { content: '모르겠습니다' } }))));
-  await expect(checkRequirements({ endpoint: 'http://x', model: 'm' }, ['a'], draft)).rejects.toThrow('요구사항 점검 형식');
+  await expect(checkRequirements({ endpoint: 'http://localhost:11434', model: 'm' }, ['a'], draft)).rejects.toThrow('요구사항 점검 형식');
 });
 
 it('인용이 초안에 있어도 요구사항의 핵심어가 없으면 충족으로 세지 않는다(실측 사례)', () => {

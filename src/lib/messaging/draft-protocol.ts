@@ -1,3 +1,4 @@
+import type { ChatRequest } from '@/types/ollama';
 /**
  * 기안기 전용 안전 통신 프로토콜 및 메시지 검증기.
  *
@@ -131,7 +132,8 @@ export function isValidTargetRef(target: unknown): target is TargetRef {
 /** 발신 출처(Origin) 일치 검사 */
 export function isAllowedOriginMatch(expectedOrigin: string, actualOrigin: string): boolean {
   try {
-    return new URL(expectedOrigin).origin.toLowerCase() === new URL(actualOrigin).origin.toLowerCase();
+    const expected = messageOrigin(expectedOrigin);
+    return expected !== null && expected === messageOrigin(actualOrigin);
   } catch {
     return false;
   }
@@ -156,4 +158,43 @@ export function validatePostMessageEvent(
   }
 
   return true;
+}
+
+/** URL.origin이 확장 스킴에 null을 반환하는 환경에서도 확장 ID를 비교한다. */
+export function messageOrigin(value: string): string | null {
+  try {
+    const url = new URL(value);
+    if (url.protocol === 'chrome-extension:' && url.hostname && !url.username && !url.password && !url.port) return url.protocol + '//' + url.hostname;
+    return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password ? url.origin : null;
+  } catch { return null; }
+}
+
+const boundedText = (value: unknown, max = 200_000): value is string => typeof value === 'string' && value.length > 0 && value.length <= max;
+export function validDraftHostRequest(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const v = value as Record<string, any>;
+  switch (v.type) {
+    case 'SAIDE_CLOSE_DRAWER': case 'DRAFT_GET_CONTEXT': case 'SAIDE_CLICK_OPEN_BODY': case 'SAIDE_CANCEL_CLICK_TARGET': return true;
+    case 'SAIDE_START_CLICK_TARGET': return boundedText(v.text);
+    case 'DRAFT_APPLY_TITLE': return boundedText(v.title, 500);
+    case 'DRAFT_FETCH_RELATED_DOC': return v.doc && boundedText(v.doc.title, 500);
+    case 'DRAFT_PREPARE_INSERT': return v.payload && boundedText(v.payload.text) && ['cursor', 'replace-selection', 'append'].includes(v.payload.mode);
+    case 'DRAFT_APPLY_INSERT': return boundedText(v.approvalToken, 100) && boundedText(v.text);
+    default: return false;
+  }
+}
+
+/** 기안기 특권 동작은 실제 기안 탭의 콘텐츠 스크립트 요청만 받는다. */
+export function trustedDraftContent(sender: chrome.runtime.MessageSender, isDraftPath: (url: string) => boolean): boolean {
+  if (sender.id !== chrome.runtime.id || !Number.isInteger(sender.tab?.id) || !sender.url) return false;
+  const origin = messageOrigin(sender.url);
+  return Boolean(origin && /^https?:/.test(origin) && sender.tab?.url && isDraftPath(sender.tab.url));
+}
+
+export type BubbleChatBody = Omit<ChatRequest, 'stream'> & { stream?: boolean };
+export function validBubbleBody(raw: unknown): raw is BubbleChatBody {
+  const b = raw as Partial<BubbleChatBody> | null;
+  return Boolean(b && typeof b.model === 'string' && /^[\w.:/-]{1,200}$/.test(b.model) && !b.tools &&
+    Array.isArray(b.messages) && b.messages.length >= 1 && b.messages.length <= 10 && b.messages.every(m =>
+      m && ['user', 'assistant', 'system'].includes(m.role) && typeof m.content === 'string' && m.content.length <= 100_000 && !m.images && !m.tool_calls));
 }

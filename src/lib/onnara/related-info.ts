@@ -1,3 +1,4 @@
+import { aiFetch } from '@/lib/llm/destination';
 /**
  * 온나라 기안기 화면의 '관련정보' 문서 추출 및 AI 프롬프트 연동 모듈.
  *
@@ -490,7 +491,7 @@ export async function analyzeReferenceForDraft(
   const chunks = content.match(/[\s\S]{1,5000}/g) || [];
   const notes: string[] = [];
   for (let index = 0; index < chunks.length; index++) {
-    const response = await fetcher(`${settings.endpoint}/api/chat`, {
+    const response = await aiFetch(settings.endpoint, '/api/chat', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, signal,
       body: JSON.stringify({
         model: settings.model, stream: false, options: { num_ctx: 8192 },
@@ -499,7 +500,7 @@ export async function analyzeReferenceForDraft(
           { role: 'user', content: `[원문 제목] ${title}\n[구간 ${index + 1}/${chunks.length}]\n${chunks[index]}` },
         ],
       }),
-    });
+    }, fetcher);
     if (!response.ok) throw new Error(`참고문서 ${index + 1}/${chunks.length}구간 분석 실패 (${response.status})`);
     const data = await response.json();
     const analysis = String(data.message?.content || '').trim();
@@ -616,7 +617,7 @@ export async function generateDocSummary(
     const source = await analyzeReferenceForDraft(content, title, { endpoint: ollamaUrl, model }, fetch, controller.signal);
     const prompt = `다음 대한민국 공문서 원문 또는 원문의 모든 구간 분석을 읽고, 기안자가 새 공문 작성 시 반드시 참고해야 할 핵심 내용(추진배경 및 목적, 주요 방침/지침, 제출기한/일정, 필수 서식 등)을 3~4줄의 개조식(- )으로 명확히 요약해 주십시오. 사족이나 인사말은 일절 없이 요약된 개조식 항목만 출력하십시오.\n\n[문서 제목]: ${title}\n[문서 본문]:\n${source}`;
 
-    const res = await fetch(`${ollamaUrl}/api/generate`, {
+    const res = await aiFetch(ollamaUrl, '/api/generate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

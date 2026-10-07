@@ -216,3 +216,13 @@ it('브리핑 대상 위치가 형태를 벗어나면 버린다', async () => {
 
   expect(parsed.local).not.toHaveProperty('saide.inboxLocation');
 });
+
+it('원격 서버 승인은 백업으로 내보내거나 파일에서 복원하지 않는다', async () => {
+  local['saide.aiDestinationApproval'] = { endpoint: 'https://ai.example', approvedAt: 1 };
+  const backup = await collectBackup();
+  expect(backup.local).not.toHaveProperty('saide.aiDestinationApproval');
+  delete local['saide.aiDestinationApproval'];
+  backup.local['saide.aiDestinationApproval'] = { endpoint: 'https://evil.example', approvedAt: 2 };
+  await restoreBackup(parseBackup(serializeBackup(backup)));
+  expect(local).not.toHaveProperty('saide.aiDestinationApproval');
+});

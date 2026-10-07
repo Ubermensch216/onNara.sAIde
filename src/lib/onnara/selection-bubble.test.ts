@@ -1,5 +1,10 @@
 // @vitest-environment jsdom
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as guards from '@/lib/browser/guards';
+
+// UI 시나리오의 click은 사용자의 브라우저 입력을 나타낸다. 아래 위조 입력 시험에서는 이 모사를 해제한다.
+beforeEach(() => vi.spyOn(guards, 'isUserInitiatedEvent').mockReturnValue(true));
+afterEach(() => vi.restoreAllMocks());
 import { createSelectionBubble } from './selection-bubble';
 
 describe('selection-bubble', () => {
@@ -498,3 +503,12 @@ describe('selection-bubble', () => {
   });
 });
 
+
+it('페이지 스크립트의 합성 클릭으로 버블 동작을 실행하지 않는다', () => {
+  vi.mocked(guards.isUserInitiatedEvent).mockReturnValue(false);
+  const bubble = createSelectionBubble();
+  document.body.appendChild(bubble.element);
+  bubble.element.querySelector<HTMLButtonElement>('#btnPolishMenu')!.click();
+  expect(bubble.element.querySelector<HTMLElement>('#dropdownPolish')!.style.display).toBe('none');
+  bubble.destroy(); bubble.element.remove();
+});

@@ -32,6 +32,7 @@ const CACHE_LIMIT = 8;
 const results = new Map<string, Promise<PdfTextResult>>();
 let creating: Promise<void> | null = null;
 let closeTimer: ReturnType<typeof setTimeout> | undefined;
+let activeRequests = 0;
 
 async function ensureOffscreen(): Promise<void> {
   const url = chrome.runtime.getURL(OFFSCREEN_PATH);
@@ -45,31 +46,42 @@ async function ensureOffscreen(): Promise<void> {
   await creating;
 }
 
-async function parse(base64: string): Promise<PdfTextResult> {
+/** PDF와 AI가 같은 문서를 사용하므로 마지막 작업이 끝난 뒤에만 닫는다. */
+export async function withOffscreen<T>(work: () => Promise<T>): Promise<T> {
+  activeRequests++;
   clearTimeout(closeTimer);
+  // 워커에서는 추론을 실행하지 않고 응답을 전달한다. 대기 중에는 수명 타이머를 갱신한다.
+  const heartbeat = setInterval(() => { void chrome.runtime.getPlatformInfo().catch(() => undefined); }, 20_000);
   try {
     await ensureOffscreen();
-    const reply = await chrome.runtime.sendMessage({ target: OFFSCREEN_TARGET, type: 'PARSE_PDF', base64 } satisfies ParsePdfRequest) as PdfTextResult | undefined;
-    return reply ?? { text: '', pages: 0, error: 'PDF 해석기가 응답하지 않았습니다' };
-  } catch (error) {
-    return { text: '', pages: 0, error: error instanceof Error ? error.message : String(error) };
+    return await work();
   } finally {
-    closeTimer = setTimeout(() => { void chrome.offscreen.closeDocument().catch(() => undefined); }, IDLE_CLOSE_MS);
+    clearInterval(heartbeat);
+    if (--activeRequests === 0) closeTimer = setTimeout(() => {
+      if (activeRequests === 0) void chrome.offscreen.closeDocument().catch(() => undefined);
+    }, IDLE_CLOSE_MS);
   }
 }
 
-/** 텍스트/HTML 본문을 오프스크린 문서를 통해 A4 규격 PDF 바이너리(Base64)로 생성한다. */
-export async function generatePdfFromText(input: TextPdfInput): Promise<string> {
-  clearTimeout(closeTimer);
+async function parse(base64: string): Promise<PdfTextResult> {
   try {
-    await ensureOffscreen();
+    return await withOffscreen(async () => {
+      const reply = await chrome.runtime.sendMessage({ target: OFFSCREEN_TARGET, type: 'PARSE_PDF', base64 } satisfies ParsePdfRequest) as PdfTextResult | undefined;
+      return reply ?? { text: '', pages: 0, error: 'PDF 해석기가 응답하지 않았습니다' };
+    });
+  } catch (error) {
+    return { text: '', pages: 0, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/** 텍스트/HTML 본문을 A4 PDF로 만든다. */
+export async function generatePdfFromText(input: TextPdfInput): Promise<string> {
+  return withOffscreen(async () => {
     const reply = await chrome.runtime.sendMessage({ target: OFFSCREEN_TARGET, type: 'GENERATE_TEXT_PDF', input } satisfies GenerateTextPdfRequest) as { base64?: string; error?: string } | undefined;
     if (reply?.error) throw new Error(reply.error);
     if (!reply?.base64) throw new Error('PDF 생성에 실패했습니다.');
     return reply.base64;
-  } finally {
-    closeTimer = setTimeout(() => { void chrome.offscreen.closeDocument().catch(() => undefined); }, IDLE_CLOSE_MS);
-  }
+  });
 }
 
 /** 주입 스크립트가 받지 못한 PDF(다른 출처 embed 등)는 사이트 권한으로 한 번 더 받아 본다. */

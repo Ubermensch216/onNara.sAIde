@@ -1,0 +1,32 @@
+{
+  "type": "object",
+  "properties": {
+    "onnara.saide.policy": {
+      "title": "온나라 sAIde AI 전송 정책",
+      "type": "object",
+      "properties": {
+        "externalEgressPolicy": {
+          "type": "string",
+          "enum": [
+            "block",
+            "confirm",
+            "allow"
+          ]
+        },
+        "providers": {
+          "type": "object",
+          "properties": {
+            "ollama": {
+              "type": "object",
+              "properties": {
+                "endpoint": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

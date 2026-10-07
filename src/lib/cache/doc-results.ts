@@ -25,6 +25,8 @@ import type { WorkPlanHandoff } from '@/lib/ai/work-plan';
 
 /** 보관할 최대 건수. 넘치면 오래된 것부터 버린다. */
 export const MAX_DOC_RESULTS = 300;
+/** 프롬프트·근거 검증을 바꾸면 이 판본을 올려 과거 분석 결과를 분리한다. */
+export const DOC_ANALYSIS_VERSION = 2;
 
 export interface DocResult {
   /** `identity::command::variant` — 같은 조건이면 같은 자리에 덮어쓴다. */
@@ -84,6 +86,8 @@ function fnv1a(text: string, basis: number): string {
 }
 
 export interface DocResultLookup {
+  endpoint?: string;
+  analysisVersion?: number;
   identity: string;
   command: string;
   /** 명령 뒤에 붙인 추가 지시. 다르면 다른 결과다. */
@@ -93,7 +97,7 @@ export interface DocResultLookup {
 
 /** 같은 조건의 결과가 어느 자리에 저장되는가. */
 export function docResultKey(lookup: DocResultLookup): string {
-  return `${lookup.identity}::${lookup.command}::${fnv1a(`${lookup.instruction}|${lookup.model}`, 0x811c9dc5)}`;
+  return `${lookup.identity}::${lookup.command}::v${lookup.analysisVersion ?? DOC_ANALYSIS_VERSION}::${fnv1a(`${lookup.instruction}|${lookup.model}|${lookup.endpoint ?? ''}`, 0x811c9dc5)}`;
 }
 
 /**

@@ -1,3 +1,4 @@
+import { AiDestinationError, aiFetch } from '@/lib/llm/destination';
 import { abortable, deadlineSignal } from '@/lib/async';
 /**
  * 오류 분류. 계획서 §5 Phase 1-8 / §6 완료 기준
@@ -48,6 +49,7 @@ export function classifyFetchError(e: unknown): OllamaError {
     return new OllamaError('ABORTED', '생성을 중단했습니다.');
   }
   if (e instanceof OllamaError) return e;
+  if (e instanceof AiDestinationError) return new OllamaError(e.code, e.message);
 
   // 여기서는 아직 DOWN인지 CORS인지 알 수 없다. 호출자가 probeEndpoint로 확정한다.
   return new OllamaError(
@@ -99,7 +101,7 @@ export async function classifyResponse(res: Response): Promise<OllamaError> {
 export async function isServerReachable(endpoint: string): Promise<boolean> {
   const guard = deadlineSignal(3000);
   try {
-    await abortable(fetch(`${endpoint}/api/version`, {
+    await abortable(aiFetch(endpoint, '/api/version', {
       mode: 'no-cors',
       cache: 'no-store',
       signal: guard.signal,

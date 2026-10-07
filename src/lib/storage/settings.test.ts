@@ -47,7 +47,7 @@ it('주소를 완성해서 저장하며 잘못된 주소는 기존 값을 유지
 it('설정 변경을 정규화해서 전달하고 구독 해제가 가능하다', async () => {
   const listener = vi.fn(); const stop = onSettingsChanged(listener);
   await saveSettings({ locale: 'en' });
-  expect(listener).toHaveBeenCalledWith(expect.objectContaining({ locale: 'en' }));
+  await vi.waitFor(() => expect(listener).toHaveBeenCalledWith(expect.objectContaining({ locale: 'en' })));
   stop(); await saveSettings({ theme: 'dark' });
   expect(listener).toHaveBeenCalledTimes(1);
 });
@@ -78,4 +78,16 @@ it('브리핑 설정의 손상된 값은 안전한 쪽으로 떨어진다', () =
 it('대조할 칸을 모두 지운 설정은 받지 않는다', () => {
   // 대조할 칸이 없으면 모든 키워드가 빗나가, 사용자는 키워드를 잘못 적은 줄 알고 계속 고치게 된다.
   expect(normalizeSettings({ briefingFields: [] }).briefingFields).toEqual(DEFAULT_SETTINGS.briefingFields);
+});
+
+it('기관이 고정한 서버는 로드·부분 저장·설정 구독에서도 유지한다', async () => {
+  vi.stubGlobal('chrome', { ...chrome, storage: { ...chrome.storage,
+    managed: { get: async () => ({ 'onnara.saide.policy': { providers: { ollama: { endpoint: 'http://127.0.0.1:11434' } } } }) },
+  } });
+  expect((await loadSettings()).endpoint).toBe('http://127.0.0.1:11434');
+  await expect(saveSettings({ endpoint: 'https://unapproved.example' })).rejects.toThrow('기관 정책');
+  const callback = vi.fn(); const stop = onSettingsChanged(callback);
+  await saveSettings({ locale: 'en' });
+  await vi.waitFor(() => expect(callback).toHaveBeenCalledWith(expect.objectContaining({ endpoint: 'http://127.0.0.1:11434', locale: 'en' })));
+  stop();
 });

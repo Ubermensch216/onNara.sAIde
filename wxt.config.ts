@@ -69,6 +69,10 @@ export default defineConfig({
   },
 
   manifest: {
+    storage: { managed_schema: 'managed-policy.json' },
+    content_security_policy: {
+      extension_pages: "script-src 'self'; object-src 'none'; img-src 'self' data: blob:; font-src 'self'; style-src 'self' 'unsafe-inline'; frame-src 'self';",
+    },
     minimum_chrome_version: '116',
     // ★ __MSG_*__ 는 public/_locales/{ko,en}/messages.json 에서 온다.
     //   이 필드들은 크롬이 스토어·확장 관리 화면에 직접 그리므로 우리 i18n

@@ -1,3 +1,4 @@
+import { aiFetch } from '@/lib/llm/destination';
 /**
  * 참고자료 정밀 분석 (기안 코파일럿 · 내 참고자료).
  *
@@ -240,7 +241,7 @@ export async function analyzeChunk(
   fetcher: typeof fetch = fetch,
   signal?: AbortSignal,
 ): Promise<unknown> {
-  const response = await fetcher(`${target.endpoint}/api/chat`, {
+  const response = await aiFetch(target.endpoint, '/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     signal,
@@ -256,7 +257,7 @@ export async function analyzeChunk(
         { role: 'user', content: `<<<원문 ${index}/${total}\n${chunk}\n원문>>>` },
       ],
     }),
-  });
+  }, fetcher);
   if (!response.ok) throw new Error(`${index}/${total}구간 분석 실패 (Ollama ${response.status})`);
   const data = await response.json();
   const raw = String(data?.message?.content ?? '').trim();

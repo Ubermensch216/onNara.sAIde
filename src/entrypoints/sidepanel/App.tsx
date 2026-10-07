@@ -1,3 +1,4 @@
+import { processingLabel } from '@/lib/llm/destination';
 /**
  * Side Panel 루트. 계획서 §3 설계 결정 ①
  *
@@ -693,11 +694,11 @@ export default function App() {
         <button
           className="model-chip"
           onClick={() => chrome.runtime.openOptionsPage()}
-          title={`내 PC · Ollama · ${settings.model}`}
-          aria-label={`현재 모델: 내 PC Ollama ${settings.model}. 모델 설정 열기`}
+          title={`${processingLabel(settings.endpoint)} · Ollama · ${settings.model}`}
+          aria-label={`현재 모델: ${processingLabel(settings.endpoint)} Ollama ${settings.model}. 모델 설정 열기`}
         >
           <span className="model-chip-dot" aria-hidden="true" />
-          <span className="model-chip-text">내 PC · {settings.model}</span>
+          <span className="model-chip-text">{processingLabel(settings.endpoint)} · {settings.model}</span>
         </button>
         {chat.conversation && chat.messages.length > 0 && (
           <span className="conv-chip">{chat.conversation.title}</span>

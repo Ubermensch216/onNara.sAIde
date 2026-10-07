@@ -1,3 +1,4 @@
+import { isUserInitiatedEvent } from '@/lib/browser/guards';
 /**
  * 본 화면 에디터 영역의 블록 지정(Selection) 플로팅 에디팅 툴바 (Bubble Menu).
  *
@@ -62,6 +63,9 @@ export function createSelectionBubble(
   const wrapper = document.createElement('div');
   wrapper.className = 'saide-bubble-container';
   wrapper.style.display = 'none';
+  wrapper.addEventListener('click', event => {
+    if (!isUserInitiatedEvent(event)) event.stopImmediatePropagation();
+  }, { capture: true });
 
   let currentSelection: SelectionInfo | null = null;
   let lastValidRect: DOMRect | null = null;
@@ -1070,7 +1074,7 @@ export function createSelectionBubble(
       if (e.key === 'Escape') {
         e.preventDefault();
         hide();
-      } else if (e.key === 'Enter' && pendingResult && !isApplying) {
+      } else if (e.key === 'Enter' && pendingResult && !isApplying && isUserInitiatedEvent(e)) {
         // 프리뷰 상태에서 Enter를 누르면 기본 '대체하기' 수행 (중복 전파 차단)
         e.preventDefault();
         e.stopPropagation();

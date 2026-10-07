@@ -138,7 +138,9 @@ export function renderMarkdown(md: string): string {
       'ul', 'ol', 'li', 'a', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
       'table', 'thead', 'tbody', 'tr', 'th', 'td', 'hr', 'span',
     ],
-    ALLOWED_ATTR: ['href', 'title', 'class', 'style'],
+    // 모델이 만든 CSS는 외부 이미지 요청이나 화면 위장을 일으킬 수 있다.
+    // 코드 하이라이터의 서식은 이 경로를 거치지 않고 별도로 렌더링한다.
+    ALLOWED_ATTR: ['href', 'title'],
     // javascript:, data: 등 실행 가능한 스킴을 링크에서 제거한다.
     // 조각 주소 두 가지만 통과시킨다 — 답변의 다운로드 파일 열기(lib/downloads/links.ts)와
     // 일정·도구 탭으로 건너뛰기(lib/panel/links.ts). 문법은 각 모듈이 정의하고 여기서는 붙이기만 한다.

@@ -1,3 +1,4 @@
+import { messageOrigin, validatePostMessageEvent, validDraftHostRequest } from '@/lib/messaging/draft-protocol';
 /**
  * 온나라 공문서 작성기 전용 인페이지 사이드카 드로어 호스트 셸.
  *
@@ -16,7 +17,7 @@ function isStyledPayload(value: unknown): value is StyledInsertPayload {
     && v.paras.every(p => p && typeof p.text === 'string' && typeof p.height === 'number'));
 }
 import { DraftTransactionController } from '@/lib/onnara/draft-controller';
-import { findWriteBodyButton, isExactDraftPath } from '@/lib/onnara/draft-route';
+import { findWriteBodyButton, isExactDraftPath, isMetadataField } from '@/lib/onnara/draft-route';
 import { DRAWER_GAP_PX, applyPageLayoutShift } from '@/lib/onnara/drawer-layout';
 import { createSelectionBubble } from '@/lib/onnara/selection-bubble';
 import { applyDraftTitleToDom } from '@/lib/onnara/draft-title';
@@ -48,7 +49,9 @@ function mountFrameSelectionBubble(doc: Document) {
     },
     onSendToSidecar: (text) => {
       try {
-        window.top?.postMessage({ type: SELECTION_BRIDGE_SEND, text }, '*');
+        let topOrigin: string | null = null;
+        try { topOrigin = messageOrigin(window.top?.location.href || ''); } catch { topOrigin = messageOrigin(document.referrer); }
+        if (topOrigin) window.top?.postMessage({ type: SELECTION_BRIDGE_SEND, text }, topOrigin);
       } catch {
         // top-level sidecar may have navigated away
       }
@@ -92,17 +95,20 @@ export default defineUnlistedScript(() => {
 
   // 하위 프레임의 선택 버블 초기화 요청을 승인하고, 질의 텍스트를 사이드카로 전달한다.
   window.addEventListener('message', (event: MessageEvent) => {
-    if (!event.data || typeof event.data !== 'object' || !event.source) return;
+    if (!event.data || typeof event.data !== 'object' || !event.source || event.source === window) return;
+    const frames = getAccessibleDocuments(document).flatMap(doc => Array.from(doc.querySelectorAll<HTMLIFrameElement>('iframe, frame')));
+    const frame = frames.find(el => el.contentWindow === event.source);
+    if (!frame || !validatePostMessageEvent(event, frame.src && !frame.src.startsWith('about:') ? frame.src : location.origin, frame.contentWindow)) return;
     const msg = event.data;
     if (msg.type === SELECTION_BRIDGE_REQUEST) {
-      (event.source as Window).postMessage({ type: SELECTION_BRIDGE_READY }, '*');
-    } else if (msg.type === SELECTION_BRIDGE_SEND && typeof msg.text === 'string') {
+      (event.source as Window).postMessage({ type: SELECTION_BRIDGE_READY }, event.origin);
+    } else if (msg.type === SELECTION_BRIDGE_SEND && typeof msg.text === 'string' && msg.text.length <= 200_000) {
       setDrawerOpen(true);
       setTimeout(() => {
         iframe.contentWindow?.postMessage({
           type: 'SAIDE_FILL_PROMPT',
           text: `다음 문서 내용을 분석 또는 보완해줘:\n\n${msg.text}`,
-        }, '*');
+        }, extensionOrigin);
       }, 350);
     }
   });
@@ -123,6 +129,7 @@ export default defineUnlistedScript(() => {
   }
 
   const runtime = chrome.runtime;
+  const extensionOrigin = messageOrigin(runtime.getURL(''))!;
   window.__saideDrawerInjected = () => {
     try {
       return Boolean(runtime?.id && document.querySelector('saide-drawer-host'));
@@ -509,7 +516,7 @@ export default defineUnlistedScript(() => {
               type: 'SAIDE_FILL_PROMPT',
               text: `다음 문서 내용을 분석 또는 보완해줘:\n\n${text}`,
             },
-            '*'
+            extensionOrigin
           );
         }, 350);
       },
@@ -552,7 +559,7 @@ export default defineUnlistedScript(() => {
     isOpen = nextOpen;
     if (isOpen) {
       if (!iframe.src) {
-        iframe.src = chrome.runtime.getURL('drawer-page.html');
+        iframe.src = chrome.runtime.getURL('drawer-page.html') + '?parentOrigin=' + encodeURIComponent(location.origin);
       }
       drawer.classList.add('open');
       launcher.style.setProperty('display', 'none', 'important');
@@ -783,7 +790,7 @@ export default defineUnlistedScript(() => {
   }
 
   async function handlePickerClick(e: MouseEvent) {
-    if (!isPickingTarget) return;
+    if (!isPickingTarget || !e.isTrusted) return;
     const target = e.target as HTMLElement | null;
     if (!target || host.contains(target)) return;
 
@@ -798,62 +805,37 @@ export default defineUnlistedScript(() => {
       targetEl = nested;
     }
 
+    if (isMetadataField(targetEl)) {
+      showToast('문서 제목·요약 등 정보 필드에는 본문 초안을 삽입할 수 없습니다. 본문에서 위치를 지정해 주세요.', 3500);
+      return;
+    }
     const textToInsert = pendingInsertText;
     const styledToInsert = pendingStyled;
     const clickX = e.clientX;
     const clickY = e.clientY;
     stopTargetPicker();
 
-    // 한컴 기안기 컨트롤이 마우스 클릭을 받아 포커스와 캐럿을 잡을 수 있도록 브라우저 틱(30ms) 양보 후 삽입
+    const sourceUrl = location.href;
+    const before = captureDraftContext(document, { tabId: 0, frameId: 0, origin: location.origin });
+    if (!window.confirm('선택한 위치에 다음 초안을 삽입하시겠습니까?\n\n' + textToInsert.slice(0, 800) + (textToInsert.length > 800 ? '\n…' : ''))) {
+      iframe.contentWindow?.postMessage({ type: 'SAIDE_TARGET_INSERT_RESULT', status: 'cancelled', message: '삽입을 취소했습니다.' }, extensionOrigin);
+      return;
+    }
+    // 기본 클릭 동작으로 편집기 캐럿을 잡은 뒤, 승인한 문서와 대상이 여전히 같은지 확인한다.
     setTimeout(async () => {
-      // 1. WebHWP 메인 월드 API (HwpCtrl.PutFieldText("본문", ...) / InsertText / RunPaste) 및 DOM 삽입
-      const res = await directInsertAtTarget(targetEl, textToInsert, clickX, clickY, targetEl.ownerDocument || document, styledToInsert);
-
-      // 2. 포커스된 요소에 클립보드 붙여넣기(Paste) 이벤트 자동 트리거
-      // ★ 중요: directInsertAtTarget에서 이미 'applied'로 직접 삽입된 경우 중복 붙여넣기를 절대 수행하지 않는다!
-      if (res.status !== 'applied') {
-        try {
-          const ownerDoc = targetEl.ownerDocument || document;
-          const active = ownerDoc.activeElement as HTMLElement | null;
-          const pasteTarget = active || targetEl;
-
-          // ClipboardEvent ('paste') 발송 (DataTransfer 포함)
-          try {
-            const dt = new DataTransfer();
-            dt.setData('text/plain', textToInsert);
-            const pasteEvt = new ClipboardEvent('paste', {
-              bubbles: true,
-              cancelable: true,
-              clipboardData: dt,
-            });
-            pasteTarget.dispatchEvent(pasteEvt);
-          } catch {
-            // ignore
-          }
-
-          // document.execCommand('paste')
-          try {
-            ownerDoc.execCommand('paste');
-          } catch {
-            // ignore
-          }
-        } catch {
-          // ignore
+      try {
+        const current = captureDraftContext(document, { tabId: 0, frameId: 0, origin: location.origin });
+        if (location.href !== sourceUrl || !targetEl.isConnected || current.documentKey !== before.documentKey || current.editorRevision !== before.editorRevision) {
+          throw new Error('문서 또는 본문이 변경되었습니다. 삽입 위치를 다시 지정해 주세요.');
         }
+        const res = await directInsertAtTarget(targetEl, textToInsert, clickX, clickY, targetEl.ownerDocument || document, styledToInsert);
+        showToast(res.message, 3500);
+        iframe.contentWindow?.postMessage({ type: 'SAIDE_TARGET_INSERT_RESULT', status: res.status, message: res.message }, extensionOrigin);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '초안 삽입에 실패했습니다.';
+        showToast(message, 3500);
+        iframe.contentWindow?.postMessage({ type: 'SAIDE_TARGET_INSERT_RESULT', status: 'failed', message }, extensionOrigin);
       }
-
-      // 성공 메시지 안내
-      const msg = res.status === 'applied' ? res.message : '한글 기안기 본문에 초안이 삽입되었습니다.';
-      showToast(msg, 3500);
-
-      iframe.contentWindow?.postMessage(
-        {
-          type: 'SAIDE_TARGET_INSERT_RESULT',
-          status: 'applied',
-          message: msg,
-        },
-        '*'
-      );
     }, 30);
   }
 
@@ -869,7 +851,7 @@ export default defineUnlistedScript(() => {
           status: 'cancelled',
           message: '위치 지정이 취소되었습니다.',
         },
-        '*'
+        extensionOrigin
       );
     }
   }
@@ -917,7 +899,7 @@ export default defineUnlistedScript(() => {
         status: 'cancelled',
         message: '위치 지정이 취소되었습니다.',
       },
-      '*'
+      extensionOrigin
     );
   });
 
@@ -963,7 +945,7 @@ export default defineUnlistedScript(() => {
           reason,
           relatedDocs: ctx.relatedDocs || [],
         },
-        '*'
+        extensionOrigin
       );
     } catch {
       // ignore
@@ -972,7 +954,7 @@ export default defineUnlistedScript(() => {
 
   // 메시지 수신 핸들러 (2단계 승인 트랜잭션 브리지 및 본문작성 열기, 클릭 타깃팅 연동)
   window.addEventListener('message', async (event: MessageEvent) => {
-    if (!event.data || typeof event.data !== 'object') return;
+    if (!validatePostMessageEvent(event, extensionOrigin, iframe.contentWindow) || !iframe.contentWindow || !validDraftHostRequest(event.data)) return;
     const msg = event.data;
 
     const tabInfo = { tabId: 0, frameId: 0, origin: location.origin };
@@ -1010,7 +992,7 @@ export default defineUnlistedScript(() => {
           documentTitle: response.title,
           attachments: response.attachments,
           error: response.content ? undefined : response.error,
-        }, '*');
+        }, extensionOrigin);
       } else {
         iframe.contentWindow?.postMessage(
           {
@@ -1020,7 +1002,7 @@ export default defineUnlistedScript(() => {
             content: '',
             error: '참고 문서 본문 조회 기능을 사용할 수 없습니다.',
           },
-          '*'
+          extensionOrigin
         );
       }
     } else if (msg.type === 'DRAFT_PREPARE_INSERT' && msg.payload?.text) {
@@ -1035,7 +1017,7 @@ export default defineUnlistedScript(() => {
           preview: plan.preview,
           expiresAt: plan.expiresAt,
         },
-        '*'
+        extensionOrigin
       );
     } else if (msg.type === 'DRAFT_APPLY_INSERT' && msg.approvalToken && msg.text) {
       // 2단계: APPLY (사용자 명시적 승인 후 단 1회 커밋)
@@ -1047,7 +1029,7 @@ export default defineUnlistedScript(() => {
           status: result.status,
           message: result.message,
         },
-        '*'
+        extensionOrigin
       );
     } else if (msg.type === 'DRAFT_APPLY_TITLE' && typeof msg.title === 'string') {
       const titleToApply = msg.title.trim();
@@ -1087,7 +1069,7 @@ export default defineUnlistedScript(() => {
             title: titleToApply,
             message: '공문 본 화면의 제목 필드에 반영되었습니다.',
           },
-          '*'
+          extensionOrigin
         );
       } else {
         // 3. 필드를 못 찾았을 경우 클립보드 폴백 복사
@@ -1107,7 +1089,7 @@ export default defineUnlistedScript(() => {
               ? '제목 필드를 자동으로 찾지 못해 제목을 복사했습니다. (제목 칸에 Ctrl+V로 붙여넣기)'
               : '공문 본 화면에서 제목 입력 필드를 찾지 못했습니다.',
           },
-          '*'
+          extensionOrigin
         );
       }
     }

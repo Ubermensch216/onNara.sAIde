@@ -1,3 +1,4 @@
+import { loadInstitutionAiPolicy, readBuildAiConfig } from '@/lib/llm/config';
 import { updateMemoryPolicy } from '@/lib/memory/store';
 
 /**
@@ -277,7 +278,12 @@ export function normalizeSettings(input: unknown): Settings {
 
 export async function loadSettings(): Promise<Settings> {
   const raw = await chrome.storage.local.get(KEY);
-  return normalizeSettings(raw?.[KEY]);
+  const policy = await loadInstitutionAiPolicy(true);
+  const buildEndpoint = readBuildAiConfig().providers?.ollama?.endpoint;
+  const saved = raw?.[KEY] as Partial<Settings> | undefined;
+  const next = normalizeSettings({ ...(buildEndpoint ? { endpoint: buildEndpoint } : {}), ...saved });
+  if (policy.providers?.ollama?.endpoint) next.endpoint = policy.providers.ollama.endpoint;
+  return next;
 }
 
 let writes: Promise<unknown> = Promise.resolve();
@@ -295,7 +301,11 @@ async function persist(next: Settings, memoryChanged: boolean): Promise<Settings
 }
 export async function saveSettings(patch: Partial<Settings>): Promise<Settings> {
   return withSettingsLock(async () => {
+    const policy = await loadInstitutionAiPolicy(true);
     const next = normalizeSettings({ ...(await loadSettings()), ...patch });
+    if (policy.providers?.ollama?.endpoint && next.endpoint !== policy.providers.ollama.endpoint) {
+      throw new Error('기관 정책이 지정한 AI 서버 주소는 변경할 수 없습니다.');
+    }
     if (patch.endpoint !== undefined) {
       let valid = false;
       try { const url = new URL(patch.endpoint); valid = ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password && !url.search && !url.hash; } catch { /* invalid */ }
@@ -310,15 +320,18 @@ export async function resetSettings(): Promise<Settings> {
 }
 
 export function onSettingsChanged(cb: (s: Settings) => void): () => void {
+  let revision = 0;
   const listener = (
     changes: Record<string, chrome.storage.StorageChange>,
     area: string,
   ) => {
-    if (area !== 'local' || !changes[KEY]) return;
-    cb(normalizeSettings(changes[KEY].newValue));
+    if ((area === 'local' && changes[KEY]) || (area === 'managed' && changes['onnara.saide.policy'])) {
+      const generation = ++revision;
+      void loadSettings().then(next => { if (generation === revision) cb(next); }).catch(() => undefined);
+    }
   };
   chrome.storage.onChanged.addListener(listener);
-  return () => chrome.storage.onChanged.removeListener(listener);
+  return () => { ++revision; chrome.storage.onChanged.removeListener(listener); };
 }
 
 /* ── 실측 기반 대기시간 예측 ───────────────────────────── */

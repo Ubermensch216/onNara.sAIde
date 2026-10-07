@@ -324,10 +324,18 @@ export function hasBodyEditorSignals(doc: Document): boolean {
  * 현재 기안기 화면이 '문서카드' (문서관리카드 / 문서정보 / 메타데이터 입력) 화면인지 판별.
  * 블럭 메뉴(Bubble Menu)는 문서카드 화면에서는 100% 노출 금지되어야 한다.
  */
+function accessibleTopDocument(doc: Document): Document | null {
+  try {
+    const win = doc.defaultView;
+    return win?.top && win.top !== win ? win.top.document : null;
+  } catch {
+    // 다른 출처의 본문 프레임은 자신의 DOM으로 판정한다.
+    return null;
+  }
+}
+
 export function isDraftCardScreen(doc: Document = document): boolean {
-  const topDoc = (doc.defaultView?.top && doc.defaultView.top !== doc.defaultView)
-    ? (doc.defaultView.top.document as Document | null)
-    : null;
+  const topDoc = accessibleTopDocument(doc);
 
   // top이 본문 화면(본문저장 버튼 등)이면 전체 창이 본문작성 모드이므로 문서카드 아님
   if (topDoc) {
@@ -391,9 +399,7 @@ export function isBodyWritingScreen(doc: Document = document): boolean {
     return false;
   }
 
-  const topDoc = (doc.defaultView?.top && doc.defaultView.top !== doc.defaultView)
-    ? (doc.defaultView.top.document as Document | null)
-    : null;
+  const topDoc = accessibleTopDocument(doc);
 
   return isBodyWritingScreenInternal(doc) || (topDoc ? isBodyWritingScreenInternal(topDoc) : false);
 }

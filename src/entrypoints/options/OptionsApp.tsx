@@ -1,3 +1,5 @@
+import { approveAiDestination, isLoopbackEndpoint, normalizeAiEndpoint, AI_DESTINATION_APPROVAL_KEY } from '@/lib/llm/destination';
+import { loadInstitutionAiPolicy } from '@/lib/llm/config';
 /**
  * 설정 화면. 계획서 §5 Phase 1-7
  *
@@ -88,7 +90,27 @@ export default function OptionsApp() {
   };
 
   const patch = async (p: Partial<Settings>) => {
-    try { setS(await saveSettings(p)); }
+    try {
+      if (p.endpoint !== undefined) {
+        const endpoint = normalizeAiEndpoint(p.endpoint);
+        const policy = await loadInstitutionAiPolicy(true);
+        if (policy.providers?.ollama?.endpoint && endpoint !== policy.providers.ollama.endpoint) {
+          throw new Error('기관 정책이 지정한 AI 서버 주소는 변경할 수 없습니다.');
+        }
+        if (!isLoopbackEndpoint(endpoint)) {
+          if (policy.externalEgressPolicy === 'block') throw new Error('기관 정책이 원격 AI 서버로의 전송을 차단했습니다.');
+          const stored = await chrome.storage.local.get(AI_DESTINATION_APPROVAL_KEY);
+          if ((stored[AI_DESTINATION_APPROVAL_KEY] as { endpoint?: string } | undefined)?.endpoint !== endpoint) {
+            if (!window.confirm('이 서버는 내 PC가 아닙니다. 공문 본문, 질문, 참고자료, 화면 캡처 및 기억 저장용 텍스트가 다음 주소로 전송됩니다. 개인정보가 포함될 수 있으므로 해당 서버에서의 처리가 허용되는지 확인하세요.\n\n' + endpoint + '\n\n이 주소로 전송을 허용하시겠습니까?')) {
+              setS(await loadSettings());
+              return;
+            }
+            await approveAiDestination(endpoint);
+          }
+        }
+      }
+      setS(await saveSettings(p));
+    }
     catch (error) { setConn({ ok: false, text: String(error) }); }
   };
 

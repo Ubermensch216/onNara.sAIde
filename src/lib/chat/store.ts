@@ -1010,6 +1010,7 @@ async function runDocumentBatch(set: Set, get: Get, options: {
     identity: documentIdentity({ listName: list?.listName, title, reportDate: rowOf(title)?.reportDate }),
     command,
     instruction,
+    endpoint: settings.endpoint,
     model: settings.model,
   });
   const controller = get().abort;

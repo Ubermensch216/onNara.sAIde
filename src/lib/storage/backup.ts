@@ -38,7 +38,7 @@ export const MEMORY_TABLE = 'pageVectors';
  * (openInbox), 오늘 몫의 기한 알림이 이미 간 것으로 처리된다(taskAlertOn). 기안 코파일럿에 걸어 둔
  * 회신 준비(workPlanHandoff)도 되살리면 지난 요구사항이 다른 기안에 뜬다.
  */
-export const TRANSIENT_KEYS = ['saide.openInbox', 'saide.taskAlertOn', WORK_PLAN_HANDOFF_KEY];
+export const TRANSIENT_KEYS = ['saide.openInbox', 'saide.taskAlertOn', 'saide.aiDestinationApproval', WORK_PLAN_HANDOFF_KEY];
 
 /**
  * 백업 파일에 담지 않는 비밀 키.

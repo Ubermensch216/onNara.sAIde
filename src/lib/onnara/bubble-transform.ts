@@ -1,3 +1,5 @@
+import { abortable } from '@/lib/async';
+import { aiFetch } from '@/lib/llm/destination';
 /**
  * 에디터 블록 지정(Selection) 텍스트 변환 및 다듬기 엔진.
  *
@@ -274,12 +276,14 @@ export async function transformTextWithAI(
   // localhost:11434(Ollama)로 직접 fetch 할 수 없다.
   // background 서비스 워커를 경유하여 요청한다.
   if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
-    const resp = await chrome.runtime.sendMessage({
-      type: 'BUBBLE_TRANSFORM_AI',
-      endpoint: settings.endpoint,
-      body: requestBody,
-    });
-    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+    signal?.throwIfAborted();
+    const requestId = crypto.randomUUID();
+    const cancel = () => { void chrome.runtime.sendMessage({ type: 'BUBBLE_CANCEL_AI', requestId }).catch(() => undefined); };
+    signal?.addEventListener('abort', cancel, { once: true });
+    let resp;
+    try {
+      resp = await abortable(chrome.runtime.sendMessage({ type: 'BUBBLE_TRANSFORM_AI', requestId, body: requestBody }), signal);
+    } finally { signal?.removeEventListener('abort', cancel); }
     if (resp?.error) throw new Error(resp.error);
     const rawOutput = resp?.result || '';
     const cleaned = cleanAdminDraft(rawOutput);
@@ -290,7 +294,7 @@ export async function transformTextWithAI(
   }
 
   // chrome.runtime이 없는 환경(테스트 등)에서는 직접 fetch
-  const response = await fetch(`${settings.endpoint}/api/chat`, {
+  const response = await aiFetch(settings.endpoint, '/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(requestBody),

@@ -1,3 +1,4 @@
+import { aiFetch } from '@/lib/llm/destination';
 import { abortable, deadlineSignal } from '@/lib/async';
 /**
  * Ollama HTTP 클라이언트. 계획서 §5 Phase 1-7 / 2-7
@@ -26,7 +27,7 @@ import { streamChat } from './stream';
 export async function requestJson<T>(endpoint: string, path: string, init: RequestInit = {}, timeoutMs = 15_000): Promise<T> {
   const guard = deadlineSignal(timeoutMs, init.signal ?? undefined);
   try {
-    const res = await abortable(fetch(`${endpoint}${path}`, { ...init, cache: 'no-store', signal: guard.signal }), guard.signal);
+    const res = await abortable(aiFetch(endpoint, path, { ...init, cache: 'no-store', signal: guard.signal }), guard.signal);
     if (!res.ok) throw await abortable(classifyResponse(res), guard.signal);
     return await abortable(res.json(), guard.signal) as T;
   } catch (error) {

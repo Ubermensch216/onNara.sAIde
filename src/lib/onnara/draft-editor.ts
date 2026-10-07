@@ -1143,20 +1143,18 @@ export async function directInsertAtTarget(
   }
 
   // 6. 안전 폴백: 일반 요소(div, td, body 등)에 절대 contenteditable을 부여하지 않는다!
-  // 클립보드에 이미 초안이 사전 복사되어 있으므로, 포커스 및 붙여넣기를 시도하고 친절한 안내를 제공한다.
+  // 일반 요소에는 입력하지 않고 수동 복사·붙여넣기 방법만 안내한다.
   try {
     insertEl.focus?.();
-    if (ownerDoc.queryCommandSupported && ownerDoc.queryCommandSupported('paste')) {
-      ownerDoc.execCommand('paste');
-    }
+    // 성공을 확인할 수 없는 붙여넣기는 실행하지 않는다.
   } catch {
     // ignore
   }
 
   const isWebHwpEnv = isHwpCandidate || (typeof location !== 'undefined' && location.href.includes('bms'));
   const fallbackMsg = isWebHwpEnv
-    ? '초안이 클립보드에 복사되었습니다. 한글 본문(「본문을 입력하십시오」)에서 Ctrl+V를 누르세요.'
-    : `'${targetLabel}'에 복사되었습니다. 원하는 위치에서 Ctrl+V를 누르세요.`;
+    ? '자동 삽입을 확인하지 못했습니다. 초안을 클립보드에 복사한 뒤 한글 본문에서 Ctrl+V를 누르세요.'
+    : `'${targetLabel}'에 자동 삽입하지 못했습니다. 초안을 클립보드에 복사한 뒤 원하는 위치에서 Ctrl+V를 누르세요.`;
 
   return {
     status: 'clipboard-fallback',

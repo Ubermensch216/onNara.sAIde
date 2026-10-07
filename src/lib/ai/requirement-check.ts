@@ -1,3 +1,4 @@
+import { aiFetch } from '@/lib/llm/destination';
 /**
  * 회신 초안의 요구사항 점검 (업무계획 4번 칸 → 기안 코파일럿).
  *
@@ -131,7 +132,7 @@ export async function checkRequirements(
   const messages = requirementCheckMessages(requirements, draft);
   // 입력(요구사항 + 초안)과 출력(항목당 인용 한 줄)을 담을 만큼만 잡는다. 초안은 수천 자 안팎이다.
   const numCtx = Math.min(16384, Math.max(4096, Math.ceil((draft.length + 400 * requirements.length) / 1024) * 1024 + 2048));
-  const res = await fetch(`${settings.endpoint}/api/chat`, {
+  const res = await aiFetch(settings.endpoint, '/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({

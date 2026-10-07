@@ -130,3 +130,8 @@ describe('보관', () => {
     expect(await docResultStats()).toEqual({ entries: 2, oldestAt: 500 });
   });
 });
+
+it('분석 로직 판본이나 서버가 바뀌면 기존 결과를 재사용하지 않는다', () => {
+  expect(docResultKey({ ...LOOKUP, analysisVersion: 2 })).not.toBe(docResultKey({ ...LOOKUP, analysisVersion: 1 }));
+  expect(docResultKey({ ...LOOKUP, endpoint: 'http://localhost:11434' })).not.toBe(docResultKey({ ...LOOKUP, endpoint: 'https://ai.example' }));
+});

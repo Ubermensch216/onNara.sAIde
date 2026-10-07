@@ -1,3 +1,5 @@
+import { trustedDraftContent } from '@/lib/messaging/draft-protocol';
+import { runBubbleRequest, cancelBubbleRequest, cancelBubbleRequestsForDocument } from '@/lib/llm/bubble-request';
 import { readTemporaryReference } from '@/lib/onnara/temporary-reference';
 import type { HwpInsertResult } from '@/lib/onnara/draft-editor';
 import type { StyledInsertPayload } from '@/lib/template-format/apply';
@@ -1327,10 +1329,30 @@ export default defineBackground(() => {
   registerDownloadNaming();
 
   chrome.tabs.onRemoved.addListener((tabId) => {
+    cancelBubbleRequestsForDocument(tabId);
     void restoreWindowForDrawer(tabId);
   });
 
   chrome.runtime.onMessage.addListener((msg: unknown, sender, sendResponse) => {
+    const kind = msg && typeof msg === 'object' ? (msg as { type?: unknown }).type : null;
+    if (typeof kind === 'string' && (kind.startsWith('DRAFT_MAIN_WORLD_') || ['DRAFT_FETCH_RELATED_DOC', 'BUBBLE_TRANSFORM_AI', 'BUBBLE_CANCEL_AI', 'EXPAND_WINDOW_FOR_DRAWER', 'RESTORE_WINDOW_FOR_DRAWER'].includes(kind))) {
+      if (!trustedDraftContent(sender, isExactDraftPath)) {
+        sendResponse({ success: false, error: '허용되지 않은 기안기 요청입니다.' });
+        return false;
+      }
+      const raw = msg as Record<string, any>;
+      if ((['DRAFT_MAIN_WORLD_HWP_INSERT', 'DRAFT_MAIN_WORLD_HWP_REPLACE_SELECTION'].includes(kind) && (typeof raw.text !== 'string' || raw.text.length > 200_000)) ||
+          (kind === 'DRAFT_MAIN_WORLD_HWP_TITLE' && (typeof raw.title !== 'string' || !raw.title.trim() || raw.title.length > 500))) {
+        sendResponse({ success: false, error: '기안기 입력 내용이 올바르지 않습니다.' });
+        return false;
+      }
+    }
+    if (kind === 'BUBBLE_CANCEL_AI') {
+      cancelBubbleRequest(msg, sender);
+      sendResponse({ ok: true });
+      return false;
+    }
+
     if (msg && typeof msg === 'object' && (msg as any).type === 'DRAFT_MAIN_WORLD_HWP_INSERT') {
       const tabId = sender.tab?.id;
       if (tabId) {
@@ -1427,35 +1449,7 @@ export default defineBackground(() => {
     }
     // 블록 메뉴 AI 변환 — 콘텐츠 스크립트 대신 서비스 워커가 Ollama를 호출
     if (msg && typeof msg === 'object' && (msg as any).type === 'BUBBLE_TRANSFORM_AI') {
-      const endpoint = String((msg as any).endpoint || 'http://localhost:11434');
-      const body = (msg as any).body;
-      (async () => {
-        try {
-          const response = await fetch(`${endpoint}/api/chat`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              think: false,
-              keep_alive: '10m',
-              ...body,
-            }),
-          });
-          if (!response.ok) {
-            sendResponse({ error: `Ollama 통신 오류 (${response.status})` });
-            return;
-          }
-          const json = await response.json();
-          let rawOutput = json.message?.content || json.message?.thinking || '';
-          rawOutput = rawOutput.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
-          if (!rawOutput) {
-            sendResponse({ error: 'AI 변환 결과를 생성하지 못했습니다. 다시 시도해 주세요.' });
-            return;
-          }
-          sendResponse({ result: rawOutput });
-        } catch (err: any) {
-          sendResponse({ error: err?.message || 'AI 변환 요청 실패' });
-        }
-      })();
+      runBubbleRequest(msg, sender).then(sendResponse).catch(error => sendResponse({ error: error instanceof Error ? error.message : String(error) }));
       return true; // 비동기 응답
     }
     if (!trustedPanel(sender)) return false;
@@ -1514,6 +1508,7 @@ export default defineBackground(() => {
    *   프레임 단위 이동을 그대로 알려, 붙어 있던 본문을 떼어낼 수 있게 한다.
    */
   chrome.webNavigation.onCommitted.addListener(details => {
+    cancelBubbleRequestsForDocument(details.tabId, details.frameId === 0 ? undefined : details.frameId);
     if (details.frameId === 0) {
       attachedDrawers.delete(details.tabId);
       if (details.url && isExactDraftPath(details.url)) {

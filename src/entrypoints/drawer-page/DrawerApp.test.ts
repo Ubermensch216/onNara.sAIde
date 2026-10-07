@@ -7,6 +7,9 @@ import { DrawerApp } from './DrawerApp';
 import { db } from '@/lib/storage/db';
 
 let root: Root;
+function postParentMessage(data: unknown, _target?: string) {
+  act(() => window.dispatchEvent(new MessageEvent('message', { data, source: window.parent, origin: window.location.origin })));
+}
 
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
@@ -78,7 +81,7 @@ describe('DrawerApp UI/UX 개선 검증', () => {
     expect(settingsToggle?.getAttribute('aria-expanded')).toBe('true');
     expect(document.getElementById('section-settings-content')?.hidden).toBe(false);
 
-    window.postMessage({ type: 'SAIDE_SET_DRAFT_PREVIEW', prompt: '초안 작성 요청' }, '*');
+    postParentMessage({ type: 'SAIDE_SET_DRAFT_PREVIEW', prompt: '초안 작성 요청' }, '*');
     await settle();
     const generateButton = [...document.querySelectorAll('button')].find(
       (button) => button.textContent?.includes('공문서 초안 생성')
@@ -112,7 +115,7 @@ describe('DrawerApp UI/UX 개선 검증', () => {
     expect(requestToggle?.getAttribute('aria-expanded')).toBe('true');
     expect(requestContent?.hidden).toBe(false);
 
-    window.postMessage({ type: 'SAIDE_SET_DRAFT_PREVIEW', prompt: '업무 효율화 계획' }, '*');
+    postParentMessage({ type: 'SAIDE_SET_DRAFT_PREVIEW', prompt: '업무 효율화 계획' }, '*');
     await settle();
     const generateButton = [...document.querySelectorAll('button')].find(
       (button) => button.textContent?.includes('공문서 초안 생성')
@@ -140,7 +143,7 @@ describe('DrawerApp UI/UX 개선 검증', () => {
     await settle();
 
     // 서식 선택 시뮬레이션
-    window.postMessage({
+    postParentMessage({
       type: 'SAIDE_SET_DRAFT_PREVIEW',
       templateId: 'builtin-work-report',
       prompt: '',
@@ -172,7 +175,7 @@ describe('DrawerApp UI/UX 개선 검증', () => {
     await settle();
 
     // 관련정보 문서 응답 주입
-    window.postMessage({
+    postParentMessage({
       type: 'DRAFT_CONTEXT_RESPONSE',
       title: '2026년 공공 AI 사업 기안',
       relatedDocs: [
@@ -224,7 +227,7 @@ describe('DrawerApp UI/UX 개선 검증', () => {
     await act(() => root.render(createElement(DrawerApp)));
     await settle();
 
-    window.postMessage({
+    postParentMessage({
       type: 'DRAFT_CONTEXT_RESPONSE',
       title: '테스트 공문',
       relatedDocs: [
@@ -272,9 +275,9 @@ describe('DrawerApp UI/UX 개선 검증', () => {
     vi.stubGlobal('fetch', fetchMock);
     await act(() => root.render(createElement(DrawerApp)));
     await settle();
-    window.postMessage({ type: 'DRAFT_CONTEXT_RESPONSE', relatedDocs: [{ title: '행사 개최계획 알림', rawText: '', status: 'idle' }] }, '*');
+    postParentMessage({ type: 'DRAFT_CONTEXT_RESPONSE', relatedDocs: [{ title: '행사 개최계획 알림', rawText: '', status: 'idle' }] }, '*');
     await settle();
-    window.postMessage({ type: 'SAIDE_SET_DRAFT_PREVIEW', prompt: '행사 협조 공문 작성' }, '*');
+    postParentMessage({ type: 'SAIDE_SET_DRAFT_PREVIEW', prompt: '행사 협조 공문 작성' }, '*');
     await settle();
     const generate = [...document.querySelectorAll('button')].find(button => button.textContent?.includes('공문서 초안 생성'));
     await act(async () => generate?.click());
@@ -287,7 +290,7 @@ describe('DrawerApp UI/UX 개선 검증', () => {
     await settle();
 
     // 서식 선택
-    window.postMessage({
+    postParentMessage({
       type: 'SAIDE_SET_DRAFT_PREVIEW',
       templateId: 'builtin-work-report',
       prompt: '테스트 요청 내용',
@@ -320,7 +323,7 @@ describe('DrawerApp UI/UX 개선 검증', () => {
     await act(() => root.render(createElement(DrawerApp)));
     await settle();
 
-    window.postMessage({
+    postParentMessage({
       type: 'SAIDE_SET_DRAFT_PREVIEW',
       prompt: '초안 작성 요청',
     }, '*');
@@ -348,7 +351,7 @@ describe('DrawerApp UI/UX 개선 검증', () => {
     await act(() => root.render(createElement(DrawerApp)));
     await settle();
 
-    window.postMessage({
+    postParentMessage({
       type: 'SAIDE_SET_DRAFT_PREVIEW',
       recommendedTitle: '업무 혁신 계획',
       draft: '1. 추진 배경\n  가. 업무 효율화',
@@ -375,7 +378,7 @@ describe('DrawerApp UI/UX 개선 검증', () => {
     await settle();
 
     // 완성된 초안 미리보기 주입
-    window.postMessage({
+    postParentMessage({
       type: 'SAIDE_SET_DRAFT_PREVIEW',
       recommendedTitle: '2026년 공공 AI 업무혁신 추진계획(안)',
       draft: '1. 추진 목적\n  가. 지자체 행정업무 효율화...',
@@ -430,14 +433,14 @@ describe('DrawerApp UI/UX 개선 검증', () => {
     await act(() => root.render(createElement(DrawerApp)));
     await settle();
 
-    window.postMessage({
+    postParentMessage({
       type: 'SAIDE_SET_DRAFT_PREVIEW',
       draft: '테스트 초안 본문',
     }, '*');
     await settle();
 
     // 부모 프레임에서 타깃이 지정된 승인 준비 이벤트 수신
-    window.postMessage({
+    postParentMessage({
       type: 'DRAFT_PREPARED_RESPONSE',
       approvalToken: 'token_123',
       preview: '미리보기 텍스트',
@@ -573,7 +576,7 @@ describe('내 참고자료 업로드', () => {
     expect(exampleToggle?.getAttribute('aria-pressed')).toBe('true');
     expect(calls.some((call) => call.body.format?.properties?.docType)).toBe(true);
 
-    window.postMessage({ type: 'SAIDE_SET_DRAFT_PREVIEW', prompt: '공공데이터 목록 제출 요청 공문' }, '*');
+    postParentMessage({ type: 'SAIDE_SET_DRAFT_PREVIEW', prompt: '공공데이터 목록 제출 요청 공문' }, '*');
     await settle();
     const generate = [...document.querySelectorAll('button')].find((b) => b.textContent?.includes('참고문서 2건 반영하여 공문서 초안 생성'));
     expect(generate).toBeDefined();
@@ -596,7 +599,7 @@ describe('내 참고자료 업로드', () => {
     await upload('지침.txt', GUIDE);
     expect(document.body.textContent).toMatch(/분석 (준비 )?중/);
 
-    window.postMessage({ type: 'SAIDE_SET_DRAFT_PREVIEW', prompt: '목록 제출 공문' }, '*');
+    postParentMessage({ type: 'SAIDE_SET_DRAFT_PREVIEW', prompt: '목록 제출 공문' }, '*');
     await settle();
     const generate = [...document.querySelectorAll('button')].find((b) => b.textContent?.includes('공문서 초안 생성'));
     await act(async () => generate?.click());
@@ -616,13 +619,13 @@ describe('내 참고자료 업로드', () => {
 it('실패 후 다시 읽기 버튼을 누르면 참고문서 조회를 재요청한다', async () => {
   await act(() => root.render(createElement(DrawerApp)));
   await settle();
-  window.postMessage({ type: 'DRAFT_CONTEXT_RESPONSE', relatedDocs: [{ title: '감사 유공 표창 알림', rawText: '', status: 'idle' }] }, '*');
+  postParentMessage({ type: 'DRAFT_CONTEXT_RESPONSE', relatedDocs: [{ title: '감사 유공 표창 알림', rawText: '', status: 'idle' }] }, '*');
   await settle();
-  window.postMessage({ type: 'DRAFT_RELATED_DOC_CONTENT', title: '감사 유공 표창 알림', content: '', error: '문서 ID 없음' }, '*');
+  postParentMessage({ type: 'DRAFT_RELATED_DOC_CONTENT', title: '감사 유공 표창 알림', content: '', error: '문서 ID 없음' }, '*');
   await settle();
   await act(() => [...document.querySelectorAll('button')].find(b => b.textContent?.trim() === '내용')?.click());
   await settle();
-  window.postMessage({ type: 'DRAFT_RELATED_DOC_CONTENT', title: '감사 유공 표창 알림', content: '', error: '문서 ID 없음' }, '*');
+  postParentMessage({ type: 'DRAFT_RELATED_DOC_CONTENT', title: '감사 유공 표창 알림', content: '', error: '문서 ID 없음' }, '*');
   await settle();
   const post = vi.spyOn(window.parent, 'postMessage');
   const referenceWarning = document.querySelector('.bg-amber-50');
@@ -631,7 +634,7 @@ it('실패 후 다시 읽기 버튼을 누르면 참고문서 조회를 재요�
   const retry = [...document.querySelectorAll('button')].find(b => b.textContent?.trim() === '다시 읽기');
   expect(retry).toBeDefined();
   await act(() => retry?.click());
-  expect(post).toHaveBeenCalledWith(expect.objectContaining({ type: 'DRAFT_FETCH_RELATED_DOC', doc: expect.objectContaining({ title: '감사 유공 표창 알림' }) }), '*');
+  expect(post).toHaveBeenCalledWith(expect.objectContaining({ type: 'DRAFT_FETCH_RELATED_DOC', doc: expect.objectContaining({ title: '감사 유공 표창 알림' }) }), window.location.origin);
   expect(document.body.textContent).toContain('필요하면 임시 탭이 열리고 자동으로 닫힙니다.');
   post.mockRestore();
 });
@@ -656,7 +659,7 @@ it('본문 서식이 등록된 서식을 고르면 초안을 그 서식으로 �
   await act(() => root.render(createElement(DrawerApp)));
   await settle();
 
-  window.postMessage({ type: 'SAIDE_SET_DRAFT_PREVIEW', templateId: 'tpl-format', draft: '1. 추진 배경\n가. 품질 확보' }, '*');
+  postParentMessage({ type: 'SAIDE_SET_DRAFT_PREVIEW', templateId: 'tpl-format', draft: '1. 추진 배경\n가. 품질 확보' }, '*');
   await settle();
 
   const preview = document.querySelector('[aria-label="생성된 공문서 초안 본문"]')!;
@@ -757,4 +760,16 @@ describe('업무계획에서 넘어온 회신 준비', () => {
     expect(document.body.textContent).toContain('1/2 충족');
     expect(document.body.textContent).toContain('확인 못함');
   });
+});
+
+it('예상한 부모 창과 출처가 아닌 메시지는 초안·프롬프트를 변경하지 않는다', async () => {
+  await act(() => root.render(createElement(DrawerApp)));
+  await settle();
+  const data = { type: 'SAIDE_SET_DRAFT_PREVIEW', draft: '위조 초안', prompt: '위조 요청' };
+  await act(() => window.dispatchEvent(new MessageEvent('message', { data, origin: 'https://evil.test', source: window.parent })));
+  await act(() => window.dispatchEvent(new MessageEvent('message', { data, origin: window.location.origin, source: {} as Window })));
+  expect(document.body.textContent).not.toContain('위조 초안');
+  expect(document.querySelector<HTMLTextAreaElement>('#draft-prompt-textarea')?.value).not.toContain('위조 요청');
+  postParentMessage({ type: 'SAIDE_FILL_PROMPT', text: '사용자 요청' });
+  expect(document.querySelector<HTMLTextAreaElement>('#draft-prompt-textarea')?.value).toBe('사용자 요청');
 });

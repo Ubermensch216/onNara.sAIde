@@ -67,7 +67,7 @@ export class DraftTransactionController {
     const { adapter, capability } = await resolveEditorAdapter(ctx, doc);
     const prepared = await adapter.prepare(ctx, text, mode, doc);
 
-    const token = `draft_tok_${Math.random().toString(36).substring(2)}_${Date.now()}`;
+    const token = `draft_tok_${crypto.randomUUID()}`;
     const tokenInfo: DraftApprovalToken = {
       token,
       documentKey: ctx.documentKey || 'unidentified-doc',
