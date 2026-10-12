@@ -1092,7 +1092,18 @@ async function runDocumentBatch(set: Set, get: Get, options: {
         extracting: false, documentProgress: generating(index, title) });
       await generate(title, response.payload);
       if (signal?.aborted) return;
-      if (get().error) failures.push(`${title}: ${get().error!.message}`);
+      if (get().error) {
+        const genError = get().error!;
+        // 단일 문서이거나 CORS/서버 다운처럼 나머지 문서도 똑같이 실패하는 오류는
+        // UNKNOWN으로 덮어쓰지 않고 해결 명령어가 담긴 원래 오류(CORS_BLOCKED 등)를 보존해 바로 멈춘다.
+        if (titles.length === 1 || genError.code === 'CORS_BLOCKED' || genError.code === 'OLLAMA_DOWN') {
+          if (failures.length) {
+            set({ error: { ...genError, hint: `${genError.hint ?? ''} 앞서 실패한 문서: ${failures.join(' / ')}`.trim() } });
+          }
+          return;
+        }
+        failures.push(`${title}: ${genError.message}`);
+      }
     }
     if (failures.length) set({ error: { code: 'UNKNOWN', message: `일부 문서를 처리하지 못했습니다.\n${failures.join('\n')}` } });
   } catch (error) {

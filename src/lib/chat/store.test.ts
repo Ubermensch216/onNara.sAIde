@@ -449,6 +449,24 @@ it('여러 문서 중 권한 오류가 나면 나머지 문서를 돌리지 않�
   expect(useChat.getState().streaming).toBe(false);
 });
 
+it('문서 요약 중 Ollama CORS 차단이 발생하면 오류 코드를 UNKNOWN으로 덮어쓰지 않고 보존한다', async () => {
+  const common = { url: 'https://onnara.test/main', title: '받은문서', text: '목록', charCount: 100,
+    truncated: false, keptRatio: 1, estimatedTokens: 30, method: 'innerText' as const, extractedAt: Date.now() };
+  vi.stubGlobal('chrome', { runtime: { sendMessage: vi.fn(async (message: { type: string; title?: string }) => {
+    if (message.type === 'EXTRACT_PAGE') return { type: 'PAGE_EXTRACTED', payload: { ...common, structuredData: {
+      kind: 'onnara-document-list', listName: '받은문서', columns: [],
+      rows: [{ title: '문서 A' }], selectedTitles: ['문서 A'],
+    } } };
+    if (message.type === 'RELEASE_WORK_TAB') return { type: 'ACTIVE_TAB', tab: null };
+    return { type: 'DOCUMENT_READ', requestedTitle: message.title, payload: { ...common, title: message.title, text: '문서 본문' } };
+  }) } });
+  const { OllamaError } = await import('@/lib/ollama/errors');
+  vi.spyOn(stream, 'streamChat').mockRejectedValue(new OllamaError('CORS_BLOCKED', 'Ollama가 요청 origin을 거부했습니다.'));
+  await useChat.getState().openForTab(1, common.url);
+  await useChat.getState().runCommand('/요약', 'summary', '', DEFAULT_SETTINGS);
+  expect(useChat.getState().error).toMatchObject({ code: 'CORS_BLOCKED', message: expect.stringContaining('거부했습니다') });
+});
+
 it('여러 문서 요약이 모두 끝나면 늦게 도착한 표시 갱신이 있어도 진행 표시가 남지 않는다', async () => {
   const common = { url: 'https://onnara.test/main', title: '받은문서', text: '목록', charCount: 100,
     truncated: false, keptRatio: 1, estimatedTokens: 30, method: 'innerText' as const, extractedAt: Date.now() };
