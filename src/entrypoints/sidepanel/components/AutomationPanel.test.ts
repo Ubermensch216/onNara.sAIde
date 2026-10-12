@@ -95,7 +95,57 @@ it('기억한 탭이 닫혀 읽기에 실패해도 "다시 읽기"를 누르면 
   expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'EXTRACT_PAGE', tabId: 9 }));
   expect(onTabChange).toHaveBeenCalledWith(expect.objectContaining({ tabId: 9, url: 'https://onnara.test/main2' }));
   expect(document.querySelector('.auto-error')).toBeNull();
-  expect(cards().map(card => card.disabled)).toEqual([false]);
+  expect(cards().map(card => card.disabled)).toEqual([false, false]);
+});
+
+it('눈치코치 꾸러미: 체크한 문서를 본문+첨부로 한 폴더에 받고 package.json을 그 폴더에 남긴다', async () => {
+  type Download = { type: string; title?: string; mode?: string; naming?: { root?: string; folder?: boolean; rename?: boolean } };
+  const sendMessage = vi.fn(async (message: Download) => {
+    if (message.type === 'EXTRACT_PAGE') return list(['문서 A', '문서 C']);
+    if (message.type === 'DOWNLOAD_ATTACHMENTS') {
+      const folder = `C:\\Downloads\\${message.naming!.root!.replace(/\//g, '\\')}\\${message.title}`;
+      return { type: 'ATTACHMENTS_DOWNLOADED', results: [
+        { name: `${message.title}_본문.pdf`, status: 'complete', downloadId: 1, path: `${folder}\\download.pdf`, generated: true },
+        { name: '붙임.hwpx', status: 'complete', downloadId: 2, path: `${folder}\\붙임.hwpx` },
+      ] };
+    }
+    return { type: 'ACTIVE_TAB', tab: null };
+  });
+  const blobs: Blob[] = [];
+  vi.spyOn(URL, 'createObjectURL').mockImplementation(blob => { blobs.push(blob as Blob); return 'blob:package'; });
+  vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+  const download = vi.fn(async (_options: { url: string; filename: string }) => 31);
+  vi.stubGlobal('chrome', {
+    runtime: { sendMessage, getManifest: () => ({ version: '9.9.9' }) },
+    downloads: { download, search: vi.fn(async () => [{ state: 'complete', filename: 'C:\\Downloads\\package.json' }]) },
+    storage: { local: { get: vi.fn(async () => ({})), set: vi.fn(async () => undefined) } },
+  });
+  await act(() => root.render(createElement(AutomationPanel, { tab, onDownloadLink: vi.fn() })));
+  await settle();
+
+  const card = [...document.querySelectorAll<HTMLButtonElement>('.auto-card')].find(button => button.textContent!.includes('눈치코치 꾸러미'))!;
+  await act(async () => card.click());
+  await settle();
+
+  const downloads = sendMessage.mock.calls.map(([message]) => message).filter(message => message.type === 'DOWNLOAD_ATTACHMENTS');
+  // 받기 대상 선택(첨부만)과 무관하게 본문+첨부를 받고, 파일명 설정과 무관하게 꾸러미 폴더에 모은다.
+  expect(downloads.map(message => [message.title, message.mode, message.naming?.folder, message.naming?.rename])).toEqual([['문서 A', 'all', true, false], ['문서 C', 'all', true, false]]);
+  const packageRoot = downloads[0]!.naming!.root!;
+  expect(packageRoot).toMatch(/^onNara\.sAIde\/수집\/\d{8}_\d{6}_[0-9a-f]{4}$/);
+  expect(downloads[1]!.naming!.root).toBe(packageRoot);
+
+  expect(download).toHaveBeenCalledTimes(1);
+  expect(download.mock.calls[0]![0].filename).toBe(`${packageRoot}/package.json`);
+  const saved = JSON.parse(await blobs[0]!.text());
+  expect(saved).toMatchObject({ format: 'saide-onnara-package', version: 1, exporter: { version: '9.9.9' }, system: { origin: 'https://onnara.test' }, scope: { kind: 'selection', list_name: '받은문서' } });
+  expect(saved.documents.map((item: { title: string; assets: Array<{ role: string; path: string; fidelity: string }> }) => [item.title, item.assets.map(asset => [asset.role, asset.path, asset.fidelity])])).toEqual([
+    ['문서 A', [['body', '문서 A/download.pdf', 'rendered-text'], ['attachment', '문서 A/붙임.hwpx', 'original']]],
+    ['문서 C', [['body', '문서 C/download.pdf', 'rendered-text'], ['attachment', '문서 C/붙임.hwpx', 'original']]],
+  ]);
+
+  const rows = [...document.querySelectorAll('.auto-job')];
+  expect(rows[0]!.textContent).toContain('눈치코치 꾸러미');
+  expect(rows[0]!.textContent).toContain('문서 2건 · 파일 4개');
 });
 
 it('문서 열기에 실패하거나 첨부파일이 없어도 멈추지 않고 다음 문서로 계속 진행한다', async () => {

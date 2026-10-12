@@ -23,6 +23,7 @@ import { normalizeInboxLocation } from '@/lib/inbox/location';
 import { db } from './db';
 import { normalizeSettings } from './settings';
 import { TONGDAL_KEY } from '@/lib/tongdal/connection';
+import { NUNCHI_KEY } from '@/lib/nunchi/connection';
 import { WORK_PLAN_HANDOFF_KEY } from './work-plan-handoff';
 
 export const BACKUP_FORMAT = 'onnara-saide-backup';
@@ -46,8 +47,9 @@ export const TRANSIENT_KEYS = ['saide.openInbox', 'saide.taskAlertOn', 'saide.ai
  * ★ TONGDAL.ai 페어링 토큰은 이 PC의 지식 공간을 읽는 열쇠다. 백업 파일은 사용자가 옮기고 보관하는
  *   파일이라 거기에 실으면 열쇠가 PC 밖으로 나간다. 복원할 때도 파일에 든 값은 받지 않는다 —
  *   다른 PC의 백업이 지금 연결을 덮어쓰면 안 된다. 복원 뒤에는 다시 페어링하면 된다.
+ * ★ 눈치코치 페어링 토큰도 같다. 이 PC의 눈치코치와만 짝이다.
  */
-export const SECRET_KEYS = [TONGDAL_KEY];
+export const SECRET_KEYS = [TONGDAL_KEY, NUNCHI_KEY];
 
 /**
  * 마지막으로 백업을 내려받은 시각이 담기는 키.

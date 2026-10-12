@@ -128,6 +128,19 @@ it('TONGDAL.ai 페어링 토큰은 백업에 담지 않고, 파일에 들어 있
   expect(local['saide.tongdal']).toEqual(mine);
 });
 
+it('눈치코치 페어링 토큰도 백업에 담지 않고, 파일에 들어 있어도 지금 연결을 덮어쓰지 않는다', async () => {
+  await seed();
+  const mine = { baseUrl: 'http://127.0.0.1:47831', token: 'n'.repeat(43), clientId: 'mine', scopes: ['read'], pairedAt: 1 };
+  local['saide.nunchi'] = mine;
+  const backup = await collectBackup();
+  expect(backup.local).not.toHaveProperty('saide.nunchi');
+  expect(serializeBackup(backup)).not.toContain('n'.repeat(43));
+
+  const foreign = { ...backup, local: { ...backup.local, 'saide.nunchi': { ...mine, token: 'f'.repeat(43), clientId: 'foreign' } } };
+  await restoreBackup(parseBackup(serializeBackup(foreign)));
+  expect(local['saide.nunchi']).toEqual(mine);
+});
+
 it('기억을 함께 담으면 임베딩이 Float32Array 그대로 돌아온다', async () => {
   const vector = new Float32Array([0.5, -0.25, 0.125, 1]);
   await db.table('pageVectors').add({ id: 1, url: 'http://a.test/', title: 'A', text: '본문', chunk: 0, vector, model: 'bge-m3', visitedAt: 5 });

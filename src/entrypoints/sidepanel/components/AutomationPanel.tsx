@@ -20,7 +20,7 @@ import {
   useAutomation,
   type AutomationJob,
 } from '@/lib/automation/jobs';
-import { queueAttachmentDownloads } from '@/lib/onnara/download';
+import { exportNunchiPackage, queueAttachmentDownloads } from '@/lib/onnara/download';
 import type { DownloadLinkAction } from '@/lib/downloads/links';
 
 type Screen =
@@ -146,6 +146,16 @@ export function AutomationPanel({ tab, onDownloadLink, onTabChange }: Props) {
     void queueAttachmentDownloads({ tabId: target.tabId, page: fresh, titles, mode: targetMode, origin: 'automation' });
   };
 
+  /** 체크한 문서를 본문+첨부로 받아 눈치코치가 읽을 꾸러미 폴더로 묶는다(받기 대상 선택과 무관). */
+  const exportPackage = async () => {
+    const fresh = await readScreen();
+    const target = readTab.current;
+    if (!fresh || !target) return;
+    const titles = fresh.structuredData ? fresh.structuredData.selectedTitles ?? [] : [undefined];
+    if (!titles.length) return;
+    void exportNunchiPackage({ tabId: target.tabId, page: fresh, titles });
+  };
+
   const actionTitle = targetMode === 'body'
     ? t('auto.downloadBody')
     : targetMode === 'all'
@@ -214,26 +224,42 @@ export function AutomationPanel({ tab, onDownloadLink, onTabChange }: Props) {
       {/* 2. 실행할 작업 */}
       <section className="auto-section">
         <h2 className="auto-section-title">{t('auto.actions')}</h2>
-        <div className="auto-mode-selector" role="radiogroup" aria-label={t('auto.actions')}>
-          {(['attachments', 'body', 'all'] as const).map(mode => (
-            <button
-              key={mode}
-              type="button"
-              role="radio"
-              aria-checked={targetMode === mode}
-              className={`auto-mode-btn ${targetMode === mode ? 'active' : ''}`}
-              onClick={() => handleModeChange(mode)}
-            >
-              {t(`auto.targetMode.${mode}`)}
-            </button>
-          ))}
+        {/* 받을 대상 선택은 받기 작업에만 걸린다. 같은 카드 안에 넣어 꾸러미 내보내기와 무관함을 드러낸다. */}
+        <div className="auto-card-group">
+          <button type="button" className="auto-card" onClick={() => void downloadAttachments()} disabled={!canDownload}>
+            <span className="auto-card-icon" aria-hidden="true"><DownloadIcon /></span>
+            <span className="auto-card-text">
+              <span className="auto-card-title">{actionTitle}</span>
+              <span className={`auto-card-desc ${list && !selected.length ? 'hint' : ''}`}>
+                {list && !selected.length ? t('auto.selectDocuments') : actionDesc}
+              </span>
+            </span>
+            {canDownload && <span className="auto-card-badge">{t('auto.docCount', { n: list ? selected.length : 1 })}</span>}
+          </button>
+          <div className="auto-card-options">
+            <span className="auto-card-options-label" id="auto-target-mode-label">{t('auto.targetMode.label')}</span>
+            <div className="auto-mode-selector" role="radiogroup" aria-labelledby="auto-target-mode-label">
+              {(['attachments', 'body', 'all'] as const).map(mode => (
+                <button
+                  key={mode}
+                  type="button"
+                  role="radio"
+                  aria-checked={targetMode === mode}
+                  className={`auto-mode-btn ${targetMode === mode ? 'active' : ''}`}
+                  onClick={() => handleModeChange(mode)}
+                >
+                  {t(`auto.targetMode.${mode}`)}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
-        <button type="button" className="auto-card" onClick={() => void downloadAttachments()} disabled={!canDownload}>
-          <span className="auto-card-icon" aria-hidden="true"><DownloadIcon /></span>
+        <button type="button" className="auto-card" onClick={() => void exportPackage()} disabled={!canDownload}>
+          <span className="auto-card-icon" aria-hidden="true"><PackageIcon /></span>
           <span className="auto-card-text">
-            <span className="auto-card-title">{actionTitle}</span>
+            <span className="auto-card-title">{t('auto.exportPackage')}</span>
             <span className={`auto-card-desc ${list && !selected.length ? 'hint' : ''}`}>
-              {list && !selected.length ? t('auto.selectDocuments') : actionDesc}
+              {list && !selected.length ? t('auto.selectDocuments') : t('auto.exportPackageDesc')}
             </span>
           </span>
           {canDownload && <span className="auto-card-badge">{t('auto.docCount', { n: list ? selected.length : 1 })}</span>}
@@ -360,5 +386,6 @@ const ListIcon = () => <Svg size={18}><path d="M9 6h11M9 12h11M9 18h11" /><path 
 const DocumentIcon = () => <Svg size={18}><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5M9 13h6M9 17h4" /></Svg>;
 const AlertIcon = () => <Svg size={18}><circle cx="12" cy="12" r="9" /><path d="M12 8v5M12 16h.01" /></Svg>;
 const DownloadIcon = () => <Svg size={20}><path d="M12 4v11M7 10l5 5 5-5M5 20h14" /></Svg>;
-const FileIcon = () => <Svg size={14}><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /></Svg>;
+const PackageIcon = () => <Svg size={20}><path d="M3.5 8 12 3.5 20.5 8v8L12 20.5 3.5 16z" /><path d="M3.5 8 12 12.5 20.5 8M12 12.5v8" /></Svg>;
+const FileIcon =() => <Svg size={14}><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /></Svg>;
 const InfoIcon = () => <Svg size={13}><circle cx="12" cy="12" r="9" /><path d="M12 11v5M12 8h.01" /></Svg>;

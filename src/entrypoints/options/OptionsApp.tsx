@@ -32,6 +32,7 @@ import { QualityPanel } from './QualityPanel';
 import { MemoryPanel } from './MemoryPanel';
 import { BackupPanel } from './BackupPanel';
 import { TongdalSettings } from './TongdalSettings';
+import { NunchiSettings } from './NunchiSettings';
 import { InboxSettings } from './InboxSettings';
 import {
   grantedOrigins,
@@ -531,6 +532,7 @@ export default function OptionsApp() {
       </section>
 
       <TongdalSettings grounding={s.knowledgeGrounding} onGrounding={(knowledgeGrounding) => patch({ knowledgeGrounding })} />
+      <NunchiSettings />
 
       <BackupPanel />
 

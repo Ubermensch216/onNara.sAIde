@@ -218,6 +218,8 @@ export interface AttachmentNaming {
   folder?: boolean;
   /** false면 파일 이름은 브라우저가 정한 대로 두고 폴더만 나눈다. */
   rename?: boolean;
+  /** 다운로드 폴더 아래의 기준 폴더. 눈치코치 꾸러미가 한 실행의 파일을 한곳에 모을 때 쓴다. */
+  root?: string;
 }
 
 export interface AttachmentDownloadResult {
@@ -229,6 +231,12 @@ export interface AttachmentDownloadResult {
   downloadId?: number;
   /** 저장된 파일의 전체 경로. 완료된 경우에만 채워진다. */
   path?: string;
+  /** 본문 PDF를 온나라 원본이 아니라 화면에서 읽은 글자로 만들었다. 원본과 같은 파일이 아니다. */
+  generated?: boolean;
+  /** 본문을 화면에서 읽은 글자 그대로 `.md`로 저장했다(눈치코치 꾸러미). */
+  extractedText?: boolean;
+  /** 읽은 본문이 예산에서 잘렸다. 본문 전체가 아니다. */
+  truncated?: boolean;
 }
 
 export interface TabSummary {

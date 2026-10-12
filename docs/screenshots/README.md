@@ -22,7 +22,7 @@
 | [**08-inbox.png**](08-inbox.png) | 520 × 940 | 공유/공람 탭 (아침 브리핑) | `InboxPanel`, 브리핑 머리말(확인 시각·목록 건수·새 문서), 기한 임박 / 내 업무로 보임 / 단순 공람 갈래와 분류 이유, `일정 등록`·개인화 피드백(`ThumbIcon` 엄지 척/내림 및 올바른 갈래 교정)·`넘기기`(초고속 DOM 반영), 범위 밖 접기 |
 | [**02-approval.png**](02-approval.png) | 520 × 940 | 에이전트 브라우저 작업 승인 | `ApprovalCard` — 대상 셀렉터와 동작 설명, 승인/거부 |
 | [**07-schedule.png**](07-schedule.png) | 520 × 940 | 일정 탭 (기한·후속조치 보드) | `SchedulePanel`, 월·주·일·목록 보기, 6주 42칸 격자, 대한민국 공휴일(추석, 개천절, 한글날 등) 자동 렌더링, D-day 칩, 기한 미정 띠, CSV/ICS 내보내기 |
-| [**06-automation.png**](06-automation.png) | 520 × 940 | 도구 탭 및 공문 본문·첨부 자동화 | `AutomationPanel`, 다운로드 대상 선택(첨부파일만·본문만·본문+첨부), 작업 대상·대기열, 다운로드 실행, 실행 기록과 폴더 열기 |
+| [**06-automation.png**](06-automation.png) | 520 × 940 | 도구 탭 및 공문 본문·첨부 자동화 | `AutomationPanel`, 작업 대상, 받기 카드와 그 안의 `받을 대상` 선택(첨부만·본문만·본문+첨부), 눈치코치 꾸러미 내보내기 카드, 실행 기록과 폴더 열기 |
 | [**13-knowledge.png**](13-knowledge.png) | 520 × 940 | 내 지식 탭 (TONGDAL.ai 지식 연동) | `KnowledgePanel` — 지식 공간(`second_brain`) 연결 상태, 색인 진행 안내 칩, 검색/분류 탭, 지식 검색창 |
 | [**14-knowledge-chat.png**](14-knowledge-chat.png) | 520 × 940 | AI 대화 중 지식 인용 및 조치 추천 | `App`, `MessageList` — 조치카드 내 `관련 내 자료 (TONGDAL.ai)` 추천, AI 답변 본문 및 `근거 자료 (TONGDAL.ai)` `[1]`, `[2]` 출처 카드, 하단 `내 지식 · 켜짐` 토글 |
 | [**10-drafter.png**](10-drafter.png) | 520 × 940 | 온나라 공문서 기안 도우미 (초안 작성 및 제목 반영) | `DrawerApp` — 공문서 서식 선택, 내 참고자료 영역, 추천 공문 제목 자동 추출 및 [제목 반영], 표준 공문서 서식 초안 생성, 원클릭 복사 및 클릭 타깃 삽입 |

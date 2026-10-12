@@ -12,6 +12,7 @@ import { forgetPanelSpawn, isReportedPanelTab, notePanelSpawn, panelOpener, reme
 import type { AppError, AttachmentDownloadResult, AttachmentNaming, ExtractedPage, RequestControl, SWToContent } from '@/lib/messaging/protocol';
 import { isHtmlAttachmentName } from '@/lib/onnara/attachments';
 import { clearDownloadName, registerDownloadNaming, reserveDownloadName } from '@/lib/downloads/rename';
+import { bodyMarkdown, markdownDataUrl } from '@/lib/nunchi/body-text';
 import { documentReadState, isReceivedDocumentList, normalizeForMatch, sameDocumentTitle, type StructuredDocumentList } from '@/lib/onnara/document-list';
 import {
   clickMarkedReadButton, READ_BUTTON_MARK, READ_DIALOG_ATTR, READ_FAILURE_PATTERN, READ_SUCCESS_PATTERN, readMarkReadDialogs,
@@ -3004,6 +3005,8 @@ export function readTimeoutError(stage: ReadStage, observed: DetailObservation):
 /* ── 첨부 다운로드 ──────────────────────────────────────── */
 
 const DOWNLOAD_START_TIMEOUT_MS = 15_000;
+/** 꾸러미에 싣는 본문을 다시 읽을 때의 예산. 대화용 예산과 달리 본문 전체를 담는 것이 목적이다. */
+const PACKAGE_BODY_BUDGET_TOKENS = 100_000;
 const ATTACHMENT_SCAN_MS = 5000;
 
 /**
@@ -3113,14 +3116,37 @@ export async function downloadBodyInTab(
   }
 
   const docTitle = (naming?.docTitle || existingPayload?.title || '공문서').trim();
-  const defaultName = `${docTitle}_본문.pdf`;
+  let defaultName = `${docTitle}_본문.pdf`;
+  /** 결과에 덧붙일 표시. 원본 PDF면 비어 있다. */
+  let origin: Pick<AttachmentDownloadResult, 'generated' | 'extractedText' | 'truncated'> = {};
 
   let downloadUrl: string | undefined;
   if (pdfSource?.base64) {
     downloadUrl = `data:application/pdf;base64,${pdfSource.base64}`;
   } else if (pdfSource?.url) {
     downloadUrl = pdfSource.url;
-  } else {
+  } else if (naming?.root) {
+    /**
+     * 눈치코치 꾸러미: 원본 PDF가 없으면 글자로 PDF를 만들지 않고 읽은 글자를 그대로 싣는다.
+     *
+     * ★ 넘겨받은 본문(existingPayload)은 대화용 예산에서 잘려 있을 수 있다. 꾸러미는 사람이
+     *   나중에 근거로 쓰는 자료라 여기서 넉넉한 예산으로 다시 읽고, 더 긴 쪽을 쓴다.
+     *   그래도 잘렸으면 머리말과 결과에 그 사실을 남긴다.
+     */
+    const fresh = await dispatchContent(tabId, { type: 'EXTRACT', budgetTokens: PACKAGE_BODY_BUDGET_TOKENS, purpose: 'document-detail', control: frameControl })
+      .catch(() => null);
+    const reread = fresh?.type === 'EXTRACTED' && !fresh.payload.structuredData ? fresh.payload : undefined;
+    const body = reread && reread.text.length >= (existingPayload?.text.length ?? 0) ? reread : existingPayload;
+    if (body?.text.trim()) {
+      defaultName = `${docTitle}_본문.md`;
+      origin = { extractedText: true, ...(body.truncated ? { truncated: true } : {}) };
+      downloadUrl = markdownDataUrl(bodyMarkdown({
+        title: docTitle, reportDate: naming.reportDate, sourceUrl: body.sourceFrameUrl ?? body.url,
+        text: body.text, truncated: body.truncated, charCount: body.charCount,
+      }));
+    }
+  }
+  if (!downloadUrl) {
     // 2. PDF 소스가 없으면 HTML/텍스트 본문으로 PDF 생성
     let text = existingPayload?.text;
     if (!text) {
@@ -3139,6 +3165,7 @@ export async function downloadBodyInTab(
         ...(naming?.reportDate ? { reportDate: naming.reportDate } : {}),
       });
       downloadUrl = `data:application/pdf;base64,${base64}`;
+      origin = { generated: true };
     } catch (err) {
       return {
         type: 'ATTACHMENTS_DOWNLOADED',
@@ -3157,14 +3184,14 @@ export async function downloadBodyInTab(
         results: [{
           name: defaultName,
           status: 'not_started',
-          message: '본문 PDF 다운로드가 시작되지 않았습니다. 브라우저 설정을 확인하세요.',
+          message: '본문 다운로드가 시작되지 않았습니다. 브라우저 설정을 확인하세요.',
         }],
       };
     }
     const outcome = await waitForDownload(downloadId, frameControl, defaultName);
     return {
       type: 'ATTACHMENTS_DOWNLOADED',
-      results: [{ name: defaultName, ...outcome }],
+      results: [{ name: defaultName, ...outcome, ...origin }],
     };
   } catch (error) {
     if (cancelled.has(control.id)) {

@@ -3,6 +3,7 @@ import { loadSettings } from '@/lib/storage/settings';
 import { downloadLink, escapeMarkdownText } from '@/lib/downloads/links';
 import { panelLink } from '@/lib/panel/links';
 import { cancelAutomation, enqueueAutomation, workTabLock, type AutomationJob } from '@/lib/automation/jobs';
+import { buildPackage, describePackage, newRunId, packageRoot, PACKAGE_FILE } from '@/lib/nunchi/package';
 
 /** 서비스 워커 요청 한도(180초)보다 약간 짧게 둔다. 한 문서의 첨부를 모두 받는 시간이다. */
 const DOCUMENT_DOWNLOAD_TIMEOUT_MS = 170_000;
@@ -43,10 +44,12 @@ export async function queueAttachmentDownloads(options: {
   tabId: number; page: ExtractedPage; titles: Array<string | undefined>;
   origin: 'automation' | 'chat'; mode?: DownloadTargetMode; signal?: AbortSignal;
   onFinished?: (job: AutomationJob, index: number) => Promise<void> | void;
+  /** 눈치코치 꾸러미 폴더(다운로드 폴더 기준). 주면 파일명 설정과 무관하게 그 아래 문서별 폴더에 모은다. */
+  packageRoot?: string;
 }): Promise<AutomationJob[]> {
-  const { tabId, page, titles, origin, mode = 'attachments', signal, onFinished } = options;
+  const { tabId, page, titles, origin, mode = 'attachments', signal, onFinished, packageRoot } = options;
   const keepWorkTab = titles.filter(Boolean).length > 1;
-  const naming = await namingPlans(page, titles);
+  const naming = await namingPlans(page, titles, packageRoot);
   const jobKind = mode === 'body' ? 'download-body' : mode === 'all' ? 'download-all' : 'download-attachments';
   // 앞 문서의 파일이 아직 내려받는 중이면 동시 다운로드를 피하려고 뒤 문서는 실행하지 않는다.
   let stalled = false;
@@ -91,7 +94,16 @@ export async function queueAttachmentDownloads(options: {
  * ★ 설정이 'browser'이고 하위 폴더도 끄면 아무 계획도 만들지 않는다 — 브라우저가 정한 이름 그대로다.
  *   'browser'에 하위 폴더만 켜면 `rename: false`로 이름은 두고 폴더만 나눈다.
  */
-async function namingPlans(page: ExtractedPage, titles: Array<string | undefined>): Promise<Array<AttachmentNaming | null>> {
+async function namingPlans(page: ExtractedPage, titles: Array<string | undefined>, packageRoot?: string): Promise<Array<AttachmentNaming | null>> {
+  if (packageRoot) {
+    // ★ 꾸러미는 사용자의 파일명 설정을 따르지 않는다. 눈치코치가 꾸러미 폴더 안의 파일만 읽으므로
+    //   반드시 그 아래에 모이고, 원래 이름을 지켜야 어느 붙임인지 대조할 수 있다.
+    const rows = page.structuredData?.rows ?? [];
+    return titles.map(title => {
+      const reportDate = title ? rows.find(row => row.title === title)?.reportDate : undefined;
+      return { docTitle: (title ?? page.title).trim() || '문서', ...(reportDate ? { reportDate } : {}), folder: true, rename: false, root: packageRoot };
+    });
+  }
   const settings = await loadSettings().catch(() => null);
   if (!settings) return titles.map(() => null);
   const rename = settings.attachmentNaming === 'normalized';
@@ -108,6 +120,61 @@ async function namingPlans(page: ExtractedPage, titles: Array<string | undefined
       ...(rename ? {} : { rename: false }),
     };
   });
+}
+
+/**
+ * 체크한 문서를 본문+첨부로 받아 눈치코치 꾸러미로 묶는다.
+ *
+ * ★ 문서마다 받는 작업 뒤에 `package.json`을 쓰는 작업 하나를 대기열에 더 넣는다.
+ *   그래야 도구 탭의 기록에 꾸러미 폴더로 가는 길(폴더 열기)이 남는다.
+ * ★ 받은 파일이 하나도 없으면 꾸러미를 만들지 않는다. 빈 꾸러미는 눈치코치에서 거절된다.
+ */
+export async function exportNunchiPackage(options: {
+  tabId: number; page: ExtractedPage; titles: Array<string | undefined>; signal?: AbortSignal;
+  save?: (json: string, filename: string) => Promise<AttachmentDownloadResult>;
+}): Promise<AutomationJob | null> {
+  const { tabId, page, titles, signal, save = savePackageFile } = options;
+  if (!titles.length) return null;
+  const runId = newRunId();
+  const root = packageRoot(runId);
+  const rows = page.structuredData?.rows ?? [];
+  const jobs = await queueAttachmentDownloads({ tabId, page, titles, mode: 'all', origin: 'automation', packageRoot: root, ...(signal ? { signal } : {}) });
+  if (!jobs.some(job => job.files?.some(file => file.status === 'complete'))) return null;
+
+  const { finished } = enqueueAutomation({
+    kind: 'export-package', label: page.structuredData?.listName ?? page.title, origin: 'automation', lock: false,
+    run: async () => {
+      const pkg = await buildPackage({
+        runId, root, pageUrl: page.url, listName: page.structuredData?.listName ?? '',
+        extensionVersion: chrome.runtime.getManifest?.().version ?? '',
+        documents: jobs.map((job, index) => {
+          const title = titles[index];
+          return { title: title ?? page.title, row: title ? rows.find(row => row.title === title) : undefined, files: job.files, error: job.error };
+        }),
+      });
+      const file = await save(JSON.stringify(pkg, null, 2), `${root}/${PACKAGE_FILE}`);
+      return { files: [file], summary: describePackage(pkg) };
+    },
+  });
+  return finished;
+}
+
+/** `package.json`을 꾸러미 폴더에 저장하고 저장된 경로를 돌려준다. */
+async function savePackageFile(json: string, filename: string): Promise<AttachmentDownloadResult> {
+  const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
+  try {
+    const downloadId = await chrome.downloads.download({ url, filename, conflictAction: 'overwrite', saveAs: false });
+    if (downloadId === undefined) return { name: PACKAGE_FILE, status: 'not_started', message: '꾸러미 파일을 저장하지 못했습니다.' };
+    for (let attempt = 0; attempt < 40; attempt++) {
+      const [item] = await chrome.downloads.search({ id: downloadId });
+      if (item?.state === 'complete') return { name: PACKAGE_FILE, status: 'complete', downloadId, ...(item.filename ? { path: item.filename } : {}) };
+      if (item?.state === 'interrupted') return { name: PACKAGE_FILE, status: 'failed', message: item.error || '저장이 중단되었습니다.' };
+      await new Promise(resolve => setTimeout(resolve, 250));
+    }
+    return { name: PACKAGE_FILE, status: 'in_progress', downloadId };
+  } finally {
+    URL.revokeObjectURL(url);
+  }
 }
 
 /** 남겨 둔 작업 탭을 닫는다. 중단·오류 뒤에도 탭이 남지 않게 요청 취소 신호와 무관하게 보낸다. */
