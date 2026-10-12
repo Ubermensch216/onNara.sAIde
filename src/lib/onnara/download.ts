@@ -3,7 +3,9 @@ import { loadSettings } from '@/lib/storage/settings';
 import { downloadLink, escapeMarkdownText } from '@/lib/downloads/links';
 import { panelLink } from '@/lib/panel/links';
 import { cancelAutomation, enqueueAutomation, workTabLock, type AutomationJob } from '@/lib/automation/jobs';
-import { buildPackage, describePackage, newRunId, packageRoot, PACKAGE_FILE } from '@/lib/nunchi/package';
+import { buildPackage, describePackage, newRunId, packageRoot, PACKAGE_FILE, rowIdOf, type ListRow } from '@/lib/nunchi/package';
+import { announcePackage, knownDocuments } from '@/lib/nunchi/client';
+import { isNunchiPaired, loadNunchi, type NunchiConnection } from '@/lib/nunchi/connection';
 
 /** 서비스 워커 요청 한도(180초)보다 약간 짧게 둔다. 한 문서의 첨부를 모두 받는 시간이다. */
 const DOCUMENT_DOWNLOAD_TIMEOUT_MS = 170_000;
@@ -133,30 +135,83 @@ export async function exportNunchiPackage(options: {
   tabId: number; page: ExtractedPage; titles: Array<string | undefined>; signal?: AbortSignal;
   save?: (json: string, filename: string) => Promise<AttachmentDownloadResult>;
 }): Promise<AutomationJob | null> {
-  const { tabId, page, titles, signal, save = savePackageFile } = options;
-  if (!titles.length) return null;
+  const { tabId, page, save = savePackageFile, signal } = options;
+  if (!options.titles.length) return null;
   const runId = newRunId();
   const root = packageRoot(runId);
   const rows = page.structuredData?.rows ?? [];
+  const label = page.structuredData?.listName ?? page.title;
+  const rowOf = (title: string | undefined) => (title ? rows.find(row => row.title === title) : undefined);
+
+  // 눈치코치와 연결돼 있으면 이미 온전히 가진 문서는 다시 받지 않는다(문서를 다시 열지도 않는다).
+  const nunchi = await loadNunchi().catch(() => null);
+  const already = await alreadyInNunchi(nunchi, page, options.titles, rowOf, signal);
+  const titles = options.titles.filter((_, index) => !already.has(index));
+  const skipped = already.size ? `이미 눈치코치에 있는 문서 ${already.size}건은 받지 않았습니다.` : '';
+  if (!titles.length) {
+    return enqueueAutomation({ kind: 'export-package', label, origin: 'automation', lock: false,
+      run: async () => ({ summary: `${skipped} 내보낼 새 문서가 없습니다.` }) }).finished;
+  }
+
   const jobs = await queueAttachmentDownloads({ tabId, page, titles, mode: 'all', origin: 'automation', packageRoot: root, ...(signal ? { signal } : {}) });
   if (!jobs.some(job => job.files?.some(file => file.status === 'complete'))) return null;
 
   const { finished } = enqueueAutomation({
-    kind: 'export-package', label: page.structuredData?.listName ?? page.title, origin: 'automation', lock: false,
+    kind: 'export-package', label, origin: 'automation', lock: false,
     run: async () => {
       const pkg = await buildPackage({
         runId, root, pageUrl: page.url, listName: page.structuredData?.listName ?? '',
         extensionVersion: chrome.runtime.getManifest?.().version ?? '',
         documents: jobs.map((job, index) => {
           const title = titles[index];
-          return { title: title ?? page.title, row: title ? rows.find(row => row.title === title) : undefined, files: job.files, error: job.error };
+          return { title: title ?? page.title, row: rowOf(title), files: job.files, error: job.error };
         }),
       });
       const file = await save(JSON.stringify(pkg, null, 2), `${root}/${PACKAGE_FILE}`);
-      return { files: [file], summary: describePackage(pkg) };
+      const notice = await announceToNunchi(nunchi, runId, file);
+      return { files: [file], summary: [describePackage(pkg), skipped, notice].filter(Boolean).join(' · ') };
     },
   });
   return finished;
+}
+
+/**
+ * 고른 문서 중 눈치코치가 이미 온전히 가진 것의 순번.
+ *
+ * ★ 묻지 못하면(연결 안 됨·꺼짐·오류) 아무것도 빼지 않는다. 연결은 편의일 뿐 내보내기의 조건이 아니다.
+ * ★ 같은 날 같은 제목의 문서가 둘 이상 골라졌으면 그 문서들은 빼지 않는다. 목록 행으로 만든
+ *   식별자로는 둘을 가를 수 없어, 하나만 가진 경우에 나머지를 놓친다.
+ */
+async function alreadyInNunchi(
+  nunchi: NunchiConnection | null, page: ExtractedPage, titles: Array<string | undefined>,
+  rowOf: (title: string | undefined) => ListRow | undefined, signal?: AbortSignal,
+): Promise<Set<number>> {
+  const none = new Set<number>();
+  if (!nunchi || !isNunchiPaired(nunchi) || !nunchi.scopes.includes('read')) return none;
+  try {
+    const ids = await Promise.all(titles.map(title => rowIdOf(title ?? page.title, rowOf(title))));
+    const unique = ids.filter(id => ids.indexOf(id) === ids.lastIndexOf(id));
+    if (!unique.length) return none;
+    const known = await knownDocuments(nunchi, { origin: new URL(page.url).origin, ids: unique }, signal);
+    return new Set(ids.flatMap((id, index) => (unique.includes(id) && known.has(id) ? [index] : [])));
+  } catch {
+    return none;
+  }
+}
+
+/** 꾸러미가 준비됐다고 눈치코치에 알리고, 그 결과를 한 줄로 돌려준다. 연결이 없으면 빈 문자열이다. */
+async function announceToNunchi(nunchi: NunchiConnection | null, runId: string, file: AttachmentDownloadResult): Promise<string> {
+  if (!nunchi || !isNunchiPaired(nunchi)) return '';
+  const manual = '눈치코치 설정 › 자료 폴더 › 온나라 자료 가져오기에서 꾸러미 폴더를 직접 고르세요.';
+  if (file.status !== 'complete' || !file.path) return '';
+  if (!nunchi.scopes.includes('write')) return `눈치코치에 알리지 못했습니다(이 연결에는 알림 권한이 없습니다. 다시 연결하세요). ${manual}`;
+  try {
+    const result = await announcePackage(nunchi, { runId, path: file.path.replace(/[\\/][^\\/]+$/, '') });
+    return result.state === 'imported' ? '눈치코치에 이미 등록된 꾸러미입니다.'
+      : `눈치코치에 알렸습니다${result.project ? `(${result.project})` : ''}. 눈치코치 창에서 등록 여부를 정하세요.`;
+  } catch (error) {
+    return `눈치코치에 알리지 못했습니다(${error instanceof Error ? error.message : String(error)}) ${manual}`;
+  }
 }
 
 /** `package.json`을 꾸러미 폴더에 저장하고 저장된 경로를 돌려준다. */

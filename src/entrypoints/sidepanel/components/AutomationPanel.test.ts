@@ -98,6 +98,98 @@ it('기억한 탭이 닫혀 읽기에 실패해도 "다시 읽기"를 누르면 
   expect(cards().map(card => card.disabled)).toEqual([false, false]);
 });
 
+it('눈치코치와 연결돼 있으면 이미 가진 문서는 받지 않고, 꾸러미가 준비되면 폴더 경로만 알린다', async () => {
+  const { rowIdOf } = await import('@/lib/nunchi/package');
+  const known = await rowIdOf('문서 A', { title: '문서 A' });
+  const token = 'n'.repeat(43);
+  const sendMessage = vi.fn(async (message: { type: string; title?: string; naming?: { root?: string } }) => {
+    if (message.type === 'EXTRACT_PAGE') return list(['문서 A', '문서 C']);
+    if (message.type === 'DOWNLOAD_ATTACHMENTS') {
+      const folder = `C:\\Downloads\\${message.naming!.root!.replace(/\//g, '\\')}\\${message.title}`;
+      return { type: 'ATTACHMENTS_DOWNLOADED', results: [{ name: `${message.title}_본문.pdf`, status: 'complete', downloadId: 1, path: `${folder}\\본문.pdf` }] };
+    }
+    return { type: 'ACTIVE_TAB', tab: null };
+  });
+  const requests: Array<{ url: string; auth: string | undefined; body: Record<string, unknown> }> = [];
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
+    const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+    requests.push({ url, auth: (init.headers as Record<string, string>).Authorization, body });
+    const reply = url.endsWith('/known') ? { known: [known], project: '2026 인수인계' }
+      : { runId: body.runId, state: 'queued', documents: 1, files: 1, project: '2026 인수인계' };
+    return new Response(JSON.stringify(reply), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }));
+  vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:package');
+  vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+  let saved = '';
+  vi.stubGlobal('chrome', {
+    runtime: { sendMessage, getManifest: () => ({ version: '9.9.9' }) },
+    downloads: {
+      download: vi.fn(async (options: { filename: string }) => { saved = `C:\\Downloads\\${options.filename.replace(/\//g, '\\')}`; return 31; }),
+      search: vi.fn(async () => [{ state: 'complete', filename: saved }]),
+    },
+    storage: { local: {
+      get: vi.fn(async (key: unknown) => key === 'saide.nunchi'
+        ? { 'saide.nunchi': { baseUrl: 'http://127.0.0.1:47831', token, clientId: 'c1', scopes: ['read', 'write'], pairedAt: 1 } } : {}),
+      set: vi.fn(async () => undefined),
+    } },
+  });
+  await act(() => root.render(createElement(AutomationPanel, { tab, onDownloadLink: vi.fn() })));
+  await settle();
+  const card = [...document.querySelectorAll<HTMLButtonElement>('.auto-card')].find(button => button.textContent!.includes('눈치코치 꾸러미'))!;
+  await act(async () => card.click());
+  await settle();
+
+  // 이미 있는 '문서 A'는 열지도 받지도 않는다.
+  const downloads = sendMessage.mock.calls.map(([message]) => message).filter(message => message.type === 'DOWNLOAD_ATTACHMENTS');
+  expect(downloads.map(message => message.title)).toEqual(['문서 C']);
+  const packageRoot = downloads[0]!.naming!.root!;
+
+  expect(requests.map(request => new URL(request.url).pathname)).toEqual(['/bridge/v1/known', '/bridge/v1/packages']);
+  expect(requests.every(request => request.url.startsWith('http://127.0.0.1:47831/') && request.auth === `Bearer ${token}`)).toBe(true);
+  expect(requests[0]!.body).toEqual({ origin: 'https://onnara.test', ids: [known, await rowIdOf('문서 C', { title: '문서 C' })] });
+  // 알림에는 실행 ID와 폴더 경로만 싣는다. 파일도 문서 제목도 보내지 않는다.
+  expect(requests[1]!.body).toEqual({ runId: packageRoot.split('/').pop(), path: `C:\\Downloads\\${packageRoot.replace(/\//g, '\\')}` });
+
+  const summary = document.querySelector('.auto-job-summary')!.textContent!;
+  expect(summary).toContain('문서 1건 · 파일 1개');
+  expect(summary).toContain('이미 눈치코치에 있는 문서 1건은 받지 않았습니다.');
+  expect(summary).toContain('눈치코치에 알렸습니다(2026 인수인계)');
+});
+
+it('눈치코치에 묻거나 알리지 못해도 꾸러미는 그대로 만들어진다', async () => {
+  const sendMessage = vi.fn(async (message: { type: string; title?: string; naming?: { root?: string } }) => {
+    if (message.type === 'EXTRACT_PAGE') return list(['문서 A']);
+    if (message.type === 'DOWNLOAD_ATTACHMENTS') {
+      return { type: 'ATTACHMENTS_DOWNLOADED', results: [{ name: '문서 A_본문.pdf', status: 'complete', downloadId: 1, path: `C:\\Downloads\\${message.naming!.root!.replace(/\//g, '\\')}\\문서 A\\본문.pdf` }] };
+    }
+    return { type: 'ACTIVE_TAB', tab: null };
+  });
+  vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch'); }));      // 눈치코치가 꺼져 있다
+  vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:package');
+  vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+  const download = vi.fn(async () => 31);
+  vi.stubGlobal('chrome', {
+    runtime: { sendMessage, getManifest: () => ({ version: '9.9.9' }) },
+    downloads: { download, search: vi.fn(async () => [{ state: 'complete', filename: 'C:\\Downloads\\onNara.sAIde\\수집\\r\\package.json' }]) },
+    storage: { local: {
+      get: vi.fn(async (key: unknown) => key === 'saide.nunchi'
+        ? { 'saide.nunchi': { baseUrl: 'http://127.0.0.1:47831', token: 'n'.repeat(43), clientId: 'c1', scopes: ['read', 'write'], pairedAt: 1 } } : {}),
+      set: vi.fn(async () => undefined),
+    } },
+  });
+  await act(() => root.render(createElement(AutomationPanel, { tab, onDownloadLink: vi.fn() })));
+  await settle();
+  const card = [...document.querySelectorAll<HTMLButtonElement>('.auto-card')].find(button => button.textContent!.includes('눈치코치 꾸러미'))!;
+  await act(async () => card.click());
+  await settle();
+
+  expect(sendMessage.mock.calls.filter(([message]) => message.type === 'DOWNLOAD_ATTACHMENTS')).toHaveLength(1);   // 묻지 못하면 빼지 않는다
+  expect(download).toHaveBeenCalledTimes(1);
+  const summary = document.querySelector('.auto-job-summary')!.textContent!;
+  expect(summary).toContain('눈치코치에 알리지 못했습니다');
+  expect(summary).toContain('꾸러미 폴더를 직접 고르세요');
+});
+
 it('눈치코치 꾸러미: 체크한 문서를 본문+첨부로 한 폴더에 받고 package.json을 그 폴더에 남긴다', async () => {
   type Download = { type: string; title?: string; mode?: string; naming?: { root?: string; folder?: boolean; rename?: boolean } };
   const sendMessage = vi.fn(async (message: Download) => {

@@ -10,7 +10,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { getNunchiStatus, pairNunchi } from './client';
+import { announcePackage, getNunchiStatus, knownDocuments, pairNunchi } from './client';
 import { EMPTY_NUNCHI, normalizeBridgeUrl, type NunchiConnection } from './connection';
 
 const baseUrl = normalizeBridgeUrl(process.env.NUNCHI_BRIDGE_URL);
@@ -37,14 +37,27 @@ describe.skipIf(!baseUrl || !code)('live 눈치코치 브리지', () => {
     await expect(pairNunchi(fresh, wrong, 'onNara.sAIde')).rejects.toMatchObject({ code: 'pairing_code_mismatch', status: 403 });
 
     const result = await pairNunchi(fresh, code, 'onNara.sAIde (live 점검)');
-    expect(result.scopes).toEqual(['read']);
+    expect(result.scopes).toEqual(['read', 'write']);
     const paired: NunchiConnection = { ...fresh, token: result.token, clientId: result.clientId, scopes: result.scopes, pairedAt: Date.now() };
 
     const after = await getNunchiStatus(paired);
     console.log('  status:', JSON.stringify(after));
-    expect(after).toMatchObject({ paired: true, scopes: ['read'] });
+    expect(after).toMatchObject({ paired: true, scopes: ['read', 'write'] });
 
     await expect(pairNunchi(fresh, code, 'again')).rejects.toMatchObject({ code: 'pairing_not_started' });   // 코드는 한 번만
+
+    // 꾸러미 알림과 보유 문서 조회 — 눈치코치 쪽에 꾸러미 폴더를 준비해 두었을 때만 본다.
+    const folder = process.env.NUNCHI_PACKAGE_DIR;
+    const runId = process.env.NUNCHI_RUN_ID;
+    if (folder && runId) {
+      const announced = await announcePackage(paired, { runId, path: folder });
+      console.log('  announce:', JSON.stringify(announced));
+      expect(announced).toMatchObject({ runId, state: 'queued' });
+      await expect(announcePackage(paired, { runId, path: `${folder}\\..` })).rejects.toMatchObject({ status: 403, code: 'path_rejected' });
+      const known = await knownDocuments(paired, { origin: process.env.NUNCHI_ONNARA_ORIGIN ?? '', ids: (process.env.NUNCHI_KNOWN_IDS ?? '').split(',').concat('row-없는-문서') });
+      console.log('  known:', [...known].sort().join(','));
+      expect([...known].sort().join(',')).toBe(process.env.NUNCHI_KNOWN_EXPECTED ?? '');
+    }
 
     origin = `chrome-extension://${'b'.repeat(32)}`;
     await expect(getNunchiStatus(paired)).rejects.toMatchObject({ code: 'origin_mismatch', status: 403 });

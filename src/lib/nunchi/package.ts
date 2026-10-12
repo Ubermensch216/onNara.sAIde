@@ -148,6 +148,11 @@ function assetsOf(document: ExportedDocument, root: string): PackageAsset[] {
   });
 }
 
+/** 목록 행 하나의 식별자(순번 없이). 꾸러미에 적히는 값과 눈치코치에 "이미 있나" 묻는 값이 같아야 한다. */
+export function rowIdOf(title: string, row: ListRow | undefined): Promise<string> {
+  return listRowId({ title, date: isoDate(row?.reportDate), department: row?.department ?? '', reporter: row?.reporter ?? '' });
+}
+
 export async function buildPackage(input: {
   runId: string;
   root: string;
@@ -165,7 +170,7 @@ export async function buildPackage(input: {
   for (const document of input.documents) {
     const row = document.row ?? {};
     const date = isoDate(row.reportDate);
-    const base = await listRowId({ title: document.title, date, department: row.department ?? '', reporter: row.reporter ?? '' });
+    const base = await rowIdOf(document.title, document.row);
     // 같은 날 같은 제목의 문서가 둘이면 순번으로 가른다. 눈치코치는 중복 ID를 거절한다.
     const count = (seen.get(base) ?? 0) + 1;
     seen.set(base, count);

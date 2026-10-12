@@ -123,6 +123,34 @@ export async function getNunchiStatus(connection: NunchiConnection, signal?: Abo
   return status;
 }
 
+export interface NunchiAnnouncement {
+  runId: string;
+  /** queued: 눈치코치가 사용자에게 물을 차례 · asked: 묻는 중 · imported · dismissed · failed */
+  state: string;
+  documents: number;
+  files: number;
+  project?: string | null;
+}
+
+/**
+ * 꾸러미가 준비됐다고 알린다. 눈치코치는 받아 두고 사용자에게 등록할지 묻는다.
+ *
+ * ★ 보내는 것은 실행 ID와 꾸러미 폴더 경로뿐이다. 파일은 보내지 않는다.
+ */
+export function announcePackage(connection: NunchiConnection, input: { runId: string; path: string }, signal?: AbortSignal): Promise<NunchiAnnouncement> {
+  return nunchiRequest<NunchiAnnouncement>(connection, '/bridge/v1/packages', { method: 'POST', body: input, ...(signal ? { signal } : {}) });
+}
+
+/**
+ * 눈치코치에서 열어 둔 인수인계가 이미 온전히 가진 문서(본문을 받았고 빠진 파일이 없는 것)의 식별자.
+ *
+ * ★ `origin`은 온나라 주소다. 같은 식별자라도 다른 온나라의 문서는 가진 것으로 치지 않는다.
+ */
+export async function knownDocuments(connection: NunchiConnection, input: { origin: string; ids: string[] }, signal?: AbortSignal): Promise<Set<string>> {
+  const result = await nunchiRequest<{ known?: unknown }>(connection, '/bridge/v1/known', { method: 'POST', body: input, ...(signal ? { signal } : {}) });
+  return new Set(Array.isArray(result.known) ? result.known.filter((id): id is string => typeof id === 'string') : []);
+}
+
 /** 연결 코드로 토큰을 받는다. 눈치코치는 코드가 맞으면 곧바로 답한다(허용 확인 창이 없다). */
 export async function pairNunchi(connection: NunchiConnection, code: string, label: string, signal?: AbortSignal): Promise<NunchiPairResult> {
   const result = await nunchiRequest<NunchiPairResult>(connection, '/bridge/v1/pair', {
