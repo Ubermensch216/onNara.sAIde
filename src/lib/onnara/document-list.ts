@@ -8,7 +8,12 @@ export type DocumentListField =
   | 'attachment'
   | 'status'
   | 'readState'
-  | 'separation';
+  | 'separation'
+  | 'documentNumber'
+  | 'taskCard'
+  | 'docDirection'
+  | 'sourceDocId'
+  | 'idBasis';
 
 export interface DocumentListColumn {
   key: DocumentListField;
@@ -47,18 +52,65 @@ function normalizedHeader(value: string): string {
 
 function fieldForHeader(label: string): DocumentListField | null {
   const value = normalizedHeader(label);
-  if (value.includes('보고일자') || value.includes('접수일자') || value.includes('시행일자')) return 'reportDate';
+  if (value.includes('보고일자') || value.includes('접수일자') || value.includes('시행일자') || value.includes('등록일자') || value.includes('기안일자')) return 'reportDate';
   if (value === '제목' || value.includes('문서제목')) return 'title';
-  if (value === '부서' || value.includes('담당부서')) return 'department';
+  if (value === '부서' || value.includes('담당부서') || value.includes('기안부서') || value.includes('처리부서')) return 'department';
   if (value.includes('수발신자') || value === '발신자' || value === '수신자') return 'sender';
-  if (value.includes('보고자') || value.includes('담당자')) return 'reporter';
+  if (value.includes('보고자') || value.includes('담당자') || value.includes('기안자') || value.includes('접수자') || value.includes('작성자')) return 'reporter';
+  if (value.includes('문서번호') || value.includes('등록번호') || value.includes('생산번호') || value.includes('접수번호')) return 'documentNumber';
+  if (value.includes('단위과제') || value.includes('과제카드') || value.includes('기록물철')) return 'taskCard';
+  if (value === '구분' || value.includes('생산접수') || value.includes('문서구분') || value.includes('등록구분')) return 'docDirection';
   if (value === '본문') return 'body';
   if (value.includes('붙임') || value.includes('첨부')) return 'attachment';
   // ★ 열람 열을 상태 열보다 먼저 가린다. '열람상태'처럼 두 낱말이 붙은 머리글이 있어,
   //   순서를 바꾸면 열람 여부가 처리 상태로 읽혀 브리핑의 미열람 검증이 통째로 무너진다.
   if (value.includes('열람') || value.includes('읽음') || value.includes('수신확인')) return 'readState';
-  if (value === '상태' || value.includes('처리상태')) return 'status';
+  if (value === '상태' || value.includes('처리상태') || value.includes('결재상태')) return 'status';
   if (value === '분리') return 'separation';
+  return null;
+}
+
+const GENERIC_CHECKBOX_VALUES = new Set(['on', 'true', 'false', '1', '0', 'y', 'n']);
+
+/**
+ * 목록 행 DOM에서 문서 고유 ID를 추출한다.
+ *
+ * - DOM 속성(`data-doc-id` 등) 또는 체크박스·숨은 input(`chkDocId`, `docid`, `enfdocid`, `dctDocId`)에
+ *   문서 식별자가 있으면 `source-document-id`로 반환한다.
+ * - 없고 문서번호(`documentNumber`)와 일자(`reportDate`)가 모두 있으면 `management-number-and-date`로 반환한다.
+ * - 둘 다 없으면 `null`을 반환해 호출부가 `list-row` 해시를 쓰도록 한다.
+ */
+export function extractRowDocumentId(
+  row: Element,
+  record: Partial<Record<DocumentListField, string>> = {},
+): { id: string; basis: 'source-document-id' | 'management-number-and-date' } | null {
+  const attr =
+    row.getAttribute('data-doc-id') ||
+    row.getAttribute('data-docid') ||
+    row.getAttribute('data-document-id');
+  if (cleanText(attr, 120)) {
+    return { id: cleanText(attr, 120), basis: 'source-document-id' };
+  }
+
+  const namedInput = row.querySelector<HTMLInputElement>(
+    'input[name="chkDocId" i], input[name="docid" i], input[name="enfdocid" i], input[name="dctdocid" i], input[name="doc_id" i]',
+  );
+  const namedVal = cleanText(namedInput?.value, 120);
+  if (namedVal && !GENERIC_CHECKBOX_VALUES.has(namedVal.toLowerCase())) {
+    return { id: namedVal, basis: 'source-document-id' };
+  }
+
+  const checkbox = row.querySelector<HTMLInputElement>('input[type="checkbox"][value]');
+  const checkVal = cleanText(checkbox?.getAttribute('value'), 120);
+  if (checkVal && !GENERIC_CHECKBOX_VALUES.has(checkVal.toLowerCase()) && checkVal.length >= 4) {
+    return { id: checkVal, basis: 'source-document-id' };
+  }
+
+  const docNo = cleanText(record.documentNumber, 120);
+  const date = cleanText(record.reportDate, 40);
+  if (docNo && date) {
+    return { id: `${docNo}_${date.replace(/\s+/g, '')}`, basis: 'management-number-and-date' };
+  }
   return null;
 }
 
@@ -118,7 +170,11 @@ function listName(root: ParentNode, container: Element): { name: string; receive
   const caption = container.querySelector('caption');
   const aria = container.getAttribute('aria-label');
   const headings = [...root.querySelectorAll('h1, h2, h3, h4, [role="heading"]')];
-  const heading = headings.map(elementText).find(text => normalizedHeader(text).includes('받은문서'));
+  const heading = headings.map(elementText).find(text =>
+    normalizedHeader(text).includes('받은문서') ||
+    normalizedHeader(text).includes('문서등록대장') ||
+    normalizedHeader(text).includes('기록물등록대장'),
+  );
   const declared = heading || (caption ? elementText(caption) : '') || aria || '';
   return { name: cleanText(declared || '받은문서', 80), received: normalizedHeader(declared).includes('받은문서') };
 }
@@ -165,6 +221,11 @@ export function extractStructuredDocumentList(root: ParentNode = document, maxRo
       // 구형 온나라 목록은 화면 제목을 줄여 그리면서 원문을 hidden input에 둔다.
       const nativeTitle = row.querySelector<HTMLInputElement>('input[name="chkDocTitle"]')?.value;
       if (cleanText(nativeTitle)) record.title = cleanText(nativeTitle);
+      const extractedId = extractRowDocumentId(row, record);
+      if (extractedId) {
+        record.sourceDocId = extractedId.id;
+        record.idBasis = extractedId.basis;
+      }
       if (record.title) data.push(record);
       if (record.title && row.querySelector('input[type="checkbox"]:checked, [role="checkbox"][aria-checked="true"]')) selectedTitles.push(record.title);
       if (data.length >= maxRows) break;

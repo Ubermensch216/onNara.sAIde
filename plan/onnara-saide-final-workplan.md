@@ -2,7 +2,7 @@
 
 작성: 2026-09-17 · 갱신: 2026-09-29 · 상태: 구축 진행 중 (0~2단계 완료, 3단계 핵심 MVP 및 S02 공문서 기안기 완료, 내 참고자료 직접 업로드·정밀 분석, TONGDAL.ai 로컬 지식 연동, 서식 파일 분석·3단계 웹기안기 삽입, 진단 보완 B1~B5·B9, N1 공유/공람 브리핑, 데이터 백업·복원 및 본문 다운로드 완료 · 115파일 1263개 테스트 통과) · 대상 브라우저: Microsoft Edge (Chromium MV3)
 현재 구현 사실은 [구현 현황](../docs/IMPLEMENTATION_STATUS.md)이 기준이다. 이 계획서의 단계표는 목표를 담는다.
-근거 자료: [참조 프로젝트 분석 및 서비스 제안](../docs/reference-analysis-and-ideas.md) · 현황: [구현 현황](../docs/IMPLEMENTATION_STATUS.md)
+근거 자료: [참조 프로젝트 분석 및 서비스 제안](../docs/IMPLEMENTATION_STATUS.md) · 현황: [구현 현황](../docs/IMPLEMENTATION_STATUS.md)
 
 온나라 2.0 화면 오른쪽 Edge Side Panel에서 **현재 온나라 문서의 맥락을 이해하고 읽기·검색·작성·업무처리를 돕는 AI 업무 도우미**를 만든다. 추론은 **내 PC의 로컬 LLM(Ollama)** 과 **범정부 AI 공통기반 LLM(API 키)** 중 사용자가 화면에서 고른다.
 
@@ -731,13 +731,13 @@ read(읽음) → drafted(초안) → prepared(온나라 반영 준비) → submi
 2. **P0-7: 비식별 공문 표본 20~50건과 초기 대상 사용자 확정.** S01 정확도 수치를 낼 수 없어 평가 계획(§12)이 통째로 멈춰 있다.
 3. **P0-4: 범정부 AI 공통기반 시험 API 키.** 공급자 어댑터 착수 조건이다.
 4. **P3-1 재착수: 개인정보 탐지기.** 외부 공급자를 붙이기 전에 반드시 선행한다(§13 위험 대응).
-5. 서비스 우선순위 재검토 결과는 [서비스 진단 및 개선 제안](../docs/service-review-2026-09-20.md) 참조.
+5. 서비스 우선순위 재검토 결과는 [서비스 진단 및 개선 제안](../docs/IMPLEMENTATION_STATUS.md) 참조.
 
 ---
 
 ## 16. 근거 문서
 
-- [참조 프로젝트 분석 및 서비스 제안](../docs/reference-analysis-and-ideas.md)
+- [참조 프로젝트 분석 및 서비스 제안](../docs/IMPLEMENTATION_STATUS.md)
 - 참조 프로젝트 문서 (이 저장소 밖 · 작업 폴더의 사본을 본다)
   - `sAIde/docs/ARCHITECTURE.md` · `sAIde/docs/VALIDATION.md`
   - `onnara-ai-document-distributor/.../docs/설계및검증.md` · `.../docs/RAG_자료작성_가이드.md`

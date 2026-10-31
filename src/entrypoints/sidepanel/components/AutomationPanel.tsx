@@ -20,7 +20,9 @@ import {
   useAutomation,
   type AutomationJob,
 } from '@/lib/automation/jobs';
-import { exportNunchiPackage, queueAttachmentDownloads } from '@/lib/onnara/download';
+import { exportNunchiListingPackages, exportNunchiPackage, queueAttachmentDownloads } from '@/lib/onnara/download';
+import { getNunchiRequests, type NunchiCollectionRequest } from '@/lib/nunchi/client';
+import { isNunchiPaired, loadNunchi } from '@/lib/nunchi/connection';
 import type { DownloadLinkAction } from '@/lib/downloads/links';
 
 type Screen =
@@ -62,6 +64,7 @@ export function AutomationPanel({ tab, onDownloadLink, onTabChange }: Props) {
   /** 링크로 찾아온 작업. 잠깐 강조했다가 스스로 꺼진다. */
   const [spotlight, setSpotlight] = useState<string | null>(null);
   const [targetMode, setTargetMode] = useState<DownloadTargetMode>('attachments');
+  const [nunchiReq, setNunchiReq] = useState<NunchiCollectionRequest | null>(null);
 
   useEffect(() => {
     void chrome.storage?.local?.get?.(['saide_download_mode']).then((res: Record<string, unknown> | undefined) => {
@@ -71,6 +74,18 @@ export function AutomationPanel({ tab, onDownloadLink, onTabChange }: Props) {
       }
     }).catch(() => undefined);
   }, []);
+
+  const refreshNunchiRequests = useCallback(async () => {
+    const conn = await loadNunchi().catch(() => null);
+    if (!conn || !isNunchiPaired(conn)) {
+      setNunchiReq(null);
+      return;
+    }
+    const res = await getNunchiRequests(conn).catch(() => null);
+    setNunchiReq(res?.requests?.[0] ?? null);
+  }, []);
+
+  useEffect(() => { void refreshNunchiRequests(); }, [refreshNunchiRequests]);
 
   const handleModeChange = (mode: DownloadTargetMode) => {
     setTargetMode(mode);
@@ -110,6 +125,7 @@ export function AutomationPanel({ tab, onDownloadLink, onTabChange }: Props) {
   // useT()는 렌더마다 새 함수라 의존성에 넣으면 화면을 끝없이 다시 읽는다. 탭이 바뀔 때만 다시 만든다.
   const readScreen = useCallback(async (): Promise<ExtractedPage | null> => {
     setScreen({ state: 'loading' });
+    void refreshNunchiRequests();
     const target = await currentTab(known.current);
     readTab.current = target;
     if (!target || isRestrictedUrl(target.url)) {
@@ -127,7 +143,7 @@ export function AutomationPanel({ tab, onDownloadLink, onTabChange }: Props) {
     }
     setScreen({ state: 'error', error: response.type === 'ERROR' ? response.error : { code: 'UNKNOWN', message: translate('auto.readFailed') } });
     return null;
-  }, [tabId, tabUrl]);
+  }, [tabId, tabUrl, refreshNunchiRequests]);
 
   useEffect(() => { void readScreen(); }, [readScreen]);
 
@@ -156,6 +172,19 @@ export function AutomationPanel({ tab, onDownloadLink, onTabChange }: Props) {
     void exportNunchiPackage({ tabId: target.tabId, page: fresh, titles });
   };
 
+  /** 눈치코치 수집 요청에 대해 현재 목록을 50건 단위 꾸러미로 내보낸다. */
+  const runRequestedListingExport = async () => {
+    const fresh = await readScreen();
+    const target = readTab.current;
+    if (!fresh || !target || !nunchiReq) return;
+    await exportNunchiListingPackages({
+      tabId: target.tabId,
+      page: fresh,
+      requestId: nunchiReq.requestId,
+    });
+    await refreshNunchiRequests();
+  };
+
   const actionTitle = targetMode === 'body'
     ? t('auto.downloadBody')
     : targetMode === 'all'
@@ -182,6 +211,32 @@ export function AutomationPanel({ tab, onDownloadLink, onTabChange }: Props) {
 
   return (
     <div className="auto">
+      {nunchiReq && (
+        <section className="auto-section" aria-live="polite">
+          <div className="auto-section-head">
+            <h2 className="auto-section-title">눈치코치 수집 요청</h2>
+          </div>
+          <div className="auto-card-group">
+            <button
+              type="button"
+              className="auto-card"
+              onClick={() => void runRequestedListingExport()}
+              disabled={!list?.rows.length}
+            >
+              <span className="auto-card-icon" aria-hidden="true"><PackageIcon /></span>
+              <span className="auto-card-text">
+                <span className="auto-card-title">
+                  {nunchiReq.scope.authorName || '전체'} ({nunchiReq.scope.startDate || '시작일 미지정'} ~ {nunchiReq.scope.endDate || '종료일 미지정'})
+                </span>
+                <span className="auto-card-desc">
+                  온나라 문서등록대장에서 조건으로 조회한 뒤 눌러 50건 단위 꾸러미로 수집합니다.
+                </span>
+              </span>
+              {list?.rows.length ? <span className="auto-card-badge">{t('auto.docCount', { n: list.rows.length })}</span> : null}
+            </button>
+          </div>
+        </section>
+      )}
       {/* 1. 무엇을 대상으로 실행하는지 — 작업 버튼보다 먼저 확인한다. */}
       <section className={`auto-target ${screen.state}`} aria-live="polite">
         <div className="auto-section-head">
@@ -387,5 +442,5 @@ const DocumentIcon = () => <Svg size={18}><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 
 const AlertIcon = () => <Svg size={18}><circle cx="12" cy="12" r="9" /><path d="M12 8v5M12 16h.01" /></Svg>;
 const DownloadIcon = () => <Svg size={20}><path d="M12 4v11M7 10l5 5 5-5M5 20h14" /></Svg>;
 const PackageIcon = () => <Svg size={20}><path d="M3.5 8 12 3.5 20.5 8v8L12 20.5 3.5 16z" /><path d="M3.5 8 12 12.5 20.5 8M12 12.5v8" /></Svg>;
-const FileIcon =() => <Svg size={14}><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /></Svg>;
+const FileIcon = () => <Svg size={14}><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /></Svg>;
 const InfoIcon = () => <Svg size={13}><circle cx="12" cy="12" r="9" /><path d="M12 11v5M12 8h.01" /></Svg>;

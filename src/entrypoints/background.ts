@@ -11,6 +11,7 @@ import { committedSince, duplicateWorkTab, forgetWorkTab, panelTab, registerWork
 import { forgetPanelSpawn, isReportedPanelTab, notePanelSpawn, panelOpener, rememberPanelTab } from '@/lib/browser/panel-sync';
 import type { AppError, AttachmentDownloadResult, AttachmentNaming, ExtractedPage, RequestControl, SWToContent } from '@/lib/messaging/protocol';
 import { isHtmlAttachmentName } from '@/lib/onnara/attachments';
+import { sanitizeSegment } from '@/lib/downloads/naming';
 import { clearDownloadName, registerDownloadNaming, reserveDownloadName } from '@/lib/downloads/rename';
 import { bodyMarkdown, markdownDataUrl } from '@/lib/nunchi/body-text';
 import { documentReadState, isReceivedDocumentList, normalizeForMatch, sameDocumentTitle, type StructuredDocumentList } from '@/lib/onnara/document-list';
@@ -1647,11 +1648,12 @@ export async function handlePanelMessage(msg: PanelToSW): Promise<SWToPanel> {
     case 'DOWNLOAD_ATTACHMENTS': {
       const mode = msg.mode ?? 'attachments';
       const perform = async (targetTabId: number, targetControl: RequestControl, payload?: ExtractedPage): Promise<SWToPanel> => {
+        const bodyNaming = msg.naming ?? (msg.title ? { docTitle: msg.title, rename: false } : undefined);
         if (mode === 'body') {
-          return downloadBodyInTab(targetTabId, targetControl, msg.naming, payload);
+          return downloadBodyInTab(targetTabId, targetControl, bodyNaming, payload);
         }
         if (mode === 'all') {
-          const bodyOutcome = await downloadBodyInTab(targetTabId, targetControl, msg.naming, payload);
+          const bodyOutcome = await downloadBodyInTab(targetTabId, targetControl, bodyNaming, payload);
           const attachOutcome = await downloadAttachmentsInTab(targetTabId, targetControl, msg.naming);
           const results: AttachmentDownloadResult[] = [];
           if (bodyOutcome.type === 'ATTACHMENTS_DOWNLOADED') results.push(...bodyOutcome.results);
@@ -3087,6 +3089,42 @@ export async function downloadAttachmentsInTab(tabId: number, control: RequestCo
   return { type: 'ATTACHMENTS_DOWNLOADED', results };
 }
 
+const GENERIC_ONNARA_TITLE = /^(?:문서관리카드(?:\s*\[[^\]]*\])?(?:\s*온나라\s*시스템)?|온나라(?:\s*시스템)?|본문\s*보기|상세\s*보기|문서|공문서)$/i;
+
+function pdfTitleFromUrl(url: string | undefined): string {
+  if (!url) return '';
+  try {
+    const param = new URL(url).searchParams.get('docTitle')?.trim() ?? '';
+    return param.replace(/\.pdf$/i, '').trim();
+  } catch {
+    return '';
+  }
+}
+
+function titleFromBodyText(text: string | undefined): string {
+  if (!text) return '';
+  const match = /^\s*제\s*목\s*[:：]?\s*(.+)$/m.exec(text);
+  return match?.[1]?.trim() ?? '';
+}
+
+export function resolveBodyDocTitle(
+  namingTitle: string | undefined,
+  pdfUrl: string | undefined,
+  payload: ExtractedPage | undefined,
+): string {
+  const candidates = [
+    namingTitle,
+    pdfTitleFromUrl(pdfUrl),
+    payload?.title,
+    titleFromBodyText(payload?.text),
+  ];
+  for (const candidate of candidates) {
+    const trimmed = candidate?.trim();
+    if (trimmed && !GENERIC_ONNARA_TITLE.test(trimmed)) return trimmed;
+  }
+  return (namingTitle || payload?.title || '공문서').trim();
+}
+
 /**
  * 상세 화면에서 본문(PDF 원본 또는 텍스트 기반 생성 PDF)을 한 파일로 내려받는다.
  */
@@ -3115,8 +3153,9 @@ export async function downloadBodyInTab(
     }
   }
 
-  const docTitle = (naming?.docTitle || existingPayload?.title || '공문서').trim();
-  let defaultName = `${docTitle}_본문.pdf`;
+  let rawTitle = resolveBodyDocTitle(naming?.docTitle, pdfSource?.url, existingPayload);
+  let docTitle = sanitizeSegment(rawTitle.replace(/\.(?:pdf|md)$/i, ''), 140) || '공문서';
+  let defaultName = `${docTitle}.pdf`;
   /** 결과에 덧붙일 표시. 원본 PDF면 비어 있다. */
   let origin: Pick<AttachmentDownloadResult, 'generated' | 'extractedText' | 'truncated'> = {};
 
@@ -3138,7 +3177,11 @@ export async function downloadBodyInTab(
     const reread = fresh?.type === 'EXTRACTED' && !fresh.payload.structuredData ? fresh.payload : undefined;
     const body = reread && reread.text.length >= (existingPayload?.text.length ?? 0) ? reread : existingPayload;
     if (body?.text.trim()) {
-      defaultName = `${docTitle}_본문.md`;
+      if (GENERIC_ONNARA_TITLE.test(rawTitle)) {
+        rawTitle = resolveBodyDocTitle(naming?.docTitle, pdfSource?.url, body);
+        docTitle = sanitizeSegment(rawTitle.replace(/\.(?:pdf|md)$/i, ''), 140) || '공문서';
+      }
+      defaultName = `${docTitle}.md`;
       origin = { extractedText: true, ...(body.truncated ? { truncated: true } : {}) };
       downloadUrl = markdownDataUrl(bodyMarkdown({
         title: docTitle, reportDate: naming.reportDate, sourceUrl: body.sourceFrameUrl ?? body.url,
@@ -3156,7 +3199,14 @@ export async function downloadBodyInTab(
         purpose: 'document-detail',
         control: frameControl,
       });
-      if (extracted.type === 'EXTRACTED') text = extracted.payload.text;
+      if (extracted.type === 'EXTRACTED') {
+        text = extracted.payload.text;
+        if (GENERIC_ONNARA_TITLE.test(rawTitle)) {
+          rawTitle = resolveBodyDocTitle(naming?.docTitle, pdfSource?.url, extracted.payload);
+          docTitle = sanitizeSegment(rawTitle.replace(/\.(?:pdf|md)$/i, ''), 140) || '공문서';
+          defaultName = `${docTitle}.pdf`;
+        }
+      }
     }
     try {
       const base64 = await generatePdfFromText({
@@ -3174,7 +3224,10 @@ export async function downloadBodyInTab(
     }
   }
 
-  reserveDownloadName(defaultName, naming ?? null);
+  const effectiveNaming: AttachmentNaming = naming
+    ? { ...naming, docTitle }
+    : { docTitle, rename: false };
+  reserveDownloadName(defaultName, effectiveNaming, { preferFallback: true });
   let downloadId: number | undefined;
   try {
     downloadId = await chrome.downloads.download({ url: downloadUrl, conflictAction: 'uniquify', saveAs: false });

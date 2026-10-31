@@ -4,11 +4,22 @@ import { downloadLink, escapeMarkdownText } from '@/lib/downloads/links';
 import { panelLink } from '@/lib/panel/links';
 import { cancelAutomation, enqueueAutomation, workTabLock, type AutomationJob } from '@/lib/automation/jobs';
 import { buildPackage, describePackage, newRunId, packageRoot, PACKAGE_FILE, rowIdOf, type ListRow } from '@/lib/nunchi/package';
-import { announcePackage, knownDocuments } from '@/lib/nunchi/client';
+import { announcePackage, knownDocuments, reportNunchiRequestProgress } from '@/lib/nunchi/client';
 import { isNunchiPaired, loadNunchi, type NunchiConnection } from '@/lib/nunchi/connection';
 
 /** 서비스 워커 요청 한도(180초)보다 약간 짧게 둔다. 한 문서의 첨부를 모두 받는 시간이다. */
 const DOCUMENT_DOWNLOAD_TIMEOUT_MS = 170_000;
+
+export const LISTING_CHUNK_SIZE = 50;
+export const DEFAULT_MAX_LISTING_DOCUMENTS = 500;
+
+function safeExtensionVersion(): string {
+  try {
+    return typeof chrome !== 'undefined' ? (chrome.runtime?.getManifest?.().version ?? '') : '';
+  } catch {
+    return '';
+  }
+}
 
 const STATUS_LABEL: Record<AttachmentDownloadResult['status'], string> = {
   complete: '다운로드 완료',
@@ -173,6 +184,142 @@ export async function exportNunchiPackage(options: {
     },
   });
   return finished;
+}
+
+/**
+ * 문서등록대장 등 전체 목록을 50건(`chunkSize`) 단위 꾸러미로 나누어 내보낸다.
+ *
+ * - 상한(`maxDocuments`, 기본 500건)을 넘으면 멈춘다.
+ * - 중간에 `signal`로 중단해도 직전 꾸러미까지는 저장·알림이 완료된다.
+ * - 재실행 시 `alreadyInNunchi`로 이미 눈치코치가 온전히 가진 문서는 건너뛴다.
+ */
+export async function exportNunchiListingPackages(options: {
+  tabId: number;
+  page: ExtractedPage;
+  rows?: ListRow[];
+  totalExpected?: number | null;
+  listingFinished?: boolean;
+  chunkSize?: number;
+  maxDocuments?: number;
+  requestId?: string;
+  nunchi?: NunchiConnection | null;
+  signal?: AbortSignal;
+  save?: (json: string, filename: string) => Promise<AttachmentDownloadResult>;
+  downloadChunk?: (chunkTitles: string[], chunkRoot: string) => Promise<Array<{ files?: AttachmentDownloadResult[]; error?: AppError }>>;
+}): Promise<{ runIds: string[]; exportedDocs: number; skippedDocs: number; completed: boolean }> {
+  const {
+    tabId,
+    page,
+    chunkSize = LISTING_CHUNK_SIZE,
+    maxDocuments = DEFAULT_MAX_LISTING_DOCUMENTS,
+    requestId,
+    signal,
+    save = savePackageFile,
+  } = options;
+  const allRows = options.rows ?? page.structuredData?.rows ?? [];
+  const cappedRows = allRows.filter(row => Boolean(row.title)).slice(0, maxDocuments);
+  const capped = allRows.filter(row => Boolean(row.title)).length > maxDocuments;
+  const allTitles = cappedRows.map(row => row.title!);
+  const rowOf = (title: string | undefined) => (title ? cappedRows.find(row => row.title === title) : undefined);
+
+  const nunchi = options.nunchi !== undefined ? options.nunchi : await loadNunchi().catch(() => null);
+  const already = await alreadyInNunchi(nunchi, page, allTitles, rowOf, signal);
+  const pendingRows = cappedRows.filter((_, index) => !already.has(index));
+  const skippedDocs = already.size;
+  const totalExpected = options.totalExpected ?? allRows.length;
+
+  const reportProgress = async (
+    state: 'running' | 'completed' | 'failed' | 'cancelled',
+    done: number,
+    runId?: string,
+    message?: string,
+  ) => {
+    if (!requestId || !nunchi || !isNunchiPaired(nunchi)) return;
+    await reportNunchiRequestProgress(nunchi, requestId, {
+      state,
+      done,
+      total: totalExpected,
+      ...(runId ? { runId } : {}),
+      ...(message ? { message } : {}),
+    }).catch(() => undefined);
+  };
+
+  if (!pendingRows.length) {
+    await reportProgress('completed', skippedDocs, undefined, '이미 모든 문서를 수집했습니다.');
+    return { runIds: [], exportedDocs: 0, skippedDocs, completed: true };
+  }
+
+  const baseRunId = newRunId();
+  const chunks: ListRow[][] = [];
+  for (let i = 0; i < pendingRows.length; i += chunkSize) {
+    chunks.push(pendingRows.slice(i, i + chunkSize));
+  }
+
+  const runIds: string[] = [];
+  let exportedDocs = 0;
+
+  for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
+    if (signal?.aborted) {
+      await reportProgress('cancelled', skippedDocs + exportedDocs, runIds.at(-1), '사용자가 수집을 중단했습니다.');
+      return { runIds, exportedDocs, skippedDocs, completed: false };
+    }
+    const chunkRows = chunks[chunkIndex]!;
+    const chunkTitles = chunkRows.map(row => row.title!);
+    const runId = chunks.length > 1 ? `${baseRunId}_p${chunkIndex + 1}` : baseRunId;
+    const root = packageRoot(runId);
+
+    await reportProgress('running', skippedDocs + exportedDocs, runId, `${chunkIndex + 1}/${chunks.length}번째 꾸러미 수집 중`);
+
+    const outcomes = options.downloadChunk
+      ? await options.downloadChunk(chunkTitles, root)
+      : await queueAttachmentDownloads({
+          tabId,
+          page: { ...page, structuredData: { ...(page.structuredData ?? { kind: 'onnara-document-list', listName: page.title, columns: [] }), rows: chunkRows } },
+          titles: chunkTitles,
+          mode: 'all',
+          origin: 'automation',
+          packageRoot: root,
+          ...(signal ? { signal } : {}),
+        });
+
+    if (!outcomes.some(item => item.files?.some(f => f.status === 'complete'))) {
+      if (signal?.aborted) {
+        await reportProgress('cancelled', skippedDocs + exportedDocs, runIds.at(-1), '사용자가 수집을 중단했습니다.');
+        return { runIds, exportedDocs, skippedDocs, completed: false };
+      }
+      continue;
+    }
+
+    const isLastChunk = chunkIndex === chunks.length - 1;
+    const finished = isLastChunk && !capped && (options.listingFinished ?? true) && !signal?.aborted;
+    const pkg = await buildPackage({
+      runId,
+      root,
+      pageUrl: page.url,
+      listName: page.structuredData?.listName ?? page.title,
+      extensionVersion: safeExtensionVersion(),
+      scopeKind: 'listing',
+      listing: { total: totalExpected, finished },
+      documents: outcomes.map((outcome, idx) => {
+        const row = chunkRows[idx]!;
+        return { title: row.title!, row, files: outcome.files, error: outcome.error };
+      }),
+    });
+
+    const file = await save(JSON.stringify(pkg, null, 2), `${root}/${PACKAGE_FILE}`);
+    await announceToNunchi(nunchi, runId, file);
+    runIds.push(runId);
+    exportedDocs += chunkRows.length;
+  }
+
+  const completed = !signal?.aborted && !capped;
+  await reportProgress(
+    signal?.aborted ? 'cancelled' : 'completed',
+    skippedDocs + exportedDocs,
+    runIds.at(-1),
+    capped ? `상한(${maxDocuments}건)까지 수집했습니다.` : `꾸러미 ${runIds.length}개 수집 완료`,
+  );
+  return { runIds, exportedDocs, skippedDocs, completed };
 }
 
 /**

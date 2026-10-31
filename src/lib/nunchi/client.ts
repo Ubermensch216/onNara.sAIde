@@ -164,3 +164,63 @@ export async function pairNunchi(connection: NunchiConnection, code: string, lab
   }
   return result;
 }
+
+export interface NunchiCollectionScope {
+  listName: string;
+  authorName: string;
+  department: string;
+  startDate: string;
+  endDate: string;
+  keyword: string;
+  docType: string;
+}
+
+export interface NunchiCollectionRequest {
+  requestId: string;
+  state: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+  scope: NunchiCollectionScope;
+  done?: number;
+  total?: number;
+  runId?: string;
+  message?: string;
+  createdAt: number;
+  updatedAt?: number;
+}
+
+export interface NunchiProgressUpdate {
+  state?: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+  done?: number;
+  total?: number;
+  runId?: string;
+  message?: string;
+}
+
+/** 눈치코치에서 대기·진행 중인 공문 수집 요청 목록을 조회한다. */
+export async function getNunchiRequests(
+  connection: NunchiConnection,
+  signal?: AbortSignal,
+): Promise<{ project?: string | null; requests: NunchiCollectionRequest[] }> {
+  const result = await nunchiRequest<{ project?: string | null; requests?: unknown }>(
+    connection,
+    '/bridge/v1/requests',
+    { ...(signal ? { signal } : {}) },
+  );
+  return {
+    project: result.project ?? null,
+    requests: Array.isArray(result.requests) ? (result.requests as NunchiCollectionRequest[]) : [],
+  };
+}
+
+/** 눈치코치 수집 요청의 진행 상태·건수를 보고한다. */
+export function reportNunchiRequestProgress(
+  connection: NunchiConnection,
+  requestId: string,
+  update: NunchiProgressUpdate,
+  signal?: AbortSignal,
+): Promise<NunchiCollectionRequest> {
+  return nunchiRequest<NunchiCollectionRequest>(
+    connection,
+    `/bridge/v1/requests/${encodeURIComponent(requestId)}/progress`,
+    { method: 'POST', body: update, ...(signal ? { signal } : {}) },
+  );
+}

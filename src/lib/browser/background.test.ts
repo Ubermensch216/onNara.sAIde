@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { chooseBestExtraction, handlePanelMessage, mergeDetailFrames, notifyScreenChange, readDocumentInBackground, releaseKeptWorkTab, toSummary } from '@/entrypoints/background';
+import { chooseBestExtraction, downloadBodyInTab, handlePanelMessage, mergeDetailFrames, notifyScreenChange, readDocumentInBackground, releaseKeptWorkTab, resolveBodyDocTitle, toSummary } from '@/entrypoints/background';
+import { consumeDownloadName } from '@/lib/downloads/rename';
 import { forgetPanelSpawn, notePanelSpawn, rememberPanelTab, resetPanelSpawns } from '@/lib/browser/panel-sync';
 import { noteNavigationTarget, noteTopCommit, workTabs } from '@/lib/browser/work-tabs';
 
@@ -1139,4 +1140,69 @@ it('문서 상세 프레임을 합칠 때 PDF 쪽 표식은 PDF를 품은 프레
   const two = mergeDetailFrames(top, [top, candidate(1, '첫 PDF 본문 글자가 길게 이어진다 '.repeat(3), ['첫쪽표식입니다요']),
     candidate(2, '둘째 PDF 본문도 길게 이어진다 '.repeat(3), ['둘째쪽표식입니다'])], frames, 2000);
   expect(two.pdfPageAnchors).toBeUndefined();
+});
+
+it('눈치코치 꾸러미로 공문 본문 PDF를 내려받을 때 다운로드.pdf 대신 공문 본문 제목을 파일명으로 저장한다', async () => {
+  const docTitle = '2026년도 공직유관단체 채용실태 전수조사 계획 송부';
+  let determinedPath = '';
+  vi.stubGlobal('chrome', {
+    tabs: {
+      sendMessage: vi.fn(async (_tabId: number, msg: { type: string }) => {
+        if (msg.type === 'GET_BODY_PDF') {
+          return {
+            type: 'BODY_PDF',
+            pdf: {
+              url: `http://99.1.2.134/bms/dctenf/Document.pdf?sFileName=5EC27A4B_docconv.pdf&docTitle=${encodeURIComponent(`${docTitle}.pdf`)}&transFlag=N`,
+              base64: btoa('%PDF-1.7 body'),
+            },
+          };
+        }
+        return { type: 'FAILED', error: { code: 'UNKNOWN', message: 'unexpected' } };
+      }),
+    },
+    scripting: { executeScript: vi.fn(async () => []) },
+    webNavigation: { getAllFrames: vi.fn(async () => [{ frameId: 0 }]) },
+    downloads: {
+      download: vi.fn(async () => {
+        // data:application/pdf 다운로드 시 브라우저가 제안하는 기본 파일명('다운로드.pdf')을 모사한다.
+        const suggested = consumeDownloadName('다운로드.pdf') ?? '다운로드.pdf';
+        determinedPath = `C:\\Users\\tester\\Downloads\\${suggested.replace(/\//g, '\\')}`;
+        return 77;
+      }),
+      search: vi.fn(async () => [{ id: 77, state: 'complete', filename: determinedPath, mime: 'application/pdf' }]),
+    },
+  });
+
+  const outcome = await downloadBodyInTab(
+    1,
+    { id: 'req-body', deadline: Date.now() + 10_000 },
+    {
+      docTitle: '문서관리카드온나라 시스템',
+      reportDate: '2026. 10. 31.',
+      folder: true,
+      rename: false,
+      root: 'onNara.sAIde/수집/20261031_143700_1234',
+    },
+  );
+
+  expect(outcome).toEqual({
+    type: 'ATTACHMENTS_DOWNLOADED',
+    results: [{
+      name: `${docTitle}.pdf`,
+      status: 'complete',
+      downloadId: 77,
+      path: `C:\\Users\\tester\\Downloads\\onNara.sAIde\\수집\\20261031_143700_1234\\20261031_${docTitle}\\${docTitle}.pdf`,
+    }],
+  });
+  expect(resolveBodyDocTitle('문서관리카드온나라 시스템', undefined, {
+    url: 'http://99.1.2.134/bms/dctenf/BmsDctEnfReceiptCardDetail.do',
+    title: '문서관리카드[보기]',
+    text: `수신 수신자 참조\n(경유)\n제목 ${docTitle}\n1. 공정한 채용문화 정착을 위하여`,
+    charCount: 100,
+    truncated: false,
+    keptRatio: 1,
+    estimatedTokens: 30,
+    method: 'innerText',
+    extractedAt: 1,
+  })).toBe(docTitle);
 });

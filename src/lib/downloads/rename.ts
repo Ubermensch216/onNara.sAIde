@@ -15,13 +15,20 @@
  *   우리가 아는 것은 화면에 적힌 이름이고, 실제 파일의 확장자는 서버 응답이 정한다.
  */
 
-import { normalizedAttachmentPath, type NamingPlan } from './naming';
+import { normalizedAttachmentPath, splitExtension, type NamingPlan } from './naming';
 
 interface Reservation {
   plan: NamingPlan;
-  /** 화면에서 읽은 첨부 이름. 브라우저가 이름을 주지 않을 때의 대비책이다. */
+  /** 화면에서 읽은 첨부 이름 또는 공문 본문 파일명. */
   fallbackName: string;
+  /** true면 브라우저가 제안한 이름(다운로드.pdf 등) 대신 fallbackName을 우선 쓴다. */
+  preferFallback?: boolean;
   until: number;
+}
+
+export interface ReserveDownloadOptions {
+  ttlMs?: number;
+  preferFallback?: boolean;
 }
 
 /** 예약이 살아 있는 시간. 다운로드가 시작되지 않으면 스스로 만료된다. */
@@ -29,9 +36,39 @@ export const RESERVATION_TTL_MS = 30_000;
 
 let reservation: Reservation | null = null;
 
+/** 브라우저가 `data:` 주소 등에 붙이는 기본 임시 이름(`다운로드.pdf`, `download.pdf` 등)인가. */
+function isGenericBrowserName(name: string): boolean {
+  const last = name.split(/[\\/]/).pop()?.trim() ?? '';
+  if (!last) return true;
+  const { base } = splitExtension(last);
+  return /^(?:다운로드|download)(?:\s*\(\d+\))?$/i.test(base.trim());
+}
+
+function resolveTargetName(suggested: string, fallbackName: string, preferFallback = false): string {
+  const cleanSuggested = suggested.trim();
+  const cleanFallback = fallbackName.trim();
+  if (!cleanFallback) return cleanSuggested;
+  if (preferFallback || !cleanSuggested || isGenericBrowserName(cleanSuggested)) {
+    const { ext: fallbackExt } = splitExtension(cleanFallback);
+    const { ext: suggestedExt } = splitExtension(cleanSuggested);
+    return !fallbackExt && suggestedExt ? `${cleanFallback}${suggestedExt}` : cleanFallback;
+  }
+  return cleanSuggested;
+}
+
 /** 다음에 시작될 다운로드 한 건의 이름을 예약한다. plan이 없으면 예약을 지운다. */
-export function reserveDownloadName(fallbackName: string, plan: NamingPlan | null, ttlMs = RESERVATION_TTL_MS): void {
-  reservation = plan ? { plan, fallbackName, until: Date.now() + ttlMs } : null;
+export function reserveDownloadName(
+  fallbackName: string,
+  plan: NamingPlan | null,
+  ttlOrOptions: number | ReserveDownloadOptions = RESERVATION_TTL_MS,
+): void {
+  if (!plan) {
+    reservation = null;
+    return;
+  }
+  const ttlMs = typeof ttlOrOptions === 'number' ? ttlOrOptions : (ttlOrOptions.ttlMs ?? RESERVATION_TTL_MS);
+  const preferFallback = typeof ttlOrOptions === 'object' ? Boolean(ttlOrOptions.preferFallback) : false;
+  reservation = { plan, fallbackName, preferFallback, until: Date.now() + ttlMs };
 }
 
 /** 예약을 비운다. 다운로드가 끝났거나 실패했을 때 부른다. */
@@ -48,7 +85,7 @@ export function consumeDownloadName(suggested: string): string | null {
   if (!current) return null;
   reservation = null;
   if (Date.now() > current.until) return null;
-  return normalizedAttachmentPath(suggested || current.fallbackName, current.plan);
+  return normalizedAttachmentPath(resolveTargetName(suggested, current.fallbackName, current.preferFallback), current.plan);
 }
 
 /**

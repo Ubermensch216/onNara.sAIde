@@ -59,4 +59,27 @@ describe('예약 소비', () => {
     vi.advanceTimersByTime(1_500);
     expect(consumeDownloadName('붙임1.hwp')).toBeNull();
   });
+
+  it('★ 눈치코치 꾸러미(rename: false)에서 브라우저가 data URL 기본 이름(다운로드.pdf)을 제안해도 공문 본문 제목을 파일명으로 쓴다', () => {
+    const docTitle = '2026년도 공직유관단체 채용실태 전수조사 계획 송부';
+    reserveDownloadName(
+      `${docTitle}.pdf`,
+      { docTitle, reportDate: '2026. 10. 31.', folder: true, rename: false, root: 'onNara.sAIde/수집/20261031_143700_1234' },
+      { preferFallback: true },
+    );
+    expect(consumeDownloadName('다운로드.pdf')).toBe(
+      `onNara.sAIde/수집/20261031_143700_1234/20261031_${docTitle}/${docTitle}.pdf`,
+    );
+  });
+
+  it('preferFallback이 켜져 있으면 서블릿 기본 이름(Document.pdf 등) 대신 예약한 공문 본문 제목을 파일명으로 쓴다', () => {
+    const docTitle = '2026년도 공직유관단체 채용실태 전수조사 계획 송부';
+    reserveDownloadName(`${docTitle}.pdf`, { docTitle, rename: false }, { preferFallback: true });
+    expect(consumeDownloadName('Document.pdf')).toBe(`${docTitle}.pdf`);
+  });
+
+  it('브라우저가 임시 기본 이름(download.pdf, 다운로드 (1).pdf)을 줄 때는 fallbackName과 제안된 확장자를 결합한다', () => {
+    reserveDownloadName('붙임1', { docTitle: '예산 편성 지침', rename: false });
+    expect(consumeDownloadName('다운로드 (1).pdf')).toBe('붙임1.pdf');
+  });
 });

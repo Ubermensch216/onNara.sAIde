@@ -10,6 +10,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { normalizedAttachmentPath } from '@/lib/downloads/naming';
+import { exportNunchiListingPackages } from '@/lib/onnara/download';
 import fixture from './package.fixture.json';
 import { buildPackage, describePackage, isoDate, listRowId, newRunId, packageRoot, relativeToPackage } from './package';
 
@@ -128,5 +129,113 @@ describe('꾸러미', () => {
     });
     const [a, b] = pkg.documents.map(document => document.document_id);
     expect(b).toBe(`${a}-2`);
+  });
+
+  it('단위과제·문서번호·고유 문서 ID·전체 목록 범위를 꾸러미에 담는다', async () => {
+    const pkg = await buildPackage({
+      runId: 'run_list_1',
+      root: ROOT,
+      pageUrl: 'http://onnara.invalid/bms/list.do',
+      listName: '문서등록대장',
+      extensionVersion: '0.1.0',
+      scopeKind: 'listing',
+      listing: { total: 1, finished: true },
+      documents: [
+        {
+          title: '2025년 적극행정 실행계획',
+          row: {
+            title: '2025년 적극행정 실행계획',
+            reportDate: '2025.03.10',
+            documentNumber: '기획과-1201',
+            taskCard: '적극행정 추진',
+            reporter: '홍길동',
+            department: '기획과',
+            status: '결재완료',
+            sourceDocId: 'DOC-2025-0001',
+            idBasis: 'source-document-id',
+          },
+          files: [{ name: '본문.pdf', status: 'complete', downloadId: 1, path: saved('20250310_2025년 적극행정 실행계획/본문.pdf') }],
+        },
+      ],
+    });
+    expect(pkg.scope.kind).toBe('listing');
+    expect(pkg.listing).toEqual({ total: 1, finished: true });
+    expect(pkg.documents[0]).toMatchObject({
+      document_id: 'DOC-2025-0001',
+      id_basis: 'source-document-id',
+      document_number: '기획과-1201',
+      task_card: '적극행정 추진',
+    });
+  });
+
+  it('목록 전체 내보내기는 50건 단위로 꾸러미를 나누고 중단 시 직전 꾸러미까지 보존한다', async () => {
+    const rows = Array.from({ length: 120 }, (_, i) => ({
+      title: `문서 ${i + 1}`,
+      reportDate: '2025.05.01',
+      documentNumber: `기획과-${1000 + i}`,
+      taskCard: '정기보고',
+      sourceDocId: `DOC-${i + 1}`,
+      idBasis: 'source-document-id',
+    }));
+    const savedPackages: Array<{ filename: string; pkg: unknown }> = [];
+    const page = {
+      url: 'http://onnara.invalid/bms/list.do',
+      title: '문서등록대장',
+      text: '',
+      charCount: 0,
+      keptRatio: 1,
+      estimatedTokens: 0,
+      method: 'readability' as const,
+      extractedAt: 0,
+      truncated: false,
+      structuredData: { kind: 'onnara-document-list' as const, listName: '문서등록대장', columns: [], rows },
+    };
+
+    const result = await exportNunchiListingPackages({
+      tabId: 1,
+      page,
+      rows,
+      totalExpected: 120,
+      chunkSize: 50,
+      nunchi: null,
+      downloadChunk: async (titles, chunkRoot) =>
+        titles.map(t => ({
+          files: [{ name: `${t}.pdf`, status: 'complete' as const, downloadId: 1, path: `${DOWNLOADS}\\${chunkRoot.replace(/\//g, '\\')}\\${t}.pdf` }],
+        })),
+      save: async (json, filename) => {
+        savedPackages.push({ filename, pkg: JSON.parse(json) });
+        return { name: 'package.json', status: 'complete', downloadId: 99, path: `${DOWNLOADS}\\${filename.replace(/\//g, '\\')}` };
+      },
+    });
+
+    expect(result.runIds).toHaveLength(3);
+    expect(result.exportedDocs).toBe(120);
+    expect(result.completed).toBe(true);
+    expect(savedPackages.map(item => (item.pkg as { documents: unknown[] }).documents.length)).toEqual([50, 50, 20]);
+    expect((savedPackages[2]!.pkg as { listing: { finished: boolean } }).listing.finished).toBe(true);
+
+    // 1번째 꾸러미 저장 후 중단 신호가 오면 1번째 꾸러미는 남고 completed는 false다
+    const controller = new AbortController();
+    const partialSaved: string[] = [];
+    const aborted = await exportNunchiListingPackages({
+      tabId: 1,
+      page,
+      rows,
+      chunkSize: 50,
+      nunchi: null,
+      signal: controller.signal,
+      downloadChunk: async (titles, chunkRoot) =>
+        titles.map(t => ({
+          files: [{ name: `${t}.pdf`, status: 'complete' as const, downloadId: 1, path: `${DOWNLOADS}\\${chunkRoot.replace(/\//g, '\\')}\\${t}.pdf` }],
+        })),
+      save: async (_json, filename) => {
+        partialSaved.push(filename);
+        controller.abort();
+        return { name: 'package.json', status: 'complete', downloadId: 99, path: `${DOWNLOADS}\\${filename.replace(/\//g, '\\')}` };
+      },
+    });
+    expect(aborted.runIds).toHaveLength(1);
+    expect(aborted.exportedDocs).toBe(50);
+    expect(aborted.completed).toBe(false);
   });
 });

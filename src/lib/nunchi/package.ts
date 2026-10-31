@@ -25,6 +25,7 @@ export const PACKAGE_VERSION = 1;
 export const PACKAGE_FILE = 'package.json';
 
 export type ListRow = Partial<Record<DocumentListField, string>>;
+export type DocumentIdBasis = 'list-row' | 'source-document-id' | 'management-number-and-date';
 
 export interface PackageAsset {
   asset_id: string;
@@ -41,9 +42,10 @@ export interface PackageAsset {
 
 export interface PackageDocument {
   document_id: string;
-  id_basis: 'list-row';
+  id_basis: DocumentIdBasis;
   title: string;
   document_number: string;
+  task_card?: string;
   author_id: string;
   author_name: string;
   department: string;
@@ -60,15 +62,15 @@ export interface NunchiPackage {
   exporter: { name: string; version: string };
   system: { origin: string; institution: string };
   scope: {
-    kind: 'selection';
+    kind: 'selection' | 'listing';
     list_name: string;
-    author_ids: never[];
-    author_names: never[];
-    start_date: null;
-    end_date: null;
+    author_ids: string[];
+    author_names: string[];
+    start_date: string | null;
+    end_date: string | null;
     departments: string[];
   };
-  listing: { total: null; finished: false };
+  listing: { total: number | null; finished: boolean };
   documents: PackageDocument[];
 }
 
@@ -148,8 +150,16 @@ function assetsOf(document: ExportedDocument, root: string): PackageAsset[] {
   });
 }
 
+function validIdBasis(value: string | undefined): DocumentIdBasis {
+  if (value === 'source-document-id' || value === 'management-number-and-date') return value;
+  return 'list-row';
+}
+
 /** 목록 행 하나의 식별자(순번 없이). 꾸러미에 적히는 값과 눈치코치에 "이미 있나" 묻는 값이 같아야 한다. */
 export function rowIdOf(title: string, row: ListRow | undefined): Promise<string> {
+  if (row?.sourceDocId?.trim()) {
+    return Promise.resolve(row.sourceDocId.trim());
+  }
   return listRowId({ title, date: isoDate(row?.reportDate), department: row?.department ?? '', reporter: row?.reporter ?? '' });
 }
 
@@ -160,6 +170,8 @@ export async function buildPackage(input: {
   listName: string;
   extensionVersion: string;
   documents: ExportedDocument[];
+  scopeKind?: 'selection' | 'listing';
+  listing?: { total: number | null; finished: boolean };
   now?: Date;
 }): Promise<NunchiPackage> {
   let origin = '';
@@ -176,9 +188,10 @@ export async function buildPackage(input: {
     seen.set(base, count);
     documents.push({
       document_id: count === 1 ? base : `${base}-${count}`,
-      id_basis: 'list-row',
+      id_basis: validIdBasis(row.idBasis),
       title: document.title,
-      document_number: '',
+      document_number: row.documentNumber ?? '',
+      ...(row.taskCard ? { task_card: row.taskCard } : {}),
       author_id: '',
       author_name: row.reporter ?? '',
       department: row.department ?? '',
@@ -196,7 +209,7 @@ export async function buildPackage(input: {
     exporter: { name: 'onNara.sAIde', version: input.extensionVersion },
     system: { origin, institution: '' },
     scope: {
-      kind: 'selection',
+      kind: input.scopeKind ?? 'selection',
       list_name: input.listName,
       // ★ 체크한 문서가 곧 범위다. 작성자를 범위로 선언하면 보고자 칸이 빈 문서가
       //   눈치코치에서 "범위 밖"으로 빠진다. 작성자·기간은 받는 쪽이 문서에서 읽는다.
@@ -206,7 +219,7 @@ export async function buildPackage(input: {
       end_date: null,
       departments: [],
     },
-    listing: { total: null, finished: false },
+    listing: input.listing ?? { total: null, finished: false },
     documents,
   };
 }

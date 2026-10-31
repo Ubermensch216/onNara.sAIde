@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from 'vitest';
-import { fetchInboxPage, firstInboxPage, parseInboxPage } from './inbox-pages';
+import { collectAllDocumentListRows, fetchInboxPage, firstInboxPage, parseInboxPage } from './inbox-pages';
 import type { DocumentListLocation } from './document-navigation';
 
 const location: DocumentListLocation = {
@@ -101,4 +101,21 @@ it('총 건수가 남았는데 페이지 필드가 없으면 일부만 완료하
 
 it('다른 출처의 다음 링크를 따라가거나 완료로 처리하지 않는다', () => {
   expect(() => parseInboxPage(table() + '<a rel="next" href="https://another.test/inbox?pageNo=2">다음</a>', location)).toThrow('전체 수집');
+});
+
+it('문서등록대장 여러 페이지를 끝까지 순회해 행과 전체 건수를 모은다', async () => {
+  const pages = [
+    `<h2>문서등록대장</h2><div>전체 25건</div>` + table(1, 10) + '<div class="paging"><a onclick="linkPage(2)">2</a></div>',
+    `<h2>문서등록대장</h2>` + table(11, 10) + '<div class="paging"><a onclick="linkPage(3)">3</a></div>',
+    `<h2>문서등록대장</h2>` + table(21, 5) + '<div class="paging"><strong>3</strong></div>',
+  ];
+  let idx = 0;
+  const result = await collectAllDocumentListRows(location, {
+    signal: new AbortController().signal,
+    fetcher: async loc => parseInboxPage(pages[idx++]!, loc),
+  });
+  expect(result.listName).toBe('문서등록대장');
+  expect(result.rows).toHaveLength(25);
+  expect(result.total).toBe(25);
+  expect(result.finished).toBe(true);
 });

@@ -123,7 +123,17 @@ function OnnaraRefItem({
             <span className="font-bold text-xs flex items-center gap-1.5">
               <MaterialIcon name="assignment" size={14} className="text-blue-600" />
               <span>참고문서 핵심 요약</span>
-              {summarizing && <span className="text-[11px] text-blue-600 font-normal animate-pulse">(AI 요약 정리 중...)</span>}
+              {summarizing && (
+                <span
+                  role="status"
+                  title="AI 요약 정리 중..."
+                  className="relative inline-flex items-center justify-center text-blue-400/80"
+                >
+                  <span className="animate-ping absolute inline-flex h-3 w-3 rounded-full bg-blue-300/40" />
+                  <MaterialIcon name="autoAwesome" size={13} className="relative animate-pulse" />
+                  <span className="sr-only">AI 요약 정리 중...</span>
+                </span>
+              )}
             </span>
             {doc.content && (
               <button type="button" onClick={() => setShowRaw(!showRaw)} className="text-xs text-blue-600 hover:text-blue-800 underline font-medium cursor-pointer">

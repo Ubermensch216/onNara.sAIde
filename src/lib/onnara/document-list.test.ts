@@ -229,3 +229,71 @@ it('행이 있는 목록이 빈 목록보다 우선한다', () => {
     { reportDate: '2026.09.18', title: '실제 문서', department: '감사담당관', status: '접수' },
   ]);
 });
+
+it('문서등록대장 머리글(문서번호·단위과제·구분·기안자)과 행 문서 ID를 추출한다', () => {
+  document.body.innerHTML = `
+    <h2>문서등록대장</h2>
+    <table>
+      <tr>
+        <th>선택</th>
+        <th>등록번호</th>
+        <th>등록일자</th>
+        <th>제목</th>
+        <th>단위과제명</th>
+        <th>생산/접수</th>
+        <th>기안자</th>
+        <th>기안부서</th>
+        <th>결재상태</th>
+      </tr>
+      <tr data-doc-id="DOC-2025-0001">
+        <td><input type="checkbox"></td>
+        <td>기획과-1201</td>
+        <td>2025.03.10</td>
+        <td><a>2025년 적극행정 실행계획 수립</a></td>
+        <td>적극행정 추진</td>
+        <td>생산</td>
+        <td>홍길동</td>
+        <td>기획과</td>
+        <td>결재완료</td>
+      </tr>
+      <tr>
+        <td><input type="checkbox"></td>
+        <td>기획과-1540</td>
+        <td>2025.09.15</td>
+        <td><a>2025년 적극행정 우수사례 제출</a></td>
+        <td>적극행정 추진</td>
+        <td>접수</td>
+        <td>홍길동</td>
+        <td>기획과</td>
+        <td>접수완료</td>
+      </tr>
+    </table>`;
+  const list = extractStructuredDocumentList()!;
+  expect(list.listName).toBe('문서등록대장');
+  expect(list.rows).toEqual([
+    {
+      documentNumber: '기획과-1201',
+      reportDate: '2025.03.10',
+      title: '2025년 적극행정 실행계획 수립',
+      taskCard: '적극행정 추진',
+      docDirection: '생산',
+      reporter: '홍길동',
+      department: '기획과',
+      status: '결재완료',
+      sourceDocId: 'DOC-2025-0001',
+      idBasis: 'source-document-id',
+    },
+    {
+      documentNumber: '기획과-1540',
+      reportDate: '2025.09.15',
+      title: '2025년 적극행정 우수사례 제출',
+      taskCard: '적극행정 추진',
+      docDirection: '접수',
+      reporter: '홍길동',
+      department: '기획과',
+      status: '접수완료',
+      sourceDocId: '기획과-1540_2025.09.15',
+      idBasis: 'management-number-and-date',
+    },
+  ]);
+});
