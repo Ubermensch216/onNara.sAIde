@@ -88,21 +88,75 @@ export function consumeDownloadName(suggested: string): string | null {
   return normalizedAttachmentPath(resolveTargetName(suggested, current.fallbackName, current.preferFallback), current.plan);
 }
 
+/* ── 확장 페이지가 직접 만드는 다운로드(예: 꾸러미 package.json) ─────────────── */
+
+const PENDING_KEY = 'saide.pendingDownloadNames';
+const PENDING_TTL_MS = 60_000;
+type Pending = Record<string, { filename: string; until: number }>;
+
+/**
+ * 확장 페이지(사이드패널)가 `blob:` 주소로 내려받는 파일의 저장 경로를 서비스 워커에 알린다.
+ *
+ * ★ 왜 필요한가. `chrome.downloads.download({ filename })`의 filename은 `onDeterminingFilename`
+ *   처리기가 `suggest()`를 인자 없이 부르면 지켜지지 않는 환경이 있다. 그러면 파일이 꾸러미 폴더가 아니라
+ *   다운로드 폴더 바로 아래에 blob 주소의 UUID 이름(`767c0ee1-….json`)으로 저장된다.
+ *   사이드패널과 서비스 워커는 메모리를 공유하지 않으므로 세션 저장소로 넘긴다.
+ * ★ 실패해도 다운로드를 막지 않는다. 알리지 못하면 예전처럼 브라우저가 정한 이름이 된다.
+ */
+export async function holdDownloadName(url: string, filename: string): Promise<void> {
+  try {
+    const area = chrome.storage?.session;
+    if (!area) return;
+    const now = Date.now();
+    const stored = ((await area.get(PENDING_KEY))[PENDING_KEY] ?? {}) as Pending;
+    const live = Object.fromEntries(Object.entries(stored).filter(([, entry]) => entry.until > now));
+    await area.set({ [PENDING_KEY]: { ...live, [url]: { filename, until: now + PENDING_TTL_MS } } });
+  } catch {
+    // 저장소를 쓸 수 없으면 알리지 않는다.
+  }
+}
+
+/** [holdDownloadName]으로 맡긴 이름을 한 번만 꺼낸다. */
+async function takeHeldName(url: string | undefined): Promise<string | null> {
+  if (!url) return null;
+  try {
+    const area = chrome.storage?.session;
+    if (!area) return null;
+    const stored = ((await area.get(PENDING_KEY))[PENDING_KEY] ?? {}) as Pending;
+    const entry = stored[url];
+    if (!entry) return null;
+    const { [url]: _taken, ...rest } = stored;
+    await area.set({ [PENDING_KEY]: rest });
+    return entry.until > Date.now() ? entry.filename : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * 서비스 워커에 처리기를 건다. **최상위에서** 부른다 — 워커는 이벤트마다 깨었다 죽는다.
  *
- * `onDeterminingFilename`은 동기로 `suggest`를 불러야 한다. 어떤 이유로든 실패하면
- * 인자 없이 불러 브라우저의 기본 동작으로 넘긴다(다운로드를 막지 않는다).
+ * `onDeterminingFilename`은 `suggest`를 한 번 불러야 한다(비동기로 부르려면 `true`를 돌려준다).
+ * 어떤 이유로든 실패하면 인자 없이 불러 브라우저의 기본 동작으로 넘긴다(다운로드를 막지 않는다).
  */
 export function registerDownloadNaming(): void {
   if (typeof chrome === 'undefined' || !chrome.downloads?.onDeterminingFilename?.addListener) return;
   chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
     try {
       const filename = consumeDownloadName(item.filename ?? '');
-      if (filename) suggest({ filename, conflictAction: 'uniquify' });
-      else suggest();
+      if (filename) { suggest({ filename, conflictAction: 'uniquify' }); return; }
+      const ownBlob = item.byExtensionId === chrome.runtime?.id || Boolean(item.url?.startsWith('blob:chrome-extension://'));
+      if (ownBlob) {
+        void takeHeldName(item.url).then(held => {
+          if (held) suggest({ filename: held, conflictAction: 'overwrite' });
+          else suggest();
+        });
+        return true;
+      }
+      suggest();
     } catch {
       suggest();
     }
+    return undefined;
   });
 }

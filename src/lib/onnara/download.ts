@@ -2,6 +2,7 @@ import { sendToSW, type AppError, type AttachmentDownloadResult, type Attachment
 import { loadSettings } from '@/lib/storage/settings';
 import { downloadLink, escapeMarkdownText } from '@/lib/downloads/links';
 import { panelLink } from '@/lib/panel/links';
+import { holdDownloadName } from '@/lib/downloads/rename';
 import { cancelAutomation, enqueueAutomation, workTabLock, type AutomationJob } from '@/lib/automation/jobs';
 import { buildPackage, describePackage, newRunId, packageRoot, PACKAGE_FILE, rowIdOf, type ListRow } from '@/lib/nunchi/package';
 import { announcePackage, knownDocuments, reportNunchiRequestProgress } from '@/lib/nunchi/client';
@@ -365,6 +366,8 @@ async function announceToNunchi(nunchi: NunchiConnection | null, runId: string, 
 async function savePackageFile(json: string, filename: string): Promise<AttachmentDownloadResult> {
   const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
   try {
+    // 서비스 워커가 이 blob 주소의 저장 경로를 알게 한다(안 그러면 UUID 이름으로 다운로드 폴더에 떨어진다).
+    await holdDownloadName(url, filename);
     const downloadId = await chrome.downloads.download({ url, filename, conflictAction: 'overwrite', saveAs: false });
     if (downloadId === undefined) return { name: PACKAGE_FILE, status: 'not_started', message: '꾸러미 파일을 저장하지 못했습니다.' };
     for (let attempt = 0; attempt < 40; attempt++) {

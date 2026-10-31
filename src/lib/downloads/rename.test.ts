@@ -7,7 +7,7 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { clearDownloadName, consumeDownloadName, reserveDownloadName } from './rename';
+import { clearDownloadName, consumeDownloadName, holdDownloadName, registerDownloadNaming, reserveDownloadName } from './rename';
 
 beforeEach(() => {
   vi.useRealTimers();
@@ -81,5 +81,42 @@ describe('예약 소비', () => {
   it('브라우저가 임시 기본 이름(download.pdf, 다운로드 (1).pdf)을 줄 때는 fallbackName과 제안된 확장자를 결합한다', () => {
     reserveDownloadName('붙임1', { docTitle: '예산 편성 지침', rename: false });
     expect(consumeDownloadName('다운로드 (1).pdf')).toBe('붙임1.pdf');
+  });
+});
+
+describe('확장 페이지의 blob 다운로드 (꾸러미 package.json)', () => {
+  type Listener = (item: { url?: string; filename?: string; byExtensionId?: string }, suggest: (s?: { filename: string; conflictAction: string }) => void) => boolean | undefined;
+
+  function install() {
+    const store: Record<string, unknown> = {};
+    let listener!: Listener;
+    vi.stubGlobal('chrome', {
+      runtime: { id: 'ext-id' },
+      storage: { session: {
+        get: vi.fn(async (key: string) => ({ [key]: store[key] })),
+        set: vi.fn(async (values: Record<string, unknown>) => { Object.assign(store, values); }),
+      } },
+      downloads: { onDeterminingFilename: { addListener: (fn: Listener) => { listener = fn; } } },
+    });
+    registerDownloadNaming();
+    return (item: Parameters<Listener>[0]) => new Promise<unknown>(resolve => {
+      const async = listener(item, suggestion => resolve(suggestion ?? null));
+      expect(async).toBe(true);
+    });
+  }
+
+  // ★ 이게 깨지면 package.json이 꾸러미 폴더 밖에 UUID 이름으로 떨어져 눈치코치가 읽지 못한다.
+  it('★ 맡겨 둔 저장 경로를 blob 주소에 적용하고, 한 번만 쓴다', async () => {
+    const run = install();
+    const url = 'blob:chrome-extension://ext-id/767c0ee1-9803-4bd8-b30a-68b010e05400';
+    await holdDownloadName(url, 'onNara.sAIde/수집/20261031_150000_abcd/package.json');
+    const item = { url, filename: '767c0ee1-9803-4bd8-b30a-68b010e05400.json', byExtensionId: 'ext-id' };
+    expect(await run(item)).toEqual({ filename: 'onNara.sAIde/수집/20261031_150000_abcd/package.json', conflictAction: 'overwrite' });
+    expect(await run(item)).toBeNull();
+  });
+
+  it('맡긴 이름이 없으면 브라우저 기본 동작으로 넘긴다', async () => {
+    const run = install();
+    expect(await run({ url: 'blob:chrome-extension://ext-id/other', byExtensionId: 'ext-id' })).toBeNull();
   });
 });
