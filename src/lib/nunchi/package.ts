@@ -19,6 +19,7 @@
 import type { AppError, AttachmentDownloadResult } from '@/lib/messaging/protocol';
 import type { DocumentListField } from '@/lib/onnara/document-list';
 import { sanitizeRoot } from '@/lib/downloads/naming';
+import { originalDocTitle } from '@/lib/downloads/doc-title';
 
 export const PACKAGE_FORMAT = 'saide-onnara-package';
 export const PACKAGE_VERSION = 1;
@@ -189,7 +190,7 @@ export async function buildPackage(input: {
     documents.push({
       document_id: count === 1 ? base : `${base}-${count}`,
       id_basis: validIdBasis(row.idBasis),
-      title: document.title,
+      title: originalDocTitle(document.title),
       document_number: row.documentNumber ?? '',
       ...(row.taskCard ? { task_card: row.taskCard } : {}),
       author_id: '',

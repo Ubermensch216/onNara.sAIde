@@ -12,6 +12,7 @@ import { forgetPanelSpawn, isReportedPanelTab, notePanelSpawn, panelOpener, reme
 import type { AppError, AttachmentDownloadResult, AttachmentNaming, ExtractedPage, RequestControl, SWToContent } from '@/lib/messaging/protocol';
 import { isHtmlAttachmentName } from '@/lib/onnara/attachments';
 import { sanitizeSegment } from '@/lib/downloads/naming';
+import { originalDocTitle } from '@/lib/downloads/doc-title';
 import { clearDownloadName, registerDownloadNaming, reserveDownloadName } from '@/lib/downloads/rename';
 import { bodyMarkdown, markdownDataUrl } from '@/lib/nunchi/body-text';
 import { documentReadState, isReceivedDocumentList, normalizeForMatch, sameDocumentTitle, type StructuredDocumentList } from '@/lib/onnara/document-list';
@@ -3120,9 +3121,9 @@ export function resolveBodyDocTitle(
   ];
   for (const candidate of candidates) {
     const trimmed = candidate?.trim();
-    if (trimmed && !GENERIC_ONNARA_TITLE.test(trimmed)) return trimmed;
+    if (trimmed && !GENERIC_ONNARA_TITLE.test(trimmed)) return originalDocTitle(trimmed);
   }
-  return (namingTitle || payload?.title || '공문서').trim();
+  return originalDocTitle((namingTitle || payload?.title || '공문서').trim());
 }
 
 /**

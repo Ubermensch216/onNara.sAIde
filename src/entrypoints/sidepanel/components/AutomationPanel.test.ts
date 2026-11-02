@@ -310,3 +310,25 @@ it('실행할 작업에서 "첨부만", "본문만", "본문+첨부" 옵션을 �
   expect((downloads[1] as { mode?: string }).mode).toBe('all');
 });
 
+
+it('실행 기록에 [auto] 접두어가 붙은 공문도 화면에는 [auto]를 제거한 원본 제목으로 표시한다', async () => {
+  vi.stubGlobal('chrome', { runtime: { sendMessage: vi.fn() }, storage: { local: { get: vi.fn(async () => ({})), set: vi.fn() } } });
+  useAutomation.setState({
+    jobs: [{
+      id: 'job-auto-1',
+      kind: 'download-all',
+      label: '[auto] 공공부문 AI 서비스 지원사업 과제별 성과지표(안) 검토 요청',
+      origin: 'automation',
+      status: 'complete',
+      createdAt: Date.now(),
+      finishedAt: Date.now(),
+      files: [],
+    }],
+    loaded: true,
+  });
+  await act(() => root.render(createElement(AutomationPanel, { tab, onDownloadLink: vi.fn() })));
+  await settle();
+
+  const titleEl = document.querySelector('.auto-job-title');
+  expect(titleEl?.textContent).toBe('공공부문 AI 서비스 지원사업 과제별 성과지표(안) 검토 요청');
+});

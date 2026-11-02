@@ -3,6 +3,7 @@ import { loadSettings } from '@/lib/storage/settings';
 import { downloadLink, escapeMarkdownText } from '@/lib/downloads/links';
 import { panelLink } from '@/lib/panel/links';
 import { holdDownloadName } from '@/lib/downloads/rename';
+import { originalDocTitle } from '@/lib/downloads/doc-title';
 import { cancelAutomation, enqueueAutomation, workTabLock, type AutomationJob } from '@/lib/automation/jobs';
 import { buildPackage, describePackage, newRunId, packageRoot, PACKAGE_FILE, rowIdOf, type ListRow } from '@/lib/nunchi/package';
 import { announcePackage, knownDocuments, reportNunchiRequestProgress } from '@/lib/nunchi/client';
@@ -68,7 +69,7 @@ export async function queueAttachmentDownloads(options: {
   // 앞 문서의 파일이 아직 내려받는 중이면 동시 다운로드를 피하려고 뒤 문서는 실행하지 않는다.
   let stalled = false;
   const pending = titles.map((title, index) => enqueueAutomation({
-    kind: jobKind, label: title ?? page.title, origin,
+    kind: jobKind, label: originalDocTitle(title ?? page.title), origin,
     run: async jobSignal => {
       if (stalled) return { error: { code: 'UNKNOWN', message: '앞 문서의 다운로드가 아직 끝나지 않아 실행하지 않았습니다. 다운로드가 끝난 뒤 다시 요청하세요.' } };
       const response = await sendToSW({
@@ -115,7 +116,7 @@ async function namingPlans(page: ExtractedPage, titles: Array<string | undefined
     const rows = page.structuredData?.rows ?? [];
     return titles.map(title => {
       const reportDate = title ? rows.find(row => row.title === title)?.reportDate : undefined;
-      return { docTitle: (title ?? page.title).trim() || '문서', ...(reportDate ? { reportDate } : {}), folder: true, rename: false, root: packageRoot };
+      return { docTitle: originalDocTitle((title ?? page.title).trim()) || '문서', ...(reportDate ? { reportDate } : {}), folder: true, rename: false, root: packageRoot };
     });
   }
   const settings = await loadSettings().catch(() => null);
@@ -124,7 +125,7 @@ async function namingPlans(page: ExtractedPage, titles: Array<string | undefined
   if (!rename && !settings.attachmentFolder) return titles.map(() => null);
   const rows = page.structuredData?.rows ?? [];
   return titles.map(title => {
-    const docTitle = title ?? page.title;
+    const docTitle = originalDocTitle(title ?? page.title);
     if (!docTitle.trim()) return null;
     const reportDate = title ? rows.find(row => row.title === title)?.reportDate : undefined;
     return {

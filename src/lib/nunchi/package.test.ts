@@ -12,7 +12,7 @@ import { describe, expect, it } from 'vitest';
 import { normalizedAttachmentPath } from '@/lib/downloads/naming';
 import { exportNunchiListingPackages } from '@/lib/onnara/download';
 import fixture from './package.fixture.json';
-import { buildPackage, describePackage, isoDate, listRowId, newRunId, packageRoot, relativeToPackage } from './package';
+import { buildPackage, describePackage, isoDate, listRowId, newRunId, packageRoot, relativeToPackage, rowIdOf } from './package';
 
 const ROOT = packageRoot('20261012_153000_4f2a');
 const DOWNLOADS = 'C:\\Users\\tester\\Downloads';
@@ -119,6 +119,16 @@ describe('꾸러미', () => {
     expect(first.documents.map(document => document.id_basis)).toEqual(['list-row', 'list-row', 'list-row']);
     expect(first.documents.map(document => document.document_id)).toEqual(second.documents.map(document => document.document_id));
     expect(first.documents[0]!.document_id).toBe(await listRowId({ title: '2025년 실적 보고', date: '2025-09-01', department: '기획과', reporter: '홍길동' }));
+  });
+
+  it('★ 꾸러미의 제목에는 [auto] 표시를 싣지 않지만, 식별자는 목록 행 그대로라 이미 받은 문서를 알아본다', async () => {
+    const row = { title: '[auto]데이터 품질관리 협조 요청', reportDate: '2026. 8. 7.', department: '기획과', reporter: '홍길동' };
+    const pkg = await buildPackage({
+      runId: 'r', root: ROOT, pageUrl: 'http://onnara.invalid/', listName: '', extensionVersion: '0',
+      documents: [{ title: row.title, row }],
+    });
+    expect(pkg.documents[0]!.title).toBe('데이터 품질관리 협조 요청');
+    expect(pkg.documents[0]!.document_id).toBe(await rowIdOf(row.title, row));
   });
 
   it('같은 날 같은 제목의 문서 둘은 서로 다른 식별자를 갖는다', async () => {

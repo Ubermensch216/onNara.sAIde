@@ -21,6 +21,7 @@ import {
   type AutomationJob,
 } from '@/lib/automation/jobs';
 import { exportNunchiListingPackages, exportNunchiPackage, queueAttachmentDownloads } from '@/lib/onnara/download';
+import { originalDocTitle } from '@/lib/downloads/doc-title';
 import { getNunchiRequests, type NunchiCollectionRequest } from '@/lib/nunchi/client';
 import { isNunchiPaired, loadNunchi } from '@/lib/nunchi/connection';
 import type { DownloadLinkAction } from '@/lib/downloads/links';
@@ -373,11 +374,13 @@ function JobRow({ job, spotlight = null, onDownloadLink }: {
     if (lit) row.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
   }, [lit]);
 
+  const displayTitle = originalDocTitle(job.label);
+
   return (
     <li ref={row} className={`auto-job ${job.status} ${lit ? 'lit' : ''}`}>
       <div className="auto-job-head">
         <span className="auto-status">{t(`auto.status.${job.status}`)}</span>
-        <span className="auto-job-title" title={job.label}>{job.label}</span>
+        <span className="auto-job-title" title={displayTitle}>{displayTitle}</span>
         {running
           ? <button type="button" className="auto-link" onClick={() => cancelAutomation(job.id)}>{t('auto.cancel')}</button>
           : <time className="auto-time" dateTime={new Date(job.finishedAt ?? job.createdAt).toISOString()}>{formatTime(job.finishedAt ?? job.createdAt)}</time>}
