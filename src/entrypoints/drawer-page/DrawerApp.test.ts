@@ -60,6 +60,7 @@ describe('DrawerApp UI/UX 개선 검증', () => {
     expect(document.body.textContent).toContain('코파일럿');
     expect(document.body.textContent).toContain('초안 작성');
     expect(document.body.textContent).toContain('서식관리');
+    expect(document.body.textContent).toContain('퇴고');
 
     // 2. 정보 구조: 세 섹션 중 1, 2 영역만 기본 노출
     expect(document.body.textContent).toContain('작성 설정');
@@ -759,6 +760,22 @@ describe('업무계획에서 넘어온 회신 준비', () => {
     expect(bodies.at(-1)).toMatchObject({ stream: false, options: { temperature: 0 } });
     expect(document.body.textContent).toContain('1/2 충족');
     expect(document.body.textContent).toContain('확인 못함');
+  });
+  it('퇴고 탭을 클릭하면 공문서 퇴고 화면이 표시되고 본 화면 맞춤법 검사와 블럭 메뉴 서브탭을 제공한다', async () => {
+    await act(() => root.render(createElement(DrawerApp)));
+    await settle();
+
+    const reviewTabButton = [...document.querySelectorAll('button[role="tab"]')].find(
+      (btn) => btn.textContent?.includes('퇴고')
+    );
+    expect(reviewTabButton).toBeDefined();
+
+    await act(async () => reviewTabButton?.click());
+    await settle();
+
+    expect(document.body.textContent).toContain('공문서 퇴고 및 교정');
+    expect(document.body.textContent).toContain('본 화면 맞춤법 검사');
+    expect(document.body.textContent).toContain('블럭 메뉴 (문장 지원)');
   });
 });
 

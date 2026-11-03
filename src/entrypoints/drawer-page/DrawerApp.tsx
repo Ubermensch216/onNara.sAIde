@@ -32,6 +32,7 @@ import {
 } from '@/lib/storage/draft-templates';
 import type { UserRef } from '@/lib/storage/user-refs';
 import { TemplateManager } from './components/TemplateManager';
+import { ReviewTab } from './components/ReviewTab';
 import { StyledDraftPreview } from './components/StyledDraftPreview';
 import { buildStyledInsert, formatHierarchyPrompt, layoutDraft } from '@/lib/template-format/apply';
 import { MaterialIcon } from './components/MaterialIcon';
@@ -72,7 +73,7 @@ function formatLabel(ref: UserRef): string {
 
 export function DrawerApp() {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
-  const [activeTab, setActiveTab] = useState<'draft' | 'templates'>('draft');
+  const [activeTab, setActiveTab] = useState<'draft' | 'templates' | 'review'>('draft');
 
   // 문서 컨텍스트 상태
   const [docTitle, setDocTitle] = useState<string>('');
@@ -817,6 +818,20 @@ export function DrawerApp() {
             </span>
           )}
         </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'review'}
+          onClick={() => setActiveTab('review')}
+          className={`px-3 py-2 font-semibold text-xs sm:text-[13px] border-b-2 transition flex items-center gap-1.5 cursor-pointer ${
+            activeTab === 'review'
+              ? 'border-blue-600 text-blue-700 bg-blue-50/60 rounded-t'
+              : 'border-transparent text-slate-500 hover:text-slate-800 hover:bg-slate-50 rounded-t'
+          }`}
+        >
+          <MaterialIcon name="spellcheck" size={16} />
+          <span>퇴고</span>
+        </button>
       </nav>
 
       {/* ── 탭 2: 서식관리 화면 (별도 관리 도구) ── */}
@@ -826,6 +841,29 @@ export function DrawerApp() {
           onSelectTemplateForDraft={handleSelectTemplateFromManager}
           onRefreshTemplates={() => {
             loadDraftTemplates().then(setTemplates);
+          }}
+        />
+      ) : activeTab === 'review' ? (
+        /* ── 탭 3: 퇴고 화면 (본 화면 맞춤법 검사 및 블럭 메뉴) ── */
+        <ReviewTab
+          settings={settings}
+          docTitle={docTitle}
+          needsOpenBody={needsOpenBody}
+          hasWriteBodyBtn={hasWriteBodyBtn}
+          onOpenBodyClick={clickOpenBody}
+          onPrepareInsert={(text, mode) => {
+            window.parent.postMessage(
+              {
+                type: 'DRAFT_PREPARE_INSERT',
+                requestId: `req_${Date.now()}`,
+                payload: { text, mode: mode || 'cursor' },
+              },
+              parentMessageOrigin() ?? location.origin
+            );
+          }}
+          onShowToast={(msg) => {
+            setStatusMsg(msg);
+            setTimeout(() => setStatusMsg(''), 3200);
           }}
         />
       ) : (

@@ -799,6 +799,171 @@ async function handleMainWorldHwpGetSelection(tabId: number): Promise<{ text: st
 
 /**
  * 온나라 기안기 탭의 모든 프레임에서 메인 월드(world: 'MAIN')로
+ * 한컴 웹기안기(HwpCtrl) 또는 에디터의 전체 본문 텍스트를 조회한다.
+ */
+async function handleMainWorldHwpGetBody(tabId: number): Promise<{ text: string }> {
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId, allFrames: true },
+      world: 'MAIN',
+      func: async () => {
+        return new Promise<string>((resolve) => {
+          try {
+            function findHwpInWindow(w: any): any {
+              if (!w) return null;
+              try {
+                var candidates = [
+                  w.HwpCtrl,
+                  w.pHwpCtrl,
+                  w.vHwpCtrl,
+                  w.hwpCtrl,
+                  w.hwp_ctrl,
+                  w.hwpDoc,
+                  w.WebHwpCtrl,
+                  w.HwpObject,
+                ];
+                for (var i = 0; i < candidates.length; i++) {
+                  var c = candidates[i];
+                  if (c && (typeof c.GetTextFile === 'function' || typeof c.Run === 'function' || typeof c.PutFieldText === 'function' || typeof c.InsertText === 'function')) {
+                    return c;
+                  }
+                }
+                var doc = w.document;
+                if (doc) {
+                  var elIds = ['HwpCtrl', 'hwpCtrl', 'tbContentElement', 'hwp_ctrl'];
+                  for (var j = 0; j < elIds.length; j++) {
+                    var el = doc.getElementById(elIds[j]);
+                    if (el) {
+                      if (typeof el.GetTextFile === 'function' || typeof el.Run === 'function' || typeof el.PutFieldText === 'function') {
+                        return el;
+                      }
+                      if (el.contentWindow) {
+                        try {
+                          var cwHwp = findHwpInWindow(el.contentWindow);
+                          if (cwHwp) return cwHwp;
+                        } catch (e) {}
+                      }
+                      if (el.HwpCtrl && (typeof el.HwpCtrl.GetTextFile === 'function')) {
+                        return el.HwpCtrl;
+                      }
+                    }
+                  }
+                  var plugins = doc.querySelectorAll('object, embed');
+                  for (var p = 0; p < plugins.length; p++) {
+                    var plug = plugins[p];
+                    if (plug && typeof plug.GetTextFile === 'function') {
+                      return plug;
+                    }
+                  }
+                }
+              } catch (err) {}
+              return null;
+            }
+
+            function findHwp() {
+              var w = window as any;
+              if (!w) return null;
+              var direct = findHwpInWindow(w);
+              if (direct) return direct;
+              if (w.frames) {
+                for (var f = 0; f < w.frames.length; f++) {
+                  try {
+                    var fw = w.frames[f];
+                    var fHwp = findHwpInWindow(fw);
+                    if (fHwp) return fHwp;
+                  } catch (e) {}
+                }
+              }
+              try {
+                if (w.parent && w.parent !== w) {
+                  var pHwp = findHwpInWindow(w.parent);
+                  if (pHwp) return pHwp;
+                }
+              } catch (e) {}
+              return null;
+            }
+
+            function resolveFallback() {
+              try {
+                var doc = window.document;
+                if (doc) {
+                  var ta = doc.querySelector('textarea[name*="body"], textarea[name*="content"], textarea#body, textarea#content, textarea');
+                  if (ta && (ta as any).value && (ta as any).value.trim().length > 0) {
+                    resolve((ta as any).value.trim());
+                    return;
+                  }
+                  var ce = doc.querySelector('[contenteditable="true"]');
+                  if (ce && ce.textContent && ce.textContent.trim().length > 0) {
+                    resolve(ce.textContent.trim());
+                    return;
+                  }
+                }
+              } catch (e) {}
+              resolve('');
+            }
+
+            var h = findHwp();
+            if (h && typeof h.GetTextFile === 'function') {
+              var isDone = false;
+              var timer = setTimeout(function() {
+                if (!isDone) {
+                  isDone = true;
+                  resolveFallback();
+                }
+              }, 1200);
+
+              function finish(val: any) {
+                if (!isDone) {
+                  isDone = true;
+                  clearTimeout(timer);
+                  var s = (typeof val === 'string' ? val : (val?.data || val?.result || val?.text || '')).trim();
+                  if (s) {
+                    resolve(s);
+                  } else {
+                    resolveFallback();
+                  }
+                }
+              }
+
+              try {
+                var r = h.GetTextFile('TEXT', '', function(textResult: any) {
+                  finish(textResult);
+                });
+                if (typeof r === 'string' && r.trim()) {
+                  finish(r);
+                  return;
+                }
+                if (r && typeof r.then === 'function') {
+                  r.then(function(val: any) { finish(val); }).catch(function() { finish(''); });
+                  return;
+                }
+              } catch (err) {
+                finish('');
+              }
+              return;
+            }
+
+            resolveFallback();
+          } catch {
+            resolve('');
+          }
+        });
+      },
+    });
+
+    for (const r of results ?? []) {
+      if (r?.result && typeof r.result === 'string' && r.result.trim()) {
+        return { text: r.result.trim() };
+      }
+    }
+    return { text: '' };
+  } catch {
+    return { text: '' };
+  }
+}
+
+/**
+ * 온나라 기안기 탭의 모든 프레임에서 메인 월드(world: 'MAIN')로
  * 한컴 웹기안기(HwpCtrl)의 선택 영역을 새로운 텍스트로 치환(삭제 후 줄바꿈 보존 삽입)한다.
  */
 async function handleMainWorldHwpReplaceSelection(
@@ -1371,6 +1536,15 @@ export default defineBackground(() => {
         handleMainWorldHwpTitle(tabId, String((msg as any).title || ''))
           .then(res => sendResponse(res))
           .catch(err => sendResponse({ success: false, error: String(err) }));
+        return true;
+      }
+    }
+    if (msg && typeof msg === 'object' && (msg as any).type === 'DRAFT_MAIN_WORLD_HWP_GET_BODY') {
+      const tabId = sender.tab?.id;
+      if (tabId) {
+        handleMainWorldHwpGetBody(tabId)
+          .then(res => sendResponse(res))
+          .catch(err => sendResponse({ text: '', error: String(err) }));
         return true;
       }
     }
@@ -3126,6 +3300,9 @@ export function resolveBodyDocTitle(
   return originalDocTitle((namingTitle || payload?.title || '공문서').trim());
 }
 
+/** 내려받은 본문 파일명의 접두. 첨부와 구분하는 표지다. */
+const BODY_FILE_PREFIX = '[본문] ';
+
 /**
  * 상세 화면에서 본문(PDF 원본 또는 텍스트 기반 생성 PDF)을 한 파일로 내려받는다.
  */
@@ -3156,7 +3333,8 @@ export async function downloadBodyInTab(
 
   let rawTitle = resolveBodyDocTitle(naming?.docTitle, pdfSource?.url, existingPayload);
   let docTitle = sanitizeSegment(rawTitle.replace(/\.(?:pdf|md)$/i, ''), 140) || '공문서';
-  let defaultName = `${docTitle}.pdf`;
+  // ★ 본문 파일은 이름 앞에 [본문]을 붙인다. 눈치코치가 본문과 첨부를 파일명만으로 가를 수 있게 한다.
+  let defaultName = `${BODY_FILE_PREFIX}${docTitle}.pdf`;
   /** 결과에 덧붙일 표시. 원본 PDF면 비어 있다. */
   let origin: Pick<AttachmentDownloadResult, 'generated' | 'extractedText' | 'truncated'> = {};
 
@@ -3182,7 +3360,7 @@ export async function downloadBodyInTab(
         rawTitle = resolveBodyDocTitle(naming?.docTitle, pdfSource?.url, body);
         docTitle = sanitizeSegment(rawTitle.replace(/\.(?:pdf|md)$/i, ''), 140) || '공문서';
       }
-      defaultName = `${docTitle}.md`;
+      defaultName = `${BODY_FILE_PREFIX}${docTitle}.md`;
       origin = { extractedText: true, ...(body.truncated ? { truncated: true } : {}) };
       downloadUrl = markdownDataUrl(bodyMarkdown({
         title: docTitle, reportDate: naming.reportDate, sourceUrl: body.sourceFrameUrl ?? body.url,
@@ -3205,7 +3383,7 @@ export async function downloadBodyInTab(
         if (GENERIC_ONNARA_TITLE.test(rawTitle)) {
           rawTitle = resolveBodyDocTitle(naming?.docTitle, pdfSource?.url, extracted.payload);
           docTitle = sanitizeSegment(rawTitle.replace(/\.(?:pdf|md)$/i, ''), 140) || '공문서';
-          defaultName = `${docTitle}.pdf`;
+          defaultName = `${BODY_FILE_PREFIX}${docTitle}.pdf`;
         }
       }
     }

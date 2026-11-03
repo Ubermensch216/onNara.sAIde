@@ -21,6 +21,8 @@ import { findWriteBodyButton, isExactDraftPath, isMetadataField } from '@/lib/on
 import { DRAWER_GAP_PX, applyPageLayoutShift } from '@/lib/onnara/drawer-layout';
 import { createSelectionBubble } from '@/lib/onnara/selection-bubble';
 import { applyDraftTitleToDom } from '@/lib/onnara/draft-title';
+import { collectDocumentText } from '@/lib/extract/document-text';
+import { captureActiveSelection, replaceSelectedText } from '@/lib/onnara/selection-manager';
 
 const SELECTION_BRIDGE_REQUEST = 'SAIDE_SELECTION_BUBBLE_REQUEST';
 const SELECTION_BRIDGE_READY = 'SAIDE_SELECTION_BUBBLE_READY';
@@ -952,6 +954,122 @@ export default defineUnlistedScript(() => {
     }
   }
 
+  // 기안기 본문 전체 텍스트 추출 (웹한글 HwpCtrl 및 일반 DOM 에디터 통합)
+  async function extractDraftBodyText(): Promise<{ text: string; source: string; error?: string }> {
+    if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+      try {
+        const bgRes = await new Promise<{ text?: string; error?: string }>((resolve) => {
+          chrome.runtime.sendMessage({ type: 'DRAFT_MAIN_WORLD_HWP_GET_BODY' }, (resp) =>
+            resolve(resp || { text: '' })
+          );
+        });
+        if (bgRes?.text && bgRes.text.trim()) {
+          return { text: bgRes.text.trim(), source: 'webhwp' };
+        }
+      } catch {}
+    }
+
+    try {
+      const tabInfo = { tabId: 0, frameId: 0, origin: location.origin };
+      const ctx = captureDraftContext(document, tabInfo);
+      const { adapter } = await resolveEditorAdapter(ctx, document);
+      if (adapter.read) {
+        const readRes = await adapter.read(ctx, document);
+        if (readRes?.text && readRes.text.trim()) {
+          return { text: readRes.text.trim(), source: adapter.id };
+        }
+      }
+    } catch {}
+
+    try {
+      const text = collectDocumentText(document);
+      if (text && text.trim()) {
+        return { text: text.trim(), source: 'document-text' };
+      }
+    } catch {}
+
+    return { text: '', source: 'none' };
+  }
+
+  // 기안기 본문에서 현재 블럭 지정(Selection)된 텍스트 추출
+  async function extractDraftSelectionText(): Promise<{ text: string; isHwp?: boolean }> {
+    try {
+      const localSel = captureActiveSelection(document);
+      if (localSel?.text && localSel.text.trim()) {
+        return { text: localSel.text.trim(), isHwp: Boolean(localSel.isHwp) };
+      }
+    } catch {}
+
+    if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+      try {
+        const bgRes = await new Promise<{ text?: string }>((resolve) => {
+          chrome.runtime.sendMessage({ type: 'DRAFT_MAIN_WORLD_HWP_GET_SELECTION' }, (resp) =>
+            resolve(resp || { text: '' })
+          );
+        });
+        if (bgRes?.text && bgRes.text.trim()) {
+          return { text: bgRes.text.trim(), isHwp: true };
+        }
+      } catch {}
+    }
+
+    return { text: '', isHwp: false };
+  }
+
+  // 기안기 본문의 선택 영역 텍스트 치환 (WebHWP 및 로컬 DOM 지원)
+  async function replaceDraftSelectionText(
+    newText: string,
+    expectedSelectionText?: string
+  ): Promise<{ success: boolean; message: string }> {
+    if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+      try {
+        const bgRes = await new Promise<{ success: boolean; error?: string }>((resolve) => {
+          chrome.runtime.sendMessage(
+            {
+              type: 'DRAFT_MAIN_WORLD_HWP_REPLACE_SELECTION',
+              text: newText,
+              expectedSelectionText: expectedSelectionText || '',
+            },
+            (resp) => resolve(resp || { success: false })
+          );
+        });
+        if (bgRes?.success) {
+          return { success: true, message: '한글 기안기 선택 영역이 성공적으로 교체되었습니다.' };
+        }
+      } catch {}
+    }
+
+    try {
+      const sel = captureActiveSelection(document);
+      if (sel) {
+        const res = await replaceSelectedText(sel, newText, 'replace');
+        return { success: res.success, message: res.message || (res.success ? '선택 영역이 교체되었습니다.' : '치환 실패') };
+      }
+    } catch (err: any) {
+      return { success: false, message: err?.message || '치환 중 오류가 발생했습니다.' };
+    }
+
+    return { success: false, message: '선택 영역을 찾을 수 없습니다. 본문 문장을 다시 블럭 지정해 주세요.' };
+  }
+
+  // 본문 선택 영역 변경 감지 시 드로어(퇴고 탭)에 실시간 통지
+  document.addEventListener('selectionchange', () => {
+    if (!isOpen) return;
+    try {
+      const sel = document.getSelection();
+      const text = sel ? sel.toString().trim() : '';
+      if (text && text.length >= 2) {
+        iframe.contentWindow?.postMessage(
+          {
+            type: 'SAIDE_ACTIVE_SELECTION_CHANGED',
+            text,
+          },
+          extensionOrigin
+        );
+      }
+    } catch {}
+  });
+
   // 메시지 수신 핸들러 (2단계 승인 트랜잭션 브리지 및 본문작성 열기, 클릭 타깃팅 연동)
   window.addEventListener('message', async (event: MessageEvent) => {
     if (!validatePostMessageEvent(event, extensionOrigin, iframe.contentWindow) || !iframe.contentWindow || !validDraftHostRequest(event.data)) return;
@@ -1092,6 +1210,40 @@ export default defineUnlistedScript(() => {
           extensionOrigin
         );
       }
+    } else if (msg.type === 'DRAFT_GET_BODY_TEXT') {
+      const bodyRes = await extractDraftBodyText();
+      iframe.contentWindow?.postMessage(
+        {
+          type: 'DRAFT_BODY_TEXT_RESPONSE',
+          requestId: msg.requestId,
+          text: bodyRes.text,
+          source: bodyRes.source,
+          error: bodyRes.error,
+        },
+        extensionOrigin
+      );
+    } else if (msg.type === 'DRAFT_GET_SELECTION_TEXT') {
+      const selRes = await extractDraftSelectionText();
+      iframe.contentWindow?.postMessage(
+        {
+          type: 'DRAFT_SELECTION_TEXT_RESPONSE',
+          requestId: msg.requestId,
+          text: selRes.text,
+          isHwp: selRes.isHwp,
+        },
+        extensionOrigin
+      );
+    } else if (msg.type === 'DRAFT_REPLACE_SELECTION_TEXT' && msg.text) {
+      const repRes = await replaceDraftSelectionText(msg.text, msg.expectedSelectionText);
+      iframe.contentWindow?.postMessage(
+        {
+          type: 'DRAFT_REPLACE_SELECTION_RESULT',
+          requestId: msg.requestId,
+          success: repRes.success,
+          message: repRes.message,
+        },
+        extensionOrigin
+      );
     }
   });
 

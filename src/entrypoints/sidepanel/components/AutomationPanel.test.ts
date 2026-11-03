@@ -319,7 +319,7 @@ it('실행 기록에 [auto] 접두어가 붙은 공문도 화면에는 [auto]를
       kind: 'download-all',
       label: '[auto] 공공부문 AI 서비스 지원사업 과제별 성과지표(안) 검토 요청',
       origin: 'automation',
-      status: 'complete',
+      status: 'done',
       createdAt: Date.now(),
       finishedAt: Date.now(),
       files: [],

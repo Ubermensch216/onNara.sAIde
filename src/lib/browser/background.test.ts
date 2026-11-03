@@ -1188,10 +1188,10 @@ it('눈치코치 꾸러미로 공문 본문 PDF를 내려받을 때 다운로드
   expect(outcome).toEqual({
     type: 'ATTACHMENTS_DOWNLOADED',
     results: [{
-      name: `${docTitle}.pdf`,
+      name: `[본문] ${docTitle}.pdf`,
       status: 'complete',
       downloadId: 77,
-      path: `C:\\Users\\tester\\Downloads\\onNara.sAIde\\수집\\20261031_143700_1234\\20261031_${docTitle}\\${docTitle}.pdf`,
+      path: `C:\\Users\\tester\\Downloads\\onNara.sAIde\\수집\\20261031_143700_1234\\20261031_${docTitle}\\[본문] ${docTitle}.pdf`,
     }],
   });
   expect(resolveBodyDocTitle('문서관리카드온나라 시스템', undefined, {

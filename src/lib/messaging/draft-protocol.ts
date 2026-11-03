@@ -45,7 +45,10 @@ export type DraftRequest =
   | { type: 'SAIDE_START_CLICK_TARGET'; text: string }
   | { type: 'SAIDE_CANCEL_CLICK_TARGET' }
   | { type: 'SAIDE_INSERT_LAST_FOCUSED'; text: string }
-  | { type: 'DRAFT_APPLY_TITLE'; title: string };
+  | { type: 'DRAFT_APPLY_TITLE'; title: string }
+  | { type: 'DRAFT_GET_BODY_TEXT'; requestId: string }
+  | { type: 'DRAFT_GET_SELECTION_TEXT'; requestId: string }
+  | { type: 'DRAFT_REPLACE_SELECTION_TEXT'; requestId: string; text: string; expectedSelectionText?: string };
 
 export type DraftResponse =
   | {
@@ -113,6 +116,31 @@ export type DraftResponse =
       title: string;
       message: string;
       fallbackCopied?: boolean;
+    }
+  | {
+      type: 'DRAFT_BODY_TEXT_RESPONSE';
+      requestId: string;
+      text: string;
+      source?: string;
+      error?: string;
+    }
+  | {
+      type: 'DRAFT_SELECTION_TEXT_RESPONSE';
+      requestId: string;
+      text: string;
+      isHwp?: boolean;
+      error?: string;
+    }
+  | {
+      type: 'DRAFT_REPLACE_SELECTION_RESULT';
+      requestId: string;
+      success: boolean;
+      message: string;
+    }
+  | {
+      type: 'SAIDE_ACTIVE_SELECTION_CHANGED';
+      text: string;
+      isHwp?: boolean;
     };
 
 /** TargetRef 유효성 검사 */
@@ -174,12 +202,14 @@ export function validDraftHostRequest(value: unknown): boolean {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const v = value as Record<string, any>;
   switch (v.type) {
-    case 'SAIDE_CLOSE_DRAWER': case 'DRAFT_GET_CONTEXT': case 'SAIDE_CLICK_OPEN_BODY': case 'SAIDE_CANCEL_CLICK_TARGET': return true;
+    case 'SAIDE_CLOSE_DRAWER': case 'DRAFT_GET_CONTEXT': case 'SAIDE_CLICK_OPEN_BODY': case 'SAIDE_CANCEL_CLICK_TARGET':
+    case 'DRAFT_GET_BODY_TEXT': case 'DRAFT_GET_SELECTION_TEXT': return true;
     case 'SAIDE_START_CLICK_TARGET': return boundedText(v.text);
     case 'DRAFT_APPLY_TITLE': return boundedText(v.title, 500);
     case 'DRAFT_FETCH_RELATED_DOC': return v.doc && boundedText(v.doc.title, 500);
     case 'DRAFT_PREPARE_INSERT': return v.payload && boundedText(v.payload.text) && ['cursor', 'replace-selection', 'append'].includes(v.payload.mode);
     case 'DRAFT_APPLY_INSERT': return boundedText(v.approvalToken, 100) && boundedText(v.text);
+    case 'DRAFT_REPLACE_SELECTION_TEXT': return boundedText(v.text);
     default: return false;
   }
 }
