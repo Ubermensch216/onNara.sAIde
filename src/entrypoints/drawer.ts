@@ -7,7 +7,7 @@ import { messageOrigin, validatePostMessageEvent, validDraftHostRequest } from '
  */
 
 import { captureDraftContext } from '@/lib/onnara/draft-context';
-import { resolveEditorAdapter, directInsertAtTarget, cleanupAccidentalContentEditable } from '@/lib/onnara/draft-editor';
+import { resolveEditorAdapter, directInsertAtTarget, cleanupAccidentalContentEditable, insertAtBodyViaMainWorldHwp, describeStyleResult } from '@/lib/onnara/draft-editor';
 import type { StyledInsertPayload } from '@/lib/template-format/apply';
 
 /** 드로어(iframe)가 보낸 서식 묶음의 모양만 확인한다. 페이지 스크립트가 흉내 낸 메시지로 엉뚱한 값이 기안기에 가지 않게 한다. */
@@ -1084,6 +1084,26 @@ export default defineUnlistedScript(() => {
     } else if (msg.type === 'SAIDE_START_CLICK_TARGET' && msg.text) {
       // 🎯 클릭 지정 삽입 모드 시작
       startTargetPicker(msg.text, isStyledPayload(msg.styled) ? msg.styled : undefined);
+    } else if (msg.type === 'SAIDE_INSERT_AT_BODY' && msg.text) {
+      // 위치를 클릭하지 않고 한글 기안기 '본문' 칸에 바로 삽입한다. 못 넣으면 이미 복사해 둔 클립보드를 안내한다.
+      let status: 'applied' | 'failed' = 'failed';
+      let message: string;
+      try {
+        const res = await insertAtBodyViaMainWorldHwp(msg.text, isStyledPayload(msg.styled) ? msg.styled : undefined);
+        console.info('[sAIde] 본문 바로 삽입', res);
+        if (res.success) {
+          status = 'applied';
+          message = `한글 기안기 본문에 초안이 삽입되었습니다.${describeStyleResult(res)} 내용을 확인하고 직접 저장해 주세요.`;
+        } else if (res.error === 'NO_BODY_FIELD' || res.error === 'NO_MOVE_TO_FIELD' || res.error === 'MOVE_TO_BODY_FAILED') {
+          message = '기안기에서 본문 칸을 찾지 못했습니다. 초안을 복사했으니 본문에서 Ctrl+V로 붙여넣거나 [위치 지정]을 이용해 주세요.';
+        } else {
+          message = '한글 기안기 본문작성 화면을 찾지 못했습니다. [본문작성]을 연 뒤 다시 시도하거나, 복사한 초안을 Ctrl+V로 붙여넣어 주세요.';
+        }
+      } catch (error) {
+        message = error instanceof Error ? error.message : '초안 삽입에 실패했습니다.';
+      }
+      showToast(message, 3500);
+      iframe.contentWindow?.postMessage({ type: 'SAIDE_TARGET_INSERT_RESULT', status, message }, extensionOrigin);
     } else if (msg.type === 'SAIDE_CANCEL_CLICK_TARGET') {
       stopTargetPicker();
     } else if (msg.type === 'DRAFT_FETCH_RELATED_DOC' && msg.doc) {

@@ -100,6 +100,9 @@ export function DrawerApp() {
     targetLabel?: string;
   }>({ open: false });
   const [isTargetSelecting, setIsTargetSelecting] = useState<boolean>(false);
+  // '본문에 삽입'(클릭 없이 바로 삽입) 응답을 기다리는 중
+  const [isInsertingBody, setIsInsertingBody] = useState<boolean>(false);
+  const insertBodyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // 서식(템플릿) 관리 상태
   const [templates, setTemplates] = useState<DraftTemplate[]>([]);
@@ -246,6 +249,8 @@ export function DrawerApp() {
         }
       } else if (data.type === 'SAIDE_TARGET_INSERT_RESULT') {
         setIsTargetSelecting(false);
+        setIsInsertingBody(false);
+        if (insertBodyTimerRef.current) clearTimeout(insertBodyTimerRef.current);
         setLoading(false);
         setStatusMsg(data.message || (data.status === 'applied' ? '삽입되었습니다.' : '취소되었습니다.'));
         setTimeout(() => setStatusMsg(''), 3500);
@@ -713,6 +718,23 @@ export function DrawerApp() {
     setIsTargetSelecting(true);
     window.parent.postMessage({ type: 'SAIDE_START_CLICK_TARGET', text: styled?.text ?? clean, ...(styled ? { styled } : {}) }, parentMessageOrigin() ?? location.origin);
     setStatusMsg('기안기 화면에서 초안을 넣을 위치를 클릭하세요. (Esc: 취소)');
+  };
+
+  // 위치를 클릭하지 않고 기안기 본문에 바로 삽입한다. (유저 제스처 안에서 클립보드에 먼저 복사해 둔다 — 삽입이 막히면 Ctrl+V로 쓰도록)
+  const handleInsertToBody = async () => {
+    if (!generatedDraft || isInsertingBody) return;
+    const clean = cleanAdminDraft(generatedDraft);
+    const styled = buildStyled(clean);
+    await copyDraftToClipboard(clean, styled);
+    setIsInsertingBody(true);
+    window.parent.postMessage({ type: 'SAIDE_INSERT_AT_BODY', text: styled?.text ?? clean, ...(styled ? { styled } : {}) }, parentMessageOrigin() ?? location.origin);
+    // 응답이 없으면 버튼이 잠기지 않도록 풀고 알린다.
+    if (insertBodyTimerRef.current) clearTimeout(insertBodyTimerRef.current);
+    insertBodyTimerRef.current = setTimeout(() => {
+      setIsInsertingBody(false);
+      setStatusMsg('기안기에서 응답이 없어 삽입을 확인하지 못했습니다. 초안을 복사했으니 본문에서 Ctrl+V로 붙여넣어 주세요.');
+      setTimeout(() => setStatusMsg(''), 4500);
+    }, 15000);
   };
 
   // 타깃 지정 모드 취소
@@ -1428,7 +1450,7 @@ export function DrawerApp() {
 
           {/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
               하단 고정 동작 영역
-              - 결과가 있을 때: '초안 복사'와 '본문에 삽입'(주요 동작) 표시
+              - 결과가 있을 때: '초안 복사'·'위치 지정'(클릭해 지정)·'본문에 삽입'(바로 삽입, 주요 동작) 표시
               - 삽입 위치 선택 중: 안내 문구와 '선택 취소' 표시
              ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */}
           <footer className="p-3 bg-white border-t border-slate-200 shrink-0">
@@ -1461,12 +1483,22 @@ export function DrawerApp() {
                 <button
                   type="button"
                   onClick={handleStartClickTarget}
-                  disabled={loading}
-                  className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold text-xs sm:text-sm whitespace-nowrap px-4 shadow-xs flex items-center justify-center gap-1.5 transition cursor-pointer focus-visible:ring-2 focus-visible:ring-blue-500"
-                  title="기안기 본문 또는 원하는 입력창을 클릭하여 즉시 삽입합니다"
+                  disabled={loading || isInsertingBody}
+                  className="px-3 py-2.5 border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 rounded-lg font-semibold text-xs sm:text-sm whitespace-nowrap shadow-2xs transition flex items-center gap-1.5 cursor-pointer focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-50"
+                  title="기안기 본문에서 넣을 위치를 직접 클릭해 그 자리에 삽입합니다 (본문 중간에 넣을 때)"
                 >
-                  <MaterialIcon name="adsClick" size={16} />
-                  <span>본문에 삽입</span>
+                  <MaterialIcon name="adsClick" size={15} />
+                  <span>위치 지정</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleInsertToBody}
+                  disabled={loading || isInsertingBody}
+                  className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold text-xs sm:text-sm whitespace-nowrap px-4 shadow-xs flex items-center justify-center gap-1.5 transition cursor-pointer focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-50"
+                  title="위치를 클릭하지 않고 기안기 본문에 바로 삽입합니다 (본문 끝에 이어 붙이며, 커서가 본문 안에 있으면 그 자리에 넣습니다)"
+                >
+                  <MaterialIcon name="check" size={16} />
+                  <span>{isInsertingBody ? '삽입 중...' : '본문에 삽입'}</span>
                 </button>
               </div>
             ) : null}

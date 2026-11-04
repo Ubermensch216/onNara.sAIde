@@ -406,9 +406,10 @@ describe('DrawerApp UI/UX 개선 검증', () => {
     expect(document.body.textContent).toContain('초안 복사');
     expect(document.body.textContent).toContain('본문에 삽입');
 
-    // 5. '본문에 삽입' 클릭 시 삽입 위치 선택 모드 및 '선택 취소' 버튼 전환 확인
+    // 5. '위치 지정' 클릭 시 삽입 위치 선택 모드 및 '선택 취소' 버튼 전환 확인
+    expect(document.body.textContent).toContain('위치 지정');
     const insertBtn = [...document.querySelectorAll('button')].find(
-      (b) => b.textContent?.includes('본문에 삽입')
+      (b) => b.textContent?.includes('위치 지정')
     );
     await act(async () => {
       insertBtn?.click();
@@ -668,17 +669,47 @@ it('본문 서식이 등록된 서식을 고르면 초안을 그 서식으로 �
   expect(preview.textContent).toContain('□ 추진 배경'); // 한컴 전용 □는 보이는 □로
   expect(preview.textContent).toContain('❍ 품질 확보');
 
+  const expected = {
+    text: '\u{F03DA} 추진 배경\n ❍ 품질 확보',
+    styled: { paras: [expect.objectContaining({ font: 'HY견고딕', height: 1700 }), expect.objectContaining({ font: '휴먼명조', indent: -2830 })] },
+  };
   const post = vi.spyOn(window.parent, 'postMessage');
+  // '본문에 삽입'은 위치를 클릭하지 않고 바로 삽입을 요청한다.
   const insert = [...document.querySelectorAll('button')].find(b => b.textContent?.includes('본문에 삽입'));
   await act(async () => { insert?.click(); });
   await settle();
+  const direct = post.mock.calls.find(c => (c[0] as { type?: string }).type === 'SAIDE_INSERT_AT_BODY');
+  expect(direct?.[0]).toMatchObject({ type: 'SAIDE_INSERT_AT_BODY', ...expected });
+  expect(post.mock.calls.some(c => (c[0] as { type?: string }).type === 'SAIDE_START_CLICK_TARGET')).toBe(false);
+
+  // '위치 지정'은 기존처럼 클릭 지정 모드를 시작한다.
+  postParentMessage({ type: 'SAIDE_TARGET_INSERT_RESULT', status: 'applied', message: '삽입되었습니다.' }, '*');
+  await settle();
+  const pick = [...document.querySelectorAll('button')].find(b => b.textContent?.includes('위치 지정'));
+  await act(async () => { pick?.click(); });
+  await settle();
   const call = post.mock.calls.find(c => (c[0] as { type?: string }).type === 'SAIDE_START_CLICK_TARGET');
-  expect(call?.[0]).toMatchObject({
-    type: 'SAIDE_START_CLICK_TARGET',
-    text: '\u{F03DA} 추진 배경\n ❍ 품질 확보',
-    styled: { paras: [expect.objectContaining({ font: 'HY견고딕', height: 1700 }), expect.objectContaining({ font: '휴먼명조', indent: -2830 })] },
-  });
+  expect(call?.[0]).toMatchObject({ type: 'SAIDE_START_CLICK_TARGET', ...expected });
   post.mockRestore();
+});
+
+it('본문에 삽입은 응답이 오면 안내를 보이고 버튼을 다시 푼다', async () => {
+  await act(() => root.render(createElement(DrawerApp)));
+  await settle();
+  postParentMessage({ type: 'SAIDE_SET_DRAFT_PREVIEW', draft: '1. 추진 목적\n  가. 업무 효율화' }, '*');
+  await settle();
+
+  const findInsert = () => [...document.querySelectorAll('button')].find(b => /본문에 삽입|삽입 중/.test(b.textContent ?? ''));
+  await act(async () => { findInsert()?.click(); });
+  await settle();
+  expect(findInsert()?.textContent).toContain('삽입 중');
+  expect((findInsert() as HTMLButtonElement).disabled).toBe(true);
+
+  postParentMessage({ type: 'SAIDE_TARGET_INSERT_RESULT', status: 'applied', message: '한글 기안기 본문에 초안이 삽입되었습니다.' }, '*');
+  await settle();
+  expect(findInsert()?.textContent).toContain('본문에 삽입');
+  expect((findInsert() as HTMLButtonElement).disabled).toBe(false);
+  expect(document.body.textContent).toContain('한글 기안기 본문에 초안이 삽입되었습니다.');
 });
 
 describe('업무계획에서 넘어온 회신 준비', () => {

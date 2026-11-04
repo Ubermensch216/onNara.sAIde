@@ -54,10 +54,10 @@ export function ReviewTab({
   const [spellViewMode, setSpellViewMode] = useState<'diff' | 'text'>('diff');
   const spellAbortRef = useRef<AbortController | null>(null);
   const [isApplyingSpell, setIsApplyingSpell] = useState<boolean>(false);
-  const [confirmApply, setConfirmApply] = useState<boolean>(false);
+  // 반영 전 확인 팝업. 열려 있는 동안 교체 대상(바뀔 제목·본문)을 보여 준다.
+  const [applyConfirm, setApplyConfirm] = useState<{ title?: string; body?: string } | null>(null);
   // 응답을 기다리는 반영 요청. 응답이 끝내 오지 않으면 그 사실을 알린다.
   const pendingApplyRef = useRef<string | null>(null);
-  const confirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── 2. 블럭 메뉴 (AI 문장 작성 지원) 상태 ──
   const [selectedBlockText, setSelectedBlockText] = useState<string>('');
@@ -98,7 +98,6 @@ export function ReviewTab({
       } else if (data.type === 'DRAFT_REPLACE_FIELDS_RESULT') {
         pendingApplyRef.current = null;
         setIsApplyingSpell(false);
-        setConfirmApply(false);
         showToast(typeof data.message === 'string' && data.message ? data.message : data.success ? '기안기에 반영되었습니다.' : '반영하지 못했습니다.');
       } else if (data.type === 'DRAFT_SELECTION_TEXT_RESPONSE') {
         setIsFetchingSelection(false);
@@ -222,7 +221,7 @@ export function ReviewTab({
   };
 
   // 교정된 제목·본문을 기안기의 제목·본문 필드에 교체 반영한다.
-  // ★ 본문 전체를 바꾸는 동작이라 첫 클릭은 확인 단계로 두고, 한 번 더 누르면 반영한다.
+  // ★ 본문 전체를 바꾸는 동작이라 버튼을 누르면 먼저 확인 팝업을 띄우고, 팝업에서 승인해야 반영한다.
   const handleApplySpellCheckToBody = () => {
     const newBody = spellCheckedText.trim();
     const newTitle = spellCheckedTitle.trim();
@@ -232,14 +231,17 @@ export function ReviewTab({
       showToast('교정으로 바뀐 내용이 없어 반영할 것이 없습니다.');
       return;
     }
-    if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current);
-    if (!confirmApply) {
-      setConfirmApply(true);
-      showToast('기안기의 본문(제목)이 교정본으로 교체됩니다. 한 번 더 누르면 반영합니다.');
-      confirmTimerRef.current = setTimeout(() => setConfirmApply(false), 6000);
-      return;
-    }
-    setConfirmApply(false);
+    setApplyConfirm({
+      ...(bodyChanged ? { body: newBody } : {}),
+      ...(titleChanged ? { title: newTitle } : {}),
+    });
+  };
+
+  // 확인 팝업에서 승인하면 기안기 필드에 실제로 반영한다.
+  const handleConfirmApply = () => {
+    const target = applyConfirm;
+    setApplyConfirm(null);
+    if (!target) return;
     setIsApplyingSpell(true);
     const requestId = `fields_${Date.now()}`;
     pendingApplyRef.current = requestId;
@@ -247,8 +249,8 @@ export function ReviewTab({
       {
         type: 'DRAFT_REPLACE_FIELDS',
         requestId,
-        ...(bodyChanged ? { body: newBody } : {}),
-        ...(titleChanged ? { title: newTitle } : {}),
+        ...(target.body ? { body: target.body } : {}),
+        ...(target.title ? { title: target.title } : {}),
       },
       parentOrigin()
     );
@@ -697,7 +699,7 @@ export function ReviewTab({
                     title="기안기의 본문(과 제목) 필드를 교정본으로 교체합니다"
                   >
                     <MaterialIcon name="check" size={15} />
-                    <span>{isApplyingSpell ? '반영 중...' : confirmApply ? '교체 확인 (한 번 더 클릭)' : '기안기 본문에 반영'}</span>
+                    <span>{isApplyingSpell ? '반영 중...' : '기안기 본문에 반영'}</span>
                   </button>
                 </div>
               </div>
@@ -1004,6 +1006,52 @@ export function ReviewTab({
           </div>
         )}
       </div>
+
+      {/* 본문 교체 확인 팝업: 기안기의 제목·본문을 통째로 덮어쓰기 전에 사용자 승인을 받는다 */}
+      {applyConfirm && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="apply-confirm-title"
+          className="fixed inset-0 bg-black/40 flex items-center justify-center p-3 z-50"
+          onKeyDown={(e) => { if (e.key === 'Escape') setApplyConfirm(null); }}
+        >
+          <div className="bg-white rounded-xl p-4 max-w-sm w-full space-y-3.5 shadow-xl border border-slate-200">
+            <h3 id="apply-confirm-title" className="font-bold text-slate-900 text-sm flex items-center gap-2">
+              <MaterialIcon name="warning" size={18} className="text-amber-500" />
+              <span>기안기 본문 교체 확인</span>
+            </h3>
+            <p className="text-slate-700 text-xs leading-relaxed">
+              기안기의{' '}
+              {applyConfirm.title && <strong className="text-blue-700">제목</strong>}
+              {applyConfirm.title && applyConfirm.body && '과 '}
+              {applyConfirm.body && <strong className="text-blue-700">본문</strong>}
+              을(를) 교정본으로 <strong>통째로 교체</strong>합니다.
+            </p>
+            <div className="p-2.5 bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-lg leading-relaxed space-y-1">
+              <p>※ 지금 기안기에 있는 내용은 교정본으로 덮어써집니다.</p>
+              <p>※ 자동 저장이나 결재는 진행되지 않습니다. 반영 후 내용을 확인하고 직접 저장하세요.</p>
+            </div>
+            <div className="flex gap-2 justify-end pt-1">
+              <button
+                type="button"
+                autoFocus
+                onClick={() => setApplyConfirm(null)}
+                className="px-3.5 py-2 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50 font-semibold text-xs transition cursor-pointer"
+              >
+                취소
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmApply}
+                className="px-4 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 font-semibold text-xs transition cursor-pointer shadow-xs"
+              >
+                교체하여 반영
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

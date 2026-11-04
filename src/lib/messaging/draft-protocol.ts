@@ -43,6 +43,7 @@ export type DraftRequest =
   | { type: 'DRAFT_CANCEL'; requestId: string; target?: TargetRef }
   | { type: 'DRAFT_FETCH_RELATED_DOC'; doc: RelatedDocInfo }
   | { type: 'SAIDE_START_CLICK_TARGET'; text: string }
+  | { type: 'SAIDE_INSERT_AT_BODY'; text: string }
   | { type: 'SAIDE_CANCEL_CLICK_TARGET' }
   | { type: 'SAIDE_INSERT_LAST_FOCUSED'; text: string }
   | { type: 'DRAFT_APPLY_TITLE'; title: string }
@@ -208,7 +209,7 @@ export function validDraftHostRequest(value: unknown): boolean {
   switch (v.type) {
     case 'SAIDE_CLOSE_DRAWER': case 'DRAFT_GET_CONTEXT': case 'SAIDE_CLICK_OPEN_BODY': case 'SAIDE_CANCEL_CLICK_TARGET':
     case 'DRAFT_GET_BODY_TEXT': case 'DRAFT_GET_SELECTION_TEXT': return true;
-    case 'SAIDE_START_CLICK_TARGET': return boundedText(v.text);
+    case 'SAIDE_START_CLICK_TARGET': case 'SAIDE_INSERT_AT_BODY': return boundedText(v.text);
     case 'DRAFT_APPLY_TITLE': return boundedText(v.title, 500);
     case 'DRAFT_FETCH_RELATED_DOC': return v.doc && boundedText(v.doc.title, 500);
     case 'DRAFT_PREPARE_INSERT': return v.payload && boundedText(v.payload.text) && ['cursor', 'replace-selection', 'append'].includes(v.payload.mode);

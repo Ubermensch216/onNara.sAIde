@@ -181,19 +181,31 @@ describe('ReviewTab (퇴고 탭) 컴포넌트 검증', () => {
     expect(document.body.textContent).toContain('교정 결과');
     expect(document.body.textContent).toContain('기안기 본문에 반영');
 
-    // 기안기 본문에 반영: 첫 클릭은 확인 단계, 두 번째 클릭에 필드 교체 요청을 보낸다.
+    // 기안기 본문에 반영: 버튼은 확인 팝업만 띄우고, 팝업에서 승인해야 필드 교체 요청을 보낸다.
     // (커서 삽입 확인창을 쓰지 않는다 — 퇴고 탭에서는 그 확인창이 보이지 않았다)
     const posted = vi.spyOn(window, 'postMessage');
     const findApply = () =>
-      [...document.querySelectorAll('button')].find((b) =>
-        /기안기 본문에 반영|교체 확인/.test(b.textContent ?? '')
-      );
-    await act(async () => findApply()?.click());
-    expect(posted.mock.calls.some(([m]) => (m as any)?.type === 'DRAFT_REPLACE_FIELDS')).toBe(false);
-    expect(document.body.textContent).toContain('교체 확인');
+      [...document.querySelectorAll('button')].find((b) => /기안기 본문에 반영/.test(b.textContent ?? ''));
+    const findDialogBtn = (label: string) =>
+      [...document.querySelectorAll('[role="dialog"] button')].find((b) => b.textContent?.includes(label));
+    const replaceCalls = () => posted.mock.calls.filter(([m]) => (m as any)?.type === 'DRAFT_REPLACE_FIELDS');
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
 
     await act(async () => findApply()?.click());
-    const sent = posted.mock.calls.map(([m]) => m as any).find((m) => m?.type === 'DRAFT_REPLACE_FIELDS');
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+    expect(document.body.textContent).toContain('기안기 본문 교체 확인');
+    expect(replaceCalls()).toHaveLength(0);
+
+    // 취소하면 팝업이 닫히고 아무것도 보내지 않는다.
+    await act(async () => findDialogBtn('취소')?.click());
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(replaceCalls()).toHaveLength(0);
+
+    // 다시 열어 승인하면 교체 요청을 보낸다.
+    await act(async () => findApply()?.click());
+    await act(async () => findDialogBtn('교체하여 반영')?.click());
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    const sent = replaceCalls().map(([m]) => m as any)[0];
     expect(sent?.body).toContain('교정');
     expect(handlePrepareInsert).not.toHaveBeenCalled();
     posted.mockRestore();
@@ -220,9 +232,11 @@ describe('ReviewTab (퇴고 탭) 컴포넌트 검증', () => {
     vi.useFakeTimers();
     try {
       const findApply = () =>
-        [...document.querySelectorAll('button')].find((b) => /기안기 본문에 반영|교체 확인|반영 중/.test(b.textContent ?? ''));
+        [...document.querySelectorAll('button')].find((b) => /기안기 본문에 반영|반영 중/.test(b.textContent ?? ''));
       await act(async () => findApply()?.click());
-      await act(async () => findApply()?.click());
+      await act(async () =>
+        [...document.querySelectorAll('[role="dialog"] button')].find((b) => b.textContent?.includes('교체하여 반영'))?.click()
+      );
       expect(findApply()?.textContent).toContain('반영 중');
 
       await act(async () => vi.advanceTimersByTime(15000));
@@ -254,9 +268,11 @@ describe('ReviewTab (퇴고 탭) 컴포넌트 검증', () => {
     vi.useFakeTimers();
     try {
       const findApply = () =>
-        [...document.querySelectorAll('button')].find((b) => /기안기 본문에 반영|교체 확인|반영 중/.test(b.textContent ?? ''));
+        [...document.querySelectorAll('button')].find((b) => /기안기 본문에 반영|반영 중/.test(b.textContent ?? ''));
       await act(async () => findApply()?.click());
-      await act(async () => findApply()?.click());
+      await act(async () =>
+        [...document.querySelectorAll('[role="dialog"] button')].find((b) => b.textContent?.includes('교체하여 반영'))?.click()
+      );
       await act(async () => {
         window.dispatchEvent(
           new MessageEvent('message', {

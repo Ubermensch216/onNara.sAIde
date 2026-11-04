@@ -108,3 +108,67 @@ describe('한글 기안기 서식 적용 삽입', () => {
     expect(log).toEqual(['T:첫 줄', 'R:BreakPara', 'T:둘째 줄']);
   });
 });
+
+/** 온나라 누름틀 이름 꼴('NormalField72¡본문¡…')을 흉내 낸 가짜 기안기. */
+function fakeHwpWithFields(opts: { fields?: string[]; bodyText?: string; curField?: string } = {}) {
+  const log: string[] = [];
+  const fields = opts.fields ?? ['CellField2¡제목¡F', 'NormalField72¡본문¡본문을 입력하십시오¡T¡T'];
+  const hwp: Record<string, unknown> = {
+    InsertText: (t: string) => { log.push(`T:${t}`); },
+    Run: (a: string) => { log.push(`R:${a}`); },
+    GetFieldList: () => fields.join('\x02'),
+    GetFieldText: (name: string) => (name.includes('¡본문¡') ? (opts.bodyText ?? '') : ''),
+    GetCurFieldName: () => opts.curField ?? '',
+    MoveToField: (name: string, text: boolean, start: boolean, select: boolean) => { log.push(`M:${name}/${text}/${start}/${select}`); return true; },
+  };
+  return { hwp, log };
+}
+
+describe('한글 기안기 클릭 없이 본문 삽입(atBody)', () => {
+  it('캐럿이 본문 밖이면 본문 누름틀 끝으로 옮긴 뒤 넣는다(빈 본문은 문단을 나누지 않는다)', async () => {
+    const { hwp, log } = fakeHwpWithFields({ curField: 'CellField2¡제목¡F' });
+    (window as unknown as { HwpCtrl: unknown }).HwpCtrl = hwp;
+    installChrome();
+    const res = await handleMainWorldHwpInsert(1, '첫 줄\n둘째 줄', undefined, true);
+    expect(res.success).toBe(true);
+    expect(log).toEqual(['M:NormalField72¡본문¡본문을 입력하십시오¡T¡T/true/false/false', 'T:첫 줄', 'R:BreakPara', 'T:둘째 줄']);
+  });
+
+  it('본문에 이미 글이 있으면 기존 내용은 두고 문단을 나눠 그 뒤에 잇는다', async () => {
+    const { hwp, log } = fakeHwpWithFields({ bodyText: '1. 기존 내용' });
+    (window as unknown as { HwpCtrl: unknown }).HwpCtrl = hwp;
+    installChrome();
+    const res = await handleMainWorldHwpInsert(1, '추가 글', undefined, true);
+    expect(res.success).toBe(true);
+    expect(log).toEqual(['M:NormalField72¡본문¡본문을 입력하십시오¡T¡T/true/false/false', 'R:BreakPara', 'T:추가 글']);
+  });
+
+  it('캐럿이 이미 본문 누름틀 안이면 옮기지 않고 그 자리에 넣는다', async () => {
+    const { hwp, log } = fakeHwpWithFields({ bodyText: '기존', curField: 'NormalField72¡본문¡본문을 입력하십시오¡T¡T{{0}}' });
+    (window as unknown as { HwpCtrl: unknown }).HwpCtrl = hwp;
+    installChrome();
+    const res = await handleMainWorldHwpInsert(1, '끼워 넣기', undefined, true);
+    expect(res.success).toBe(true);
+    expect(log).toEqual(['T:끼워 넣기']);
+  });
+
+  it('본문 누름틀을 못 찾으면 엉뚱한 곳에 넣지 않고 사유와 함께 실패하며, 바로 다시 시도해도 막히지 않는다', async () => {
+    const { hwp, log } = fakeHwpWithFields({ fields: ['CellField2¡제목¡F'] });
+    (window as unknown as { HwpCtrl: unknown }).HwpCtrl = hwp;
+    installChrome();
+    const res = await handleMainWorldHwpInsert(1, '글', undefined, true);
+    expect(res).toMatchObject({ success: false, error: 'NO_BODY_FIELD' });
+    expect(log).toEqual([]);
+    const again = await handleMainWorldHwpInsert(1, '글', undefined, true);
+    expect(again).toMatchObject({ success: false, error: 'NO_BODY_FIELD' }); // 'Deduplicated' 성공으로 오인되지 않는다
+  });
+
+  it('atBody가 아니면 예전처럼 누름틀을 건드리지 않고 현재 커서에 넣는다', async () => {
+    const { hwp, log } = fakeHwpWithFields();
+    (window as unknown as { HwpCtrl: unknown }).HwpCtrl = hwp;
+    installChrome();
+    const res = await handleMainWorldHwpInsert(1, '글');
+    expect(res.success).toBe(true);
+    expect(log).toEqual(['T:글']);
+  });
+});

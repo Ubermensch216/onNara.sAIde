@@ -93,13 +93,15 @@ async function maybeAttachDraftDrawer(tabId: number, frameId: number, url?: stri
 export async function handleMainWorldHwpInsert(
   tabId: number,
   text: string,
-  styled?: StyledInsertPayload
+  styled?: StyledInsertPayload,
+  /** true면 커서 위치를 믿지 않고 '본문' 누름틀로 캐럿을 옮긴 뒤 넣는다(클릭 없이 바로 삽입). 본문 칸을 못 찾으면 넣지 않는다. */
+  atBody = false
 ): Promise<HwpInsertResult> {
   try {
     const results = await chrome.scripting.executeScript({
       target: { tabId, allFrames: true },
       world: 'MAIN',
-      func: async (draftText: string, styledPayload: StyledInsertPayload | null) => {
+      func: async (draftText: string, styledPayload: StyledInsertPayload | null, toBody: boolean) => {
         try {
           function findHwp() {
             var w = window as any;
@@ -143,6 +145,84 @@ export async function handleMainWorldHwpInsert(
             return { success: true, method: 'Deduplicated' };
           }
           h.__saide_last_inserted = now;
+
+          /*
+           * 클릭 없이 삽입: 캐럿이 어디 있는지 모르므로(제목 칸일 수도 있다) '본문' 누름틀 끝으로 옮긴다.
+           * - 이미 캐럿이 본문 누름틀 안이면 그대로 둔다(사용자가 잡아 둔 위치를 존중).
+           * - 본문에 이미 글이 있으면 문단을 나눠 그 뒤에 이어 붙인다. 기존 내용은 지우지 않는다.
+           * - 본문 칸을 못 찾으면 엉뚱한 곳에 넣지 않고 실패로 돌려준다.
+           * ★ 온나라 누름틀 이름은 'NormalField72¡본문¡본문을 입력하십시오¡T¡T' 꼴이라 가운데 칸이 이름이다.
+           */
+          if (toBody) {
+            var BODY_LABELS = ['본문', 'body', 'BODY', 'content', '기안문본문', '기안문_본문', '본문내용'];
+            var PLACEHOLDER = /^(본문|제목|내용)을?\s*입력\s*하\s*(십시오|세요)\.?$/;
+            var labelOf = function (name: string): string {
+              var base = name.replace(/\{\{\d+\}\}$/, '');
+              var parts = base.split('¡');
+              return ((parts.length >= 2 ? parts[1] : base) || '').trim();
+            };
+            var callStr = async function (fnName: string, args: any[]): Promise<string> {
+              var fn = h[fnName];
+              if (typeof fn !== 'function') return '';
+              var r: any;
+              try { r = fn.apply(h, args); } catch (e) { return ''; }
+              if (r && typeof r.then === 'function') { try { r = await r; } catch (e) { return ''; } }
+              if (typeof r === 'string') return r;
+              if (r && typeof r === 'object') {
+                var o = r.data || r.result || r.text;
+                if (typeof o === 'string') return o;
+              }
+              return await new Promise<string>(function (res) {
+                var t = setTimeout(function () { res(''); }, 1200);
+                try {
+                  fn.apply(h, args.concat([function (v: any) {
+                    clearTimeout(t);
+                    res(typeof v === 'string' ? v : ((v && (v.data || v.result || v.text)) || ''));
+                  }]));
+                } catch (e) { clearTimeout(t); res(''); }
+              });
+            };
+            var isBodyName = function (name: string): boolean { return BODY_LABELS.indexOf(labelOf(name)) >= 0; };
+
+            var fieldNames: string[] = [];
+            var listTries: any[][] = [[0, 0], [0, 1], [0, 2], [0, 3], []];
+            for (var lt = 0; lt < listTries.length && !fieldNames.length; lt++) {
+              var rawList = await callStr('GetFieldList', listTries[lt] || []);
+              if (rawList && rawList.trim()) fieldNames = rawList.split(/[\x02\n]+/).map(function (s) { return s.trim(); }).filter(Boolean);
+            }
+            var bodyTargets = fieldNames.filter(isBodyName);
+            if (!fieldNames.length) {
+              for (var bi = 0; bi < BODY_LABELS.length; bi++) {
+                try { if (typeof h.FieldExist === 'function' && h.FieldExist(BODY_LABELS[bi])) bodyTargets.push(BODY_LABELS[bi] || ''); } catch (e) {}
+              }
+            }
+            if (!bodyTargets.length) {
+              h.__saide_last_inserted = 0;
+              return { success: false, error: 'NO_BODY_FIELD' };
+            }
+
+            var curField = await callStr('GetCurFieldName', [0]);
+            var caretInBody = Boolean(curField) && isBodyName(curField);
+            if (!caretInBody) {
+              if (typeof h.MoveToField !== 'function') {
+                h.__saide_last_inserted = 0;
+                return { success: false, error: 'NO_MOVE_TO_FIELD' };
+              }
+              var bodyName = bodyTargets[0] || '';
+              var existing = (await callStr('GetFieldText', [bodyName])).replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]+/g, '\n').replace(/\r\n?/g, '\n').trim();
+              try {
+                var mv: any = h.MoveToField(bodyName, true, false, false); // 텍스트 안, 끝 위치, 선택 안 함
+                if (mv && typeof mv.then === 'function') await mv;
+              } catch (e) {
+                h.__saide_last_inserted = 0;
+                return { success: false, error: 'MOVE_TO_BODY_FAILED' };
+              }
+              if (existing && !PLACEHOLDER.test(existing)) {
+                if (typeof h.Run === 'function') h.Run('BreakPara');
+                else if (h.HAction && typeof h.HAction.Run === 'function') h.HAction.Run('BreakPara');
+              }
+            }
+          }
 
           function insertLines(hwp: any, str: string) {
             var lines = str.split(/\r?\n/);
@@ -388,7 +468,7 @@ export async function handleMainWorldHwpInsert(
           return { success: false, error: String(err) };
         }
       },
-      args: [text, styled ?? null],
+      args: [text, styled ?? null, atBody],
     });
 
     for (const r of results ?? []) {
@@ -396,7 +476,9 @@ export async function handleMainWorldHwpInsert(
         return r.result as HwpInsertResult;
       }
     }
-    return { success: false, error: 'NO_FRAME_SUCCESS' };
+    // 한글 기안기가 있는 프레임이 본문 칸을 못 찾았다면 그 사유를 그대로 알린다.
+    const reason = (results ?? []).map(r => r?.result?.error as string | undefined).find(e => e && e !== 'NO_HWP');
+    return { success: false, error: reason || 'NO_FRAME_SUCCESS' };
   } catch (err) {
     return { success: false, error: String(err) };
   }
@@ -1632,7 +1714,7 @@ export default defineBackground(() => {
     if (msg && typeof msg === 'object' && (msg as any).type === 'DRAFT_MAIN_WORLD_HWP_INSERT') {
       const tabId = sender.tab?.id;
       if (tabId) {
-        handleMainWorldHwpInsert(tabId, String((msg as any).text || ''), (msg as any).styled || undefined)
+        handleMainWorldHwpInsert(tabId, String((msg as any).text || ''), (msg as any).styled || undefined, (msg as any).atBody === true)
           .then(res => sendResponse(res))
           .catch(err => sendResponse({ success: false, error: String(err) }));
         return true;

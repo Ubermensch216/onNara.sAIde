@@ -607,6 +607,29 @@ export function tryApplyHwpCtrl(
 }
 
 /**
+ * 위치를 클릭하지 않고 한글 기안기 '본문' 칸에 바로 넣는다.
+ * 캐럿이 본문 칸 안이면 그 자리에, 아니면 본문 끝에 이어 붙인다(기존 내용은 지우지 않는다).
+ * 본문 칸을 못 찾으면 엉뚱한 곳에 넣지 않고 실패(error: NO_BODY_FIELD 등)로 돌려준다.
+ */
+export async function insertAtBodyViaMainWorldHwp(
+  text: string,
+  styled?: StyledInsertPayload
+): Promise<HwpInsertResult> {
+  if (typeof chrome === 'undefined' || !chrome.runtime?.sendMessage) return { success: false, error: 'NO_RUNTIME' };
+  try {
+    const resp = await chrome.runtime.sendMessage({
+      type: 'DRAFT_MAIN_WORLD_HWP_INSERT',
+      text,
+      atBody: true,
+      ...(styled ? { styled } : {}),
+    });
+    return resp || { success: false, error: 'NO_RESPONSE' };
+  } catch {
+    return { success: false, error: 'NO_RESPONSE' };
+  }
+}
+
+/**
  * 웹페이지 메인 월드(Main World) 컨텍스트에서 한컴 웹기안기(WebHWP) API를 탐색하여 초안을 삽입한다.
  */
 export async function insertViaMainWorldHwp(
