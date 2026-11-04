@@ -17,6 +17,7 @@ import {
   type DiffSegment,
 } from '@/lib/onnara/text-diff';
 import { guardSpellcheckResult, normalizeSpellText } from '@/lib/onnara/spell-guard';
+import { applyContextFixes } from '@/lib/onnara/context-spell';
 import { cleanAdminDraft } from '@/lib/onnara/draft-cleaner';
 import { messageOrigin, validatePostMessageEvent } from '@/lib/messaging/draft-protocol';
 
@@ -236,7 +237,8 @@ export function ReviewTab({
         const titleResult = await transformTextWithAI('spellcheck', titleToProcess, abort.signal, context);
         // 제목은 한 줄이다. 줄바꿈이 섞여 나오면 한 줄로 합친다.
         const oneLine = cleanAdminDraft(titleResult).replace(/\s*\n+\s*/g, ' ').trim();
-        setSpellCheckedTitle(guardSpellcheckResult(normalizeSpellText(titleToProcess), oneLine));
+        // 줄 보호(spell-guard)가 AI 교정 줄을 버리고 원문으로 되돌린 경우에도 문맥 혼동어 교정은 남도록, 보호 뒤에 한 번 더 적용한다.
+        setSpellCheckedTitle(applyContextFixes(guardSpellcheckResult(normalizeSpellText(titleToProcess), oneLine)));
       } else {
         setSpellCheckedTitle('');
       }
@@ -245,7 +247,7 @@ export function ReviewTab({
         const result = await transformTextWithAI('spellcheck', textToProcess, abort.signal, context);
         // ★ 맞춤법 검사는 글자만 고친다. AI가 소제목·항목 기호·줄을 지우거나 덧붙여도
         //   원문 줄 구성에 맞춰 되돌린다(spell-guard).
-        setSpellCheckedText(guardSpellcheckResult(normalizeSpellText(textToProcess), cleanAdminDraft(result)));
+        setSpellCheckedText(applyContextFixes(guardSpellcheckResult(normalizeSpellText(textToProcess), cleanAdminDraft(result))));
       } else {
         setSpellCheckedText('');
       }
@@ -826,19 +828,44 @@ export function ReviewTab({
         {/* ============================================================== */}
         {subTab === 'block' && (
           <div className="space-y-4">
-            {/* 안내 배너 */}
-            <div className="p-3 bg-indigo-50/70 border border-indigo-200/80 rounded-lg flex items-start gap-2.5 text-xs text-indigo-900">
-              <span className="text-indigo-600 shrink-0 mt-0.5">
-                <MaterialIcon name="autoFixHigh" size={16} />
-              </span>
-              <div className="flex-1 leading-relaxed">
-                <p className="font-bold">기안기 본문 블럭 메뉴 연동</p>
-                <p className="text-[11px] text-indigo-700 mt-0.5">
-                  기안기 본문에서 문장을 마우스로 드래그(블럭 지정)하면 나타나는 플로팅 툴바 기능입니다.
-                  아래에서 선택된 문장을 가져와 맞춤법 검사 및 6대 문장 다듬기 지원을 즉시 실행할 수 있습니다.
-                </p>
-              </div>
-            </div>
+            {/* 사용 순서: ① 본문 드래그 → ② 가져오기(버튼) → ③ 교정·다듬기 */}
+            <ol
+              className="p-2 bg-indigo-50/70 border border-indigo-200/80 rounded-lg flex items-stretch justify-between gap-1 text-[11px] text-indigo-900"
+              aria-label="사용 순서"
+            >
+              <li className="flex-1 flex flex-col items-center gap-1 py-1.5" title="기안기 본문에서 문장을 마우스로 드래그해 블럭 지정">
+                <span className="w-8 h-8 rounded-full bg-white text-indigo-600 flex items-center justify-center shadow-xs">
+                  <MaterialIcon name="highlightAlt" size={18} />
+                </span>
+                <span className="font-semibold">본문 드래그</span>
+              </li>
+              <li className="flex items-center text-indigo-300" aria-hidden="true">
+                <MaterialIcon name="chevronRight" size={18} />
+              </li>
+              <li className="flex-1 flex">
+                <button
+                  type="button"
+                  onClick={requestFetchSelectionText}
+                  disabled={isFetchingSelection}
+                  className="flex-1 flex flex-col items-center gap-1 py-1.5 rounded-md hover:bg-indigo-100/80 transition disabled:opacity-50 cursor-pointer"
+                  title="기안기 화면에서 현재 선택된 문장 가져오기"
+                >
+                  <span className="w-8 h-8 rounded-full bg-indigo-600 text-white flex items-center justify-center shadow-xs">
+                    <MaterialIcon name="fileDownload" size={18} className={isFetchingSelection ? 'animate-pulse' : ''} />
+                  </span>
+                  <span className="font-bold text-indigo-700">{isFetchingSelection ? '확인 중...' : '가져오기'}</span>
+                </button>
+              </li>
+              <li className="flex items-center text-indigo-300" aria-hidden="true">
+                <MaterialIcon name="chevronRight" size={18} />
+              </li>
+              <li className="flex-1 flex flex-col items-center gap-1 py-1.5" title="아래 버튼으로 맞춤법 교정 또는 문장 다듬기 실행">
+                <span className="w-8 h-8 rounded-full bg-white text-indigo-600 flex items-center justify-center shadow-xs">
+                  <MaterialIcon name="autoFixHigh" size={18} />
+                </span>
+                <span className="font-semibold">교정·다듬기</span>
+              </li>
+            </ol>
 
             {/* 선택된 블럭 문장 카드 */}
             <div className="bg-white border border-slate-200 rounded-xl p-3.5 shadow-xs space-y-2.5">
@@ -851,17 +878,6 @@ export function ReviewTab({
                     </span>
                   )}
                 </div>
-
-                <button
-                  type="button"
-                  onClick={requestFetchSelectionText}
-                  disabled={isFetchingSelection}
-                  className="px-2 py-1 text-xs text-indigo-700 hover:bg-indigo-50 rounded-md font-medium transition inline-flex items-center gap-1 disabled:opacity-50 cursor-pointer"
-                  title="기안기 화면에서 현재 선택된 문장 가져오기"
-                >
-                  <MaterialIcon name="contentCut" size={14} className={isFetchingSelection ? 'animate-pulse' : ''} />
-                  <span>{isFetchingSelection ? '확인 중...' : '선택 영역 가져오기'}</span>
-                </button>
               </div>
 
               <textarea

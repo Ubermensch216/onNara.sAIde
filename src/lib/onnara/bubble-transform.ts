@@ -16,6 +16,12 @@ import { cleanAdminDraft } from './draft-cleaner';
 import { findTitleInputElement } from './draft-title';
 import { collectDocumentText } from '@/lib/extract/document-text';
 import { randomId } from '@/lib/random-id';
+import { applyContextFixes } from './context-spell';
+
+/** 맞춤법 검사 결과에는 LLM이 놓치기 쉬운 문맥 혼동어(효율성 재고→제고 등)를 규칙으로 한 번 더 고친다. */
+function finishOutput(action: TransformAction, cleaned: string): string {
+  return action === 'spellcheck' ? applyContextFixes(cleaned) : cleaned;
+}
 
 export type PolishMode =
   | 'shorten'   // 내용 줄이기 (간결화)
@@ -210,7 +216,9 @@ export function buildTransformPrompt(
           '소제목(예: "1. 보고 배경 및 목적")과 항목 번호·기호(1. 가. (1) - · 등)를 지우거나 바꾸지 말 것, ' +
           '줄 수와 줄바꿈·빈 줄을 원문 그대로 둘 것, ' +
           '문장을 새로 덧붙이거나 지우거나 순서를 바꾸지 말 것, ' +
-          '틀리지 않은 낱말을 다른 표현으로 바꾸지 말 것.',
+          '틀리지 않은 낱말을 다른 표현으로 바꾸지 말 것. ' +
+          '다만 철자는 맞아도 문맥에 맞지 않게 쓴 동음·유사어는 오류이므로 고칠 것' +
+          '(예: "효율성 재고"→"효율성 제고", "부서장 결제"→"부서장 결재", "담당자로써"→"담당자로서").',
         userPrompt: `${contextSection}[작업 지침]\n아래 [변환 대상 문장]에서 맞춤법·띄어쓰기·문장부호 오류만 고쳐 주십시오. 소제목·항목 번호·줄 구성은 그대로 두고, 고친 전체 텍스트만 출력하십시오.\n\n[변환 대상 문장]\n${selectedText}`,
       };
 
@@ -297,7 +305,7 @@ export async function transformTextWithAI(
     if (!cleaned || !cleaned.trim()) {
       throw new Error('AI 변환 결과가 비어 있습니다. 다시 시도해 주세요.');
     }
-    return cleaned;
+    return finishOutput(action, cleaned);
   }
 
   // chrome.runtime이 없는 환경(테스트 등)에서는 직접 fetch
@@ -319,5 +327,5 @@ export async function transformTextWithAI(
   if (!cleaned || !cleaned.trim()) {
     throw new Error('AI 변환 결과가 비어 있습니다. 다시 시도해 주세요.');
   }
-  return cleaned;
+  return finishOutput(action, cleaned);
 }
