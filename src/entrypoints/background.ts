@@ -807,13 +807,17 @@ async function handleMainWorldHwpGetSelection(tabId: number): Promise<{ text: st
  *   온나라 누름틀 이름은 'NormalField72¡본문¡…' 꼴이라 필드 목록에서 이름 가운데 칸으로 찾는다.
  *   debug에는 어떤 필드가 보였는지 남긴다(현장 확인용).
  */
-async function handleMainWorldHwpGetBody(tabId: number): Promise<{ text: string; title: string; debug: string }> {
+async function handleMainWorldHwpGetBody(
+  tabId: number,
+  write: { title?: string; body?: string } | null = null
+): Promise<{ text: string; title: string; debug: string; written?: { title: boolean; body: boolean } }> {
   try {
     const results = await chrome.scripting.executeScript({
       target: { tabId, allFrames: true },
       world: 'MAIN',
-      func: async () => {
-        return new Promise<{ title: string; body: string; debug: string }>((resolve) => {
+      args: [write],
+      func: async (writeOp: { title?: string; body?: string } | null) => {
+        return new Promise<{ title: string; body: string; debug: string; written?: { title: boolean; body: boolean } }>((resolve) => {
           try {
             function findHwpInWindow(w: any): any {
               if (!w) return null;
@@ -977,8 +981,55 @@ async function handleMainWorldHwpGetBody(tabId: number): Promise<{ text: string;
               return '';
             }
 
+            function norm(s: string): string { return s.replace(/\s+/g, ''); }
+
+            // 필드 값을 교체하고 다시 읽어 확인한다. 이름 가운데 칸이 labels에 있는 첫 필드가 대상이다.
+            async function writeByLabels(h: any, names: string[], labels: string[], text: string): Promise<boolean> {
+              var targets: string[] = [];
+              for (var li = 0; li < labels.length; li++) {
+                for (var ni = 0; ni < names.length; ni++) {
+                  var nm = names[ni] || '';
+                  if (labelOf(nm) === labels[li] && targets.indexOf(nm) < 0) targets.push(nm);
+                }
+              }
+              if (!names.length) {
+                for (var di = 0; di < labels.length; di++) {
+                  try { if (typeof h.FieldExist === 'function' && h.FieldExist(labels[di])) targets.push(labels[di] || ''); } catch (e) {}
+                }
+              }
+              // 줄바꿈은 한글 문단 나누기(\r\n)로 넣는다.
+              var payload = text.replace(/\r\n?|\n/g, '\r\n');
+              for (var ti = 0; ti < targets.length; ti++) {
+                var target = targets[ti] || '';
+                try {
+                  if (typeof h.PutFieldText === 'function') {
+                    var pr: any = h.PutFieldText(target, payload);
+                    if (pr && typeof pr.then === 'function') await pr;
+                  } else if (typeof h.SetFieldText === 'function') {
+                    var sr: any = h.SetFieldText(target, payload);
+                    if (sr && typeof sr.then === 'function') await sr;
+                  } else {
+                    continue;
+                  }
+                  var back = norm(clean(await callStr(h, 'GetFieldText', [target])));
+                  var want = norm(text);
+                  // 한글이 글자를 다듬어 저장할 수 있어 앞부분 일치와 길이 근사로 확인한다.
+                  if (back.length > 0 && back.indexOf(want.slice(0, 30)) === 0 && Math.abs(back.length - want.length) <= Math.max(5, want.length * 0.1)) return true;
+                } catch (e) {}
+              }
+              return false;
+            }
+
             (async function () {
               var h = findHwp();
+              if (writeOp) {
+                if (!h) { resolve({ title: '', body: '', debug: 'HwpCtrl 없음', written: { title: false, body: false } }); return; }
+                var wnames = await listFields(h);
+                var wTitle = typeof writeOp.title === 'string' && writeOp.title.trim() ? await writeByLabels(h, wnames, TITLE_LABELS, writeOp.title.trim()) : false;
+                var wBody = typeof writeOp.body === 'string' && writeOp.body.trim() ? await writeByLabels(h, wnames, BODY_LABELS, writeOp.body.trim()) : false;
+                resolve({ title: '', body: '', debug: '필드 ' + wnames.length + '개: ' + wnames.slice(0, 12).join(' | '), written: { title: wTitle, body: wBody } });
+                return;
+              }
               if (!h) {
                 resolve({ title: '', body: readDomBody(), debug: 'HwpCtrl 없음' });
                 return;
@@ -998,13 +1049,16 @@ async function handleMainWorldHwpGetBody(tabId: number): Promise<{ text: string;
     let title = '';
     let text = '';
     const debug: string[] = [];
+    const written = { title: false, body: false };
     for (const r of results ?? []) {
-      const v = r?.result as { title?: string; body?: string; debug?: string } | undefined;
+      const v = r?.result as { title?: string; body?: string; debug?: string; written?: { title: boolean; body: boolean } } | undefined;
       if (!title && v?.title) title = v.title;
       if (!text && v?.body) text = v.body;
       if (v?.debug) debug.push(v.debug);
+      if (v?.written?.title) written.title = true;
+      if (v?.written?.body) written.body = true;
     }
-    return { text, title, debug: [...new Set(debug)].join(' // ') };
+    return { text, title, debug: [...new Set(debug)].join(' // '), ...(write ? { written } : {}) };
   } catch (e) {
     return { text: '', title: '', debug: String(e) };
   }
@@ -1560,7 +1614,11 @@ export default defineBackground(() => {
       }
       const raw = msg as Record<string, any>;
       if ((['DRAFT_MAIN_WORLD_HWP_INSERT', 'DRAFT_MAIN_WORLD_HWP_REPLACE_SELECTION'].includes(kind) && (typeof raw.text !== 'string' || raw.text.length > 200_000)) ||
-          (kind === 'DRAFT_MAIN_WORLD_HWP_TITLE' && (typeof raw.title !== 'string' || !raw.title.trim() || raw.title.length > 500))) {
+          (kind === 'DRAFT_MAIN_WORLD_HWP_TITLE' && (typeof raw.title !== 'string' || !raw.title.trim() || raw.title.length > 500)) ||
+          (kind === 'DRAFT_MAIN_WORLD_HWP_PUT_FIELDS' && (
+            (raw.title !== undefined && (typeof raw.title !== 'string' || raw.title.length > 500)) ||
+            (raw.body !== undefined && (typeof raw.body !== 'string' || raw.body.length > 200_000)) ||
+            !((typeof raw.title === 'string' && raw.title.trim()) || (typeof raw.body === 'string' && raw.body.trim()))))) {
         sendResponse({ success: false, error: '기안기 입력 내용이 올바르지 않습니다.' });
         return false;
       }
@@ -1595,6 +1653,17 @@ export default defineBackground(() => {
         handleMainWorldHwpGetBody(tabId)
           .then(res => sendResponse(res))
           .catch(err => sendResponse({ text: '', error: String(err) }));
+        return true;
+      }
+    }
+    // 퇴고 탭: 교정된 제목·본문으로 기안기의 제목·본문 필드 값을 교체한다.
+    if (msg && typeof msg === 'object' && (msg as any).type === 'DRAFT_MAIN_WORLD_HWP_PUT_FIELDS') {
+      const tabId = sender.tab?.id;
+      if (tabId) {
+        const { title, body } = msg as { title?: string; body?: string };
+        handleMainWorldHwpGetBody(tabId, { title, body })
+          .then(res => sendResponse({ success: Boolean(res.written?.title || res.written?.body), written: res.written, debug: res.debug }))
+          .catch(err => sendResponse({ success: false, error: String(err) }));
         return true;
       }
     }

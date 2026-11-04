@@ -1206,6 +1206,60 @@ export default defineUnlistedScript(() => {
           extensionOrigin
         );
       }
+    } else if (msg.type === 'DRAFT_REPLACE_FIELDS') {
+      // 퇴고 탭: 교정된 제목·본문으로 기안기 필드 값을 교체한다. 교체 후 다시 읽어 확인한 결과만 성공으로 본다.
+      const wantTitle = typeof msg.title === 'string' ? msg.title.trim() : '';
+      const wantBody = typeof msg.body === 'string' ? msg.body.trim() : '';
+      let written = { title: false, body: false };
+      let debug = '';
+      try {
+        const bgRes = await new Promise<{ success?: boolean; written?: { title: boolean; body: boolean }; debug?: string; error?: string }>((resolve) => {
+          chrome.runtime.sendMessage(
+            { type: 'DRAFT_MAIN_WORLD_HWP_PUT_FIELDS', title: wantTitle || undefined, body: wantBody || undefined },
+            (resp) => resolve(resp || { success: false, error: chrome.runtime.lastError?.message })
+          );
+        });
+        written = bgRes.written ?? written;
+        debug = bgRes.debug || bgRes.error || '';
+      } catch (err) {
+        debug = String(err);
+      }
+
+      const failedParts: string[] = [];
+      if (wantBody && !written.body) failedParts.push('본문');
+      if (wantTitle && !written.title) failedParts.push('제목');
+      const okParts: string[] = [];
+      if (wantBody && written.body) okParts.push('본문');
+      if (wantTitle && written.title) okParts.push('제목');
+
+      // 못 넣은 부분은 클립보드에 복사해 붙여넣을 수 있게 한다.
+      let copied = false;
+      if (failedParts.length) {
+        try {
+          await navigator.clipboard.writeText(failedParts.includes('본문') ? wantBody : wantTitle);
+          copied = true;
+        } catch {}
+      }
+      console.info('[sAIde] 기안기 필드 교체', { written, debug });
+
+      let message: string;
+      if (!failedParts.length) message = `기안기 ${okParts.join('·')}에 교정본이 반영되었습니다. 내용을 확인하고 직접 저장해 주세요.`;
+      else {
+        const failedLabel = failedParts.join('·');
+        message = `${failedLabel} 필드를 찾지 못했거나 반영을 확인하지 못했습니다.` +
+          (copied ? ' 교정본을 복사했으니 직접 붙여넣어 주세요.' : '') +
+          (okParts.length ? ` (${okParts.join('·')}은 반영됨)` : '') + (debug ? ` [${debug}]` : '');
+      }
+      iframe.contentWindow?.postMessage(
+        {
+          type: 'DRAFT_REPLACE_FIELDS_RESULT',
+          requestId: msg.requestId,
+          success: failedParts.length === 0,
+          copied,
+          message,
+        },
+        extensionOrigin
+      );
     } else if (msg.type === 'DRAFT_GET_BODY_TEXT') {
       const bodyRes = await extractDraftBodyText();
       iframe.contentWindow?.postMessage(

@@ -1455,46 +1455,45 @@ export function DrawerApp() {
               </div>
             ) : null}
           </footer>
-
-          {/* 2단계 명시적 승인 모달 (본문 삽입 사전 확인) */}
-          {approvalModal.open && (
-            <div
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="approval-modal-title"
-              className="fixed inset-0 bg-black/40 flex items-center justify-center p-3 z-50"
-            >
-              <div className="bg-white rounded-xl p-4 max-w-sm w-full space-y-3.5 shadow-xl border border-slate-200">
-                <h3 id="approval-modal-title" className="font-bold text-slate-900 text-sm flex items-center gap-2">
-                  <MaterialIcon name="warning" size={18} className="text-amber-500" />
-                  <span>본문 삽입 사전 확인</span>
-                </h3>
-                <p className="text-slate-700 text-xs leading-relaxed">
-                  기안기 <span className="font-bold text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200">{approvalModal.targetLabel}</span>에 생성된 초안을 직접 입력합니다.
-                </p>
-                <div className="p-2.5 bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-lg leading-relaxed">
-                  ※ 자동 저장이나 결재는 진행되지 않습니다. 삽입 후 기안기 본문에서 내용을 최종 검토하고 직접 저장하세요.
-                </div>
-                <div className="flex gap-2 justify-end pt-1">
-                  <button
-                    type="button"
-                    onClick={() => setApprovalModal({ open: false })}
-                    className="px-3.5 py-2 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50 font-semibold text-xs transition cursor-pointer"
-                  >
-                    취소
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleConfirmApply}
-                    className="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 font-semibold text-xs transition cursor-pointer shadow-xs"
-                  >
-                    이 문서에 삽입
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
         </>
+      )}
+      {/* 2단계 명시적 승인 모달 (본문 삽입 사전 확인) — 어느 탭에서 요청해도 보이도록 탭 밖에 둔다 */}
+      {approvalModal.open && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="approval-modal-title"
+          className="fixed inset-0 bg-black/40 flex items-center justify-center p-3 z-50"
+        >
+          <div className="bg-white rounded-xl p-4 max-w-sm w-full space-y-3.5 shadow-xl border border-slate-200">
+            <h3 id="approval-modal-title" className="font-bold text-slate-900 text-sm flex items-center gap-2">
+              <MaterialIcon name="warning" size={18} className="text-amber-500" />
+              <span>본문 삽입 사전 확인</span>
+            </h3>
+            <p className="text-slate-700 text-xs leading-relaxed">
+              기안기 <span className="font-bold text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200">{approvalModal.targetLabel}</span>에 생성된 초안을 직접 입력합니다.
+            </p>
+            <div className="p-2.5 bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-lg leading-relaxed">
+              ※ 자동 저장이나 결재는 진행되지 않습니다. 삽입 후 기안기 본문에서 내용을 최종 검토하고 직접 저장하세요.
+            </div>
+            <div className="flex gap-2 justify-end pt-1">
+              <button
+                type="button"
+                onClick={() => setApprovalModal({ open: false })}
+                className="px-3.5 py-2 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50 font-semibold text-xs transition cursor-pointer"
+              >
+                취소
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmApply}
+                className="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 font-semibold text-xs transition cursor-pointer shadow-xs"
+              >
+                이 문서에 삽입
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

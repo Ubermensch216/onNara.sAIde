@@ -53,6 +53,8 @@ export function ReviewTab({
   const [spellCheckError, setSpellCheckError] = useState<string | null>(null);
   const [spellViewMode, setSpellViewMode] = useState<'diff' | 'text'>('diff');
   const spellAbortRef = useRef<AbortController | null>(null);
+  const [isApplyingSpell, setIsApplyingSpell] = useState<boolean>(false);
+  const [confirmApply, setConfirmApply] = useState<boolean>(false);
 
   // ── 2. 블럭 메뉴 (AI 문장 작성 지원) 상태 ──
   const [selectedBlockText, setSelectedBlockText] = useState<string>('');
@@ -90,6 +92,10 @@ export function ReviewTab({
           const detail = typeof data.debug === 'string' && data.debug ? ` (${data.debug})` : '';
           showToast(`기안기에서 제목·본문 텍스트를 찾지 못했습니다. 본문작성 창이 열려 있는지 확인해 주세요.${detail}`);
         }
+      } else if (data.type === 'DRAFT_REPLACE_FIELDS_RESULT') {
+        setIsApplyingSpell(false);
+        setConfirmApply(false);
+        showToast(typeof data.message === 'string' && data.message ? data.message : data.success ? '기안기에 반영되었습니다.' : '반영하지 못했습니다.');
       } else if (data.type === 'DRAFT_SELECTION_TEXT_RESPONSE') {
         setIsFetchingSelection(false);
         if (data.text && typeof data.text === 'string' && data.text.trim()) {
@@ -211,12 +217,36 @@ export function ReviewTab({
     }
   };
 
-  // 본문 전체 반영
+  // 교정된 제목·본문을 기안기의 제목·본문 필드에 교체 반영한다.
+  // ★ 본문 전체를 바꾸는 동작이라 첫 클릭은 확인 단계로 두고, 한 번 더 누르면 반영한다.
   const handleApplySpellCheckToBody = () => {
-    if (!spellCheckedText.trim()) return;
-    if (onPrepareInsert) {
-      onPrepareInsert(spellCheckedText, 'cursor');
+    const newBody = spellCheckedText.trim();
+    const newTitle = spellCheckedTitle.trim();
+    const bodyChanged = Boolean(newBody) && newBody !== bodyText.trim();
+    const titleChanged = Boolean(newTitle) && newTitle !== titleText.trim();
+    if (!bodyChanged && !titleChanged) {
+      showToast('교정으로 바뀐 내용이 없어 반영할 것이 없습니다.');
+      return;
     }
+    if (!confirmApply) {
+      setConfirmApply(true);
+      showToast('기안기의 본문(제목)이 교정본으로 교체됩니다. 한 번 더 누르면 반영합니다.');
+      setTimeout(() => setConfirmApply(false), 6000);
+      return;
+    }
+    setConfirmApply(false);
+    setIsApplyingSpell(true);
+    window.parent.postMessage(
+      {
+        type: 'DRAFT_REPLACE_FIELDS',
+        requestId: `fields_${Date.now()}`,
+        ...(bodyChanged ? { body: newBody } : {}),
+        ...(titleChanged ? { title: newTitle } : {}),
+      },
+      parentOrigin()
+    );
+    // 응답이 없으면 버튼이 잠기지 않도록 풀어 준다.
+    setTimeout(() => setIsApplyingSpell(false), 15000);
   };
 
   // ── [블럭 메뉴 액션 실행] ──
@@ -648,12 +678,12 @@ export function ReviewTab({
                   <button
                     type="button"
                     onClick={handleApplySpellCheckToBody}
-                    disabled={!spellCheckedText.trim()}
+                    disabled={(!spellCheckedText.trim() && !spellCheckedTitle.trim()) || isApplyingSpell}
                     className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5 shadow-sm cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                    title="기안기 본문에 교정된 본문 내용을 반영합니다 (제목은 반영되지 않습니다)"
+                    title="기안기의 본문(과 제목) 필드를 교정본으로 교체합니다"
                   >
                     <MaterialIcon name="check" size={15} />
-                    <span>기안기 본문에 반영</span>
+                    <span>{isApplyingSpell ? '반영 중...' : confirmApply ? '교체 확인 (한 번 더 클릭)' : '기안기 본문에 반영'}</span>
                   </button>
                 </div>
               </div>

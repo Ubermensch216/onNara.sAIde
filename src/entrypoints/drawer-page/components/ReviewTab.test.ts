@@ -181,12 +181,22 @@ describe('ReviewTab (퇴고 탭) 컴포넌트 검증', () => {
     expect(document.body.textContent).toContain('교정 결과');
     expect(document.body.textContent).toContain('기안기 본문에 반영');
 
-    // 기안기 본문에 반영 클릭
-    const applyBtn = [...document.querySelectorAll('button')].find((b) =>
-      b.textContent?.includes('기안기 본문에 반영')
-    );
-    await act(async () => applyBtn?.click());
-    expect(handlePrepareInsert).toHaveBeenCalledWith(expect.stringContaining('교정'), 'cursor');
+    // 기안기 본문에 반영: 첫 클릭은 확인 단계, 두 번째 클릭에 필드 교체 요청을 보낸다.
+    // (커서 삽입 확인창을 쓰지 않는다 — 퇴고 탭에서는 그 확인창이 보이지 않았다)
+    const posted = vi.spyOn(window, 'postMessage');
+    const findApply = () =>
+      [...document.querySelectorAll('button')].find((b) =>
+        /기안기 본문에 반영|교체 확인/.test(b.textContent ?? '')
+      );
+    await act(async () => findApply()?.click());
+    expect(posted.mock.calls.some(([m]) => (m as any)?.type === 'DRAFT_REPLACE_FIELDS')).toBe(false);
+    expect(document.body.textContent).toContain('교체 확인');
+
+    await act(async () => findApply()?.click());
+    const sent = posted.mock.calls.map(([m]) => m as any).find((m) => m?.type === 'DRAFT_REPLACE_FIELDS');
+    expect(sent?.body).toContain('교정');
+    expect(handlePrepareInsert).not.toHaveBeenCalled();
+    posted.mockRestore();
   });
 
   it('블럭 메뉴 서브탭으로 전환하면 6대 문장 다듬기, 개인정보 마스킹, 번호 매기기 도구가 제공된다', async () => {

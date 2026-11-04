@@ -47,6 +47,7 @@ export type DraftRequest =
   | { type: 'SAIDE_INSERT_LAST_FOCUSED'; text: string }
   | { type: 'DRAFT_APPLY_TITLE'; title: string }
   | { type: 'DRAFT_GET_BODY_TEXT'; requestId: string }
+  | { type: 'DRAFT_REPLACE_FIELDS'; requestId: string; title?: string; body?: string }
   | { type: 'DRAFT_GET_SELECTION_TEXT'; requestId: string }
   | { type: 'DRAFT_REPLACE_SELECTION_TEXT'; requestId: string; text: string; expectedSelectionText?: string };
 
@@ -126,6 +127,7 @@ export type DraftResponse =
       source?: string;
       error?: string;
     }
+  | { type: 'DRAFT_REPLACE_FIELDS_RESULT'; requestId: string; success: boolean; copied?: boolean; message: string }
   | {
       type: 'DRAFT_SELECTION_TEXT_RESPONSE';
       requestId: string;
@@ -212,6 +214,8 @@ export function validDraftHostRequest(value: unknown): boolean {
     case 'DRAFT_PREPARE_INSERT': return v.payload && boundedText(v.payload.text) && ['cursor', 'replace-selection', 'append'].includes(v.payload.mode);
     case 'DRAFT_APPLY_INSERT': return boundedText(v.approvalToken, 100) && boundedText(v.text);
     case 'DRAFT_REPLACE_SELECTION_TEXT': return boundedText(v.text);
+    case 'DRAFT_REPLACE_FIELDS':
+      return (v.title === undefined || boundedText(v.title, 500)) && (v.body === undefined || boundedText(v.body)) && (v.title !== undefined || v.body !== undefined);
     default: return false;
   }
 }
