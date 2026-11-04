@@ -223,6 +223,18 @@ export function trustedDraftContent(sender: chrome.runtime.MessageSender, isDraf
   return Boolean(origin && /^https?:/.test(origin) && sender.tab?.url && isDraftPath(sender.tab.url));
 }
 
+/**
+ * 기안 탭에 끼워 넣은 우리 확장 프로그램 페이지(드로어 iframe)가 보낸 요청인지.
+ * ★ 특권 기안 요청(삽입·치환 등)은 계속 콘텐츠 스크립트만 허용한다(trustedDraftContent).
+ *   이 검사는 퇴고 탭이 직접 보내는 AI 변환 요청(BUBBLE_TRANSFORM_AI·BUBBLE_CANCEL_AI)에만 쓴다.
+ *   확장 프로그램 자신의 페이지이면서, 그것이 실제 기안 탭 안에 있을 때만 통과한다.
+ */
+export function trustedDraftDrawer(sender: chrome.runtime.MessageSender, isDraftPath: (url: string) => boolean): boolean {
+  if (sender.id !== chrome.runtime.id || !Number.isInteger(sender.tab?.id) || !sender.url) return false;
+  if (!sender.url.startsWith(chrome.runtime.getURL(''))) return false;
+  return Boolean(sender.tab?.url && isDraftPath(sender.tab.url));
+}
+
 export type BubbleChatBody = Omit<ChatRequest, 'stream'> & { stream?: boolean };
 export function validBubbleBody(raw: unknown): raw is BubbleChatBody {
   const b = raw as Partial<BubbleChatBody> | null;

@@ -3,6 +3,7 @@ import {
   isAllowedOriginMatch,
   validDraftHostRequest,
   trustedDraftContent,
+  trustedDraftDrawer,
   validBubbleBody,
   isValidTargetRef,
   validatePostMessageEvent,
@@ -106,5 +107,21 @@ it('특권 기안 요청은 실제 기안 탭의 콘텐츠 스크립트 송신�
     expect(trustedDraftContent({ ...sender, id: 'other' }, draftPath)).toBe(false);
     expect(trustedDraftContent({ ...sender, url: 'chrome-extension://saide/drawer-page.html' }, draftPath)).toBe(false);
     expect(trustedDraftContent({ ...sender, tab: { ...sender.tab, url: 'https://unrelated.test' } as chrome.tabs.Tab }, draftPath)).toBe(false);
+  } finally { vi.unstubAllGlobals(); }
+});
+
+it('퇴고 탭의 AI 요청은 기안 탭 안의 확장 프로그램 페이지에서 온 것만 통과한다', () => {
+  vi.stubGlobal('chrome', { runtime: { id: 'saide', getURL: (p: string) => `chrome-extension://saide/${p}` } });
+  try {
+    const draftTab = { id: 1, url: 'https://onnara.test/bms/dct/addhwpbody.do' };
+    const sender = { id: 'saide', url: 'chrome-extension://saide/drawer-page.html', tab: draftTab } as chrome.runtime.MessageSender;
+    const draftPath = (url: string) => url.endsWith('/bms/dct/addhwpbody.do');
+    expect(trustedDraftDrawer(sender, draftPath)).toBe(true);
+    expect(trustedDraftDrawer({ ...sender, id: 'other' }, draftPath)).toBe(false);
+    // 일반 웹페이지가 보낸 것은 거부
+    expect(trustedDraftDrawer({ ...sender, url: 'https://evil.test/page' }, draftPath)).toBe(false);
+    // 기안 탭이 아닌 곳(또는 탭 없는 사이드패널)에 있는 확장 페이지는 거부
+    expect(trustedDraftDrawer({ ...sender, tab: { id: 2, url: 'https://unrelated.test' } as chrome.tabs.Tab }, draftPath)).toBe(false);
+    expect(trustedDraftDrawer({ ...sender, tab: undefined }, draftPath)).toBe(false);
   } finally { vi.unstubAllGlobals(); }
 });

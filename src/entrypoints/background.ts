@@ -1,4 +1,4 @@
-import { trustedDraftContent } from '@/lib/messaging/draft-protocol';
+import { trustedDraftContent, trustedDraftDrawer } from '@/lib/messaging/draft-protocol';
 import { runBubbleRequest, cancelBubbleRequest, cancelBubbleRequestsForDocument } from '@/lib/llm/bubble-request';
 import { readTemporaryReference } from '@/lib/onnara/temporary-reference';
 import type { HwpInsertResult } from '@/lib/onnara/draft-editor';
@@ -1552,7 +1552,9 @@ export default defineBackground(() => {
   chrome.runtime.onMessage.addListener((msg: unknown, sender, sendResponse) => {
     const kind = msg && typeof msg === 'object' ? (msg as { type?: unknown }).type : null;
     if (typeof kind === 'string' && (kind.startsWith('DRAFT_MAIN_WORLD_') || ['DRAFT_FETCH_RELATED_DOC', 'BUBBLE_TRANSFORM_AI', 'BUBBLE_CANCEL_AI', 'EXPAND_WINDOW_FOR_DRAWER', 'RESTORE_WINDOW_FOR_DRAWER'].includes(kind))) {
-      if (!trustedDraftContent(sender, isExactDraftPath)) {
+      // AI 변환 요청은 콘텐츠 스크립트(문장 선택 버블)와 기안 탭 안의 드로어 페이지(퇴고 탭) 양쪽에서 온다.
+      const fromDrawer = (kind === 'BUBBLE_TRANSFORM_AI' || kind === 'BUBBLE_CANCEL_AI') && trustedDraftDrawer(sender, isExactDraftPath);
+      if (!fromDrawer && !trustedDraftContent(sender, isExactDraftPath)) {
         sendResponse({ success: false, error: '허용되지 않은 기안기 요청입니다.' });
         return false;
       }
