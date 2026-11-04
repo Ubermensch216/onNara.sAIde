@@ -15,7 +15,17 @@ beforeEach(() => {
       getURL: vi.fn((path: string) => `chrome-extension://test/${path}`),
       sendMessage: vi.fn(async (msg: any) => {
         if (msg.type === 'BUBBLE_TRANSFORM_AI') {
-          return { result: `[교정됨] ${msg.body?.messages?.[1]?.content || ''}` };
+          // 실제 AI처럼 [변환 대상 문장]만 고쳐 돌려준다. 소제목("1. ...")은 일부러 지워
+          // 보호 로직이 되살리는지 확인한다.
+          const content: string = msg.body?.messages?.[1]?.content || '';
+          const target = content.split('[변환 대상 문장]\n').pop() || '';
+          const result = target
+            .split('\n')
+            .filter((line) => !/^\d+\.\s/.test(line))
+            .join('\n')
+            .replace(/ 입니다/g, '입니다')
+            .replace(/틀린/g, '교정된');
+          return { result };
         }
         return {};
       }),
@@ -187,7 +197,7 @@ describe('ReviewTab (퇴고 탭) 컴포넌트 검증', () => {
     const findApply = () =>
       [...document.querySelectorAll('button')].find((b) => /기안기 본문에 반영/.test(b.textContent ?? ''));
     const findDialogBtn = (label: string) =>
-      [...document.querySelectorAll('[role="dialog"] button')].find((b) => b.textContent?.includes(label));
+      [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find((b) => b.textContent?.includes(label));
     const replaceCalls = () => posted.mock.calls.filter(([m]) => (m as any)?.type === 'DRAFT_REPLACE_FIELDS');
     expect(document.querySelector('[role="dialog"]')).toBeNull();
 
@@ -208,6 +218,47 @@ describe('ReviewTab (퇴고 탭) 컴포넌트 검증', () => {
     const sent = replaceCalls().map(([m]) => m as any)[0];
     expect(sent?.body).toContain('교정');
     expect(handlePrepareInsert).not.toHaveBeenCalled();
+    posted.mockRestore();
+  });
+
+  it('소제목은 교정 대상에서 지워지지 않고, ×로 제외한 교정은 원문대로 반영된다', async () => {
+    await act(() => root.render(createElement(ReviewTab, { settings: DEFAULT_SETTINGS })));
+    await settle();
+    await act(async () => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: { type: 'DRAFT_BODY_TEXT_RESPONSE', text: '1. 보고 배경 및 목적\n가. 틀린 문장 입니다.' },
+          origin: window.location.origin,
+          source: window.parent,
+        })
+      );
+    });
+    await settle();
+    const runBtn = [...document.querySelectorAll('button')].find((b) => b.textContent?.includes('맞춤법 검사 실행'));
+    await act(async () => runBtn?.click());
+    await settle();
+
+    // 소제목은 삭제(취소선)로 표시되지 않는다.
+    const removed = [...document.querySelectorAll('.line-through')].map((e) => e.textContent).join('|');
+    expect(removed).not.toContain('보고 배경');
+
+    // 교정 항목은 2건(틀린→교정된, 띄어쓰기). 첫 항목을 ×로 제외한다.
+    const excludeBtns = () => [...document.querySelectorAll('button[aria-label="이 교정 제외"]')] as HTMLButtonElement[];
+    expect(excludeBtns()).toHaveLength(2);
+    await act(async () => excludeBtns()[0]!.click());
+    expect(excludeBtns()).toHaveLength(1);
+    expect(document.querySelectorAll('button[aria-label="이 교정 다시 적용"]')).toHaveLength(1);
+    expect(document.body.textContent).toContain('제외 1건');
+
+    const posted = vi.spyOn(window, 'postMessage');
+    await act(async () =>
+      [...document.querySelectorAll('button')].find((b) => /기안기 본문에 반영/.test(b.textContent ?? ''))?.click()
+    );
+    await act(async () =>
+      [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find((b) => b.textContent?.includes('교체하여 반영'))?.click()
+    );
+    const sent = posted.mock.calls.map(([m]) => m as any).find((m) => m?.type === 'DRAFT_REPLACE_FIELDS');
+    expect(sent?.body).toBe('1. 보고 배경 및 목적\n가. 틀린 문장입니다.');
     posted.mockRestore();
   });
 
@@ -235,7 +286,7 @@ describe('ReviewTab (퇴고 탭) 컴포넌트 검증', () => {
         [...document.querySelectorAll('button')].find((b) => /기안기 본문에 반영|반영 중/.test(b.textContent ?? ''));
       await act(async () => findApply()?.click());
       await act(async () =>
-        [...document.querySelectorAll('[role="dialog"] button')].find((b) => b.textContent?.includes('교체하여 반영'))?.click()
+        [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find((b) => b.textContent?.includes('교체하여 반영'))?.click()
       );
       expect(findApply()?.textContent).toContain('반영 중');
 
@@ -271,7 +322,7 @@ describe('ReviewTab (퇴고 탭) 컴포넌트 검증', () => {
         [...document.querySelectorAll('button')].find((b) => /기안기 본문에 반영|반영 중/.test(b.textContent ?? ''));
       await act(async () => findApply()?.click());
       await act(async () =>
-        [...document.querySelectorAll('[role="dialog"] button')].find((b) => b.textContent?.includes('교체하여 반영'))?.click()
+        [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find((b) => b.textContent?.includes('교체하여 반영'))?.click()
       );
       await act(async () => {
         window.dispatchEvent(
@@ -302,7 +353,7 @@ describe('ReviewTab (퇴고 탭) 컴포넌트 검증', () => {
     );
     await settle();
 
-    const blockSubTab = [...document.querySelectorAll('button[role="tab"]')].find((b) =>
+    const blockSubTab = [...document.querySelectorAll<HTMLButtonElement>('button[role="tab"]')].find((b) =>
       b.textContent?.includes('블럭 메뉴')
     );
     expect(blockSubTab).toBeDefined();
@@ -335,7 +386,7 @@ describe('ReviewTab (퇴고 탭) 컴포넌트 검증', () => {
     await settle();
 
     // 블럭 탭 이동
-    const blockSubTab = [...document.querySelectorAll('button[role="tab"]')].find((b) =>
+    const blockSubTab = [...document.querySelectorAll<HTMLButtonElement>('button[role="tab"]')].find((b) =>
       b.textContent?.includes('블럭 메뉴')
     );
     await act(async () => blockSubTab?.click());

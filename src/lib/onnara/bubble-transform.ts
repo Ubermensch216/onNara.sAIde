@@ -203,8 +203,14 @@ export function buildTransformPrompt(
   switch (action) {
     case 'spellcheck':
       return {
-        systemPrompt: `${baseSystemPrompt} 주어진 텍스트의 한글 맞춤법, 띄어쓰기, 표준어 규정 및 공문서 문장부호를 정확하게 교정하십시오.`,
-        userPrompt: `${contextSection}[작업 지침]\n위 문서 전체 맥락의 취지를 바탕으로, 아래 [변환 대상 문장]의 맞춤법과 띄어쓰기를 올바르게 교정해 주십시오. (오직 교정된 문장만 출력)\n\n[변환 대상 문장]\n${selectedText}`,
+        systemPrompt:
+          `${baseSystemPrompt} 주어진 텍스트의 한글 맞춤법, 띄어쓰기, 표준어 규정 및 공문서 문장부호 오류만 교정하십시오. ` +
+          '맞춤법 검사이므로 다음을 반드시 지키십시오: ' +
+          '소제목(예: "1. 보고 배경 및 목적")과 항목 번호·기호(1. 가. (1) - · 등)를 지우거나 바꾸지 말 것, ' +
+          '줄 수와 줄바꿈·빈 줄을 원문 그대로 둘 것, ' +
+          '문장을 새로 덧붙이거나 지우거나 순서를 바꾸지 말 것, ' +
+          '틀리지 않은 낱말을 다른 표현으로 바꾸지 말 것.',
+        userPrompt: `${contextSection}[작업 지침]\n아래 [변환 대상 문장]에서 맞춤법·띄어쓰기·문장부호 오류만 고쳐 주십시오. 소제목·항목 번호·줄 구성은 그대로 두고, 고친 전체 텍스트만 출력하십시오.\n\n[변환 대상 문장]\n${selectedText}`,
       };
 
     case 'shorten':

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Settings } from '@/lib/storage/settings';
 import { MaterialIcon } from './MaterialIcon';
 import { copyDraftToClipboard } from '@/lib/onnara/draft-format';
@@ -9,7 +9,14 @@ import {
   type PolishMode,
   type TransformAction,
 } from '@/lib/onnara/bubble-transform';
-import { computeTextDiff, type DiffPart } from '@/lib/onnara/text-diff';
+import {
+  computeTextDiff,
+  computeDiffSegments,
+  composeFromSegments,
+  type DiffPart,
+  type DiffSegment,
+} from '@/lib/onnara/text-diff';
+import { guardSpellcheckResult, normalizeSpellText } from '@/lib/onnara/spell-guard';
 import { cleanAdminDraft } from '@/lib/onnara/draft-cleaner';
 import { messageOrigin, validatePostMessageEvent } from '@/lib/messaging/draft-protocol';
 
@@ -49,6 +56,9 @@ export function ReviewTab({
   const [bodySource, setBodySource] = useState<string>('');
   const [spellCheckedTitle, setSpellCheckedTitle] = useState<string>('');
   const [spellCheckedText, setSpellCheckedText] = useState<string>('');
+  // 사용자가 '×'로 제외한 교정 항목(번호). 제외한 항목은 원문 그대로 반영된다.
+  const [excludedTitle, setExcludedTitle] = useState<ReadonlySet<number>>(() => new Set());
+  const [excludedBody, setExcludedBody] = useState<ReadonlySet<number>>(() => new Set());
   const [isCheckingSpell, setIsCheckingSpell] = useState<boolean>(false);
   const [spellCheckError, setSpellCheckError] = useState<string | null>(null);
   const [spellViewMode, setSpellViewMode] = useState<'diff' | 'text'>('diff');
@@ -84,8 +94,9 @@ export function ReviewTab({
 
       if (data.type === 'DRAFT_BODY_TEXT_RESPONSE') {
         setIsFetchingBody(false);
-        const title = typeof data.title === 'string' ? data.title : '';
-        const body = typeof data.text === 'string' ? data.text : '';
+        // 한글 조합형·보이지 않는 문자가 섞이면 같은 글자도 교정된 것처럼 보인다. 미리 정규화한다.
+        const title = typeof data.title === 'string' ? normalizeSpellText(data.title) : '';
+        const body = typeof data.text === 'string' ? normalizeSpellText(data.text) : '';
         setTitleText(title);
         if (body || title) {
           setBodyText(body);
@@ -158,6 +169,44 @@ export function ReviewTab({
     }, 2500);
   };
 
+  // ── 교정 항목 계산: 원문 대비 바뀐 곳을 항목으로 묶고, 제외한 항목은 원문으로 되돌린다 ──
+  const baseTitle = useMemo(() => normalizeSpellText(titleText.trim()), [titleText]);
+  const baseBody = useMemo(() => normalizeSpellText(bodyText.trim()), [bodyText]);
+  const titleSegments = useMemo<DiffSegment[]>(
+    () => (spellCheckedTitle ? computeDiffSegments(baseTitle, spellCheckedTitle) : []),
+    [baseTitle, spellCheckedTitle]
+  );
+  const bodySegments = useMemo<DiffSegment[]>(
+    () => (spellCheckedText ? computeDiffSegments(baseBody, spellCheckedText) : []),
+    [baseBody, spellCheckedText]
+  );
+  // 교정 결과나 원문이 바뀌면 항목 번호가 달라지므로 제외 목록을 비운다.
+  useEffect(() => setExcludedTitle(new Set()), [titleSegments]);
+  useEffect(() => setExcludedBody(new Set()), [bodySegments]);
+  const finalTitle = useMemo(
+    () => (spellCheckedTitle ? composeFromSegments(titleSegments, excludedTitle) : ''),
+    [spellCheckedTitle, titleSegments, excludedTitle]
+  );
+  const finalBody = useMemo(
+    () => (spellCheckedText ? composeFromSegments(bodySegments, excludedBody) : ''),
+    [spellCheckedText, bodySegments, excludedBody]
+  );
+  const changeCount = (segs: DiffSegment[]) => segs.filter((s) => s.kind === 'change').length;
+  const totalChanges = changeCount(titleSegments) + changeCount(bodySegments);
+  const totalExcluded = excludedTitle.size + excludedBody.size;
+
+  const toggleExcluded = (
+    setter: (fn: (prev: ReadonlySet<number>) => ReadonlySet<number>) => void,
+    id: number
+  ) => {
+    setter((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
   // ── [본 화면 맞춤법 검사 실행] ──
   const handleRunSpellCheck = async () => {
     const textToProcess = bodyText.trim();
@@ -186,14 +235,17 @@ export function ReviewTab({
       if (titleToProcess) {
         const titleResult = await transformTextWithAI('spellcheck', titleToProcess, abort.signal, context);
         // 제목은 한 줄이다. 줄바꿈이 섞여 나오면 한 줄로 합친다.
-        setSpellCheckedTitle(cleanAdminDraft(titleResult).replace(/\s*\n+\s*/g, ' ').trim());
+        const oneLine = cleanAdminDraft(titleResult).replace(/\s*\n+\s*/g, ' ').trim();
+        setSpellCheckedTitle(guardSpellcheckResult(normalizeSpellText(titleToProcess), oneLine));
       } else {
         setSpellCheckedTitle('');
       }
 
       if (textToProcess) {
         const result = await transformTextWithAI('spellcheck', textToProcess, abort.signal, context);
-        setSpellCheckedText(cleanAdminDraft(result));
+        // ★ 맞춤법 검사는 글자만 고친다. AI가 소제목·항목 기호·줄을 지우거나 덧붙여도
+        //   원문 줄 구성에 맞춰 되돌린다(spell-guard).
+        setSpellCheckedText(guardSpellcheckResult(normalizeSpellText(textToProcess), cleanAdminDraft(result)));
       } else {
         setSpellCheckedText('');
       }
@@ -223,10 +275,10 @@ export function ReviewTab({
   // 교정된 제목·본문을 기안기의 제목·본문 필드에 교체 반영한다.
   // ★ 본문 전체를 바꾸는 동작이라 버튼을 누르면 먼저 확인 팝업을 띄우고, 팝업에서 승인해야 반영한다.
   const handleApplySpellCheckToBody = () => {
-    const newBody = spellCheckedText.trim();
-    const newTitle = spellCheckedTitle.trim();
-    const bodyChanged = Boolean(newBody) && newBody !== bodyText.trim();
-    const titleChanged = Boolean(newTitle) && newTitle !== titleText.trim();
+    const newBody = finalBody.trim();
+    const newTitle = finalTitle.trim();
+    const bodyChanged = Boolean(newBody) && newBody !== baseBody;
+    const titleChanged = Boolean(newTitle) && newTitle !== baseTitle;
     if (!bodyChanged && !titleChanged) {
       showToast('교정으로 바뀐 내용이 없어 반영할 것이 없습니다.');
       return;
@@ -364,8 +416,65 @@ export function ReviewTab({
     setTimeout(() => setIsReplacingSelection(false), 3000);
   };
 
+  // 교정 항목별 Diff: 각 교정 옆의 '×'로 그 교정만 제외(원문 유지)하고, '↺'로 다시 적용한다.
+  const renderSegments = (
+    segments: DiffSegment[],
+    excluded: ReadonlySet<number>,
+    onToggle: (id: number) => void
+  ) => (
+    <div className="font-mono text-xs leading-relaxed p-3 bg-slate-900 text-slate-100 rounded-lg max-h-64 overflow-y-auto whitespace-pre-wrap select-text border border-slate-800">
+      {segments.map((seg, idx) => {
+        if (seg.kind === 'same') return <span key={idx}>{seg.text}</span>;
+        if (excluded.has(seg.id)) {
+          return (
+            <span key={idx} data-spell-change={seg.id} data-excluded="true">
+              <span className="border-b border-dashed border-slate-500" title="교정 제외됨 (원문 유지)">
+                {seg.removed}
+              </span>
+              <button
+                type="button"
+                onClick={() => onToggle(seg.id)}
+                aria-label="이 교정 다시 적용"
+                title="이 교정 다시 적용"
+                className="inline-flex items-center justify-center w-3.5 h-3.5 mx-0.5 align-middle rounded-full bg-slate-700 hover:bg-slate-500 text-slate-200 text-[10px] leading-none cursor-pointer"
+              >
+                ↺
+              </button>
+            </span>
+          );
+        }
+        return (
+          <span key={idx} data-spell-change={seg.id}>
+            {seg.removed && (
+              <span className="bg-rose-900/80 text-rose-300 line-through opacity-80 px-0.5 rounded" title="삭제/교정 전">
+                {seg.removed}
+              </span>
+            )}
+            {seg.added && (
+              <span
+                className="bg-emerald-800/80 text-emerald-200 px-0.5 rounded font-semibold underline decoration-emerald-400"
+                title="추가/교정됨"
+              >
+                {seg.added}
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={() => onToggle(seg.id)}
+              aria-label="이 교정 제외"
+              title="이 교정 제외 (원문 유지)"
+              className="inline-flex items-center justify-center w-3.5 h-3.5 mx-0.5 align-middle rounded-full bg-slate-700 hover:bg-rose-600 text-slate-200 text-[10px] leading-none cursor-pointer"
+            >
+              ×
+            </button>
+          </span>
+        );
+      })}
+    </div>
+  );
+
   // Diff 렌더링 헬퍼
-  const renderDiff = (original: string, modified: string) => {
+  const renderDiff =(original: string, modified: string) => {
     const parts = computeTextDiff(original, modified);
     return (
       <div className="font-mono text-xs leading-relaxed p-3 bg-slate-900 text-slate-100 rounded-lg max-h-64 overflow-y-auto whitespace-pre-wrap select-text border border-slate-800">
@@ -585,7 +694,11 @@ export function ReviewTab({
                       교정 결과
                     </span>
                     <span className="text-[11px] text-slate-500 font-mono">
-                      {spellCheckedText.length.toLocaleString()}자
+                      {finalBody.length.toLocaleString()}자
+                    </span>
+                    <span className="text-[11px] text-slate-500">
+                      교정 {totalChanges - totalExcluded}건
+                      {totalExcluded > 0 && ` · 제외 ${totalExcluded}건`}
                     </span>
                   </div>
 
@@ -624,17 +737,18 @@ export function ReviewTab({
                       <span>교정 전 삭제 내용</span>
                       <span className="inline-block w-2.5 h-2.5 bg-emerald-800/80 rounded ml-2" />
                       <span>교정 후 추가·수정 내용</span>
+                      <span className="ml-2">× 누르면 그 교정 제외</span>
                     </div>
                     {spellCheckedTitle && (
                       <div>
                         <div className="text-[11px] font-semibold text-slate-500 mb-1">제목</div>
-                        {renderDiff(titleText, spellCheckedTitle)}
+                        {renderSegments(titleSegments, excludedTitle, (id) => toggleExcluded(setExcludedTitle, id))}
                       </div>
                     )}
                     {spellCheckedText && (
                       <div>
                         <div className="text-[11px] font-semibold text-slate-500 mb-1">본문</div>
-                        {renderDiff(bodyText, spellCheckedText)}
+                        {renderSegments(bodySegments, excludedBody, (id) => toggleExcluded(setExcludedBody, id))}
                       </div>
                     )}
                   </div>
@@ -643,14 +757,14 @@ export function ReviewTab({
                     {spellCheckedTitle && (
                       <input
                         type="text"
-                        value={spellCheckedTitle}
+                        value={finalTitle}
                         onChange={(e) => setSpellCheckedTitle(e.target.value)}
                         className="w-full text-xs font-sans px-2.5 py-1.5 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
                       />
                     )}
                     {spellCheckedText && (
                       <textarea
-                        value={spellCheckedText}
+                        value={finalBody}
                         onChange={(e) => setSpellCheckedText(e.target.value)}
                         rows={8}
                         className="w-full text-xs font-sans p-2.5 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y leading-relaxed bg-white"
@@ -666,7 +780,7 @@ export function ReviewTab({
                       type="button"
                       onClick={() => {
                         copyDraftToClipboard(
-                          [spellCheckedTitle && `제목: ${spellCheckedTitle}`, spellCheckedText]
+                          [finalTitle && `제목: ${finalTitle}`, finalBody]
                             .filter(Boolean)
                             .join('\n\n')
                         );
