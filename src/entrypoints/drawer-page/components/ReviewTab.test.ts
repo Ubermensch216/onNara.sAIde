@@ -199,6 +199,82 @@ describe('ReviewTab (퇴고 탭) 컴포넌트 검증', () => {
     posted.mockRestore();
   });
 
+  it('반영 요청에 기안기가 응답하지 않으면 버튼을 풀고 반영하지 못했다고 알린다', async () => {
+    const toast = vi.fn();
+    await act(() => root.render(createElement(ReviewTab, { settings: DEFAULT_SETTINGS, onShowToast: toast })));
+    await settle();
+    await act(async () => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: { type: 'DRAFT_BODY_TEXT_RESPONSE', text: '틀린 문장 입니다.' },
+          origin: window.location.origin,
+          source: window.parent,
+        })
+      );
+    });
+    await settle();
+    const runBtn = [...document.querySelectorAll('button')].find((b) => b.textContent?.includes('맞춤법 검사 실행'));
+    await act(async () => runBtn?.click());
+    await settle();
+
+    vi.useFakeTimers();
+    try {
+      const findApply = () =>
+        [...document.querySelectorAll('button')].find((b) => /기안기 본문에 반영|교체 확인|반영 중/.test(b.textContent ?? ''));
+      await act(async () => findApply()?.click());
+      await act(async () => findApply()?.click());
+      expect(findApply()?.textContent).toContain('반영 중');
+
+      await act(async () => vi.advanceTimersByTime(15000));
+      expect(findApply()?.textContent).toContain('기안기 본문에 반영');
+      expect(toast).toHaveBeenLastCalledWith(expect.stringContaining('응답이 없어 반영하지 못했습니다'));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('반영 결과 응답이 오면 그 안내를 알리고 무응답 안내는 띄우지 않는다', async () => {
+    const toast = vi.fn();
+    await act(() => root.render(createElement(ReviewTab, { settings: DEFAULT_SETTINGS, onShowToast: toast })));
+    await settle();
+    await act(async () => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: { type: 'DRAFT_BODY_TEXT_RESPONSE', text: '틀린 문장 입니다.' },
+          origin: window.location.origin,
+          source: window.parent,
+        })
+      );
+    });
+    await settle();
+    const runBtn = [...document.querySelectorAll('button')].find((b) => b.textContent?.includes('맞춤법 검사 실행'));
+    await act(async () => runBtn?.click());
+    await settle();
+
+    vi.useFakeTimers();
+    try {
+      const findApply = () =>
+        [...document.querySelectorAll('button')].find((b) => /기안기 본문에 반영|교체 확인|반영 중/.test(b.textContent ?? ''));
+      await act(async () => findApply()?.click());
+      await act(async () => findApply()?.click());
+      await act(async () => {
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: { type: 'DRAFT_REPLACE_FIELDS_RESULT', success: true, message: '기안기 본문에 교정본이 반영되었습니다.' },
+            origin: window.location.origin,
+            source: window.parent,
+          })
+        );
+      });
+      expect(toast).toHaveBeenLastCalledWith('기안기 본문에 교정본이 반영되었습니다.');
+
+      await act(async () => vi.advanceTimersByTime(15000));
+      expect(toast).toHaveBeenLastCalledWith('기안기 본문에 교정본이 반영되었습니다.');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('블럭 메뉴 서브탭으로 전환하면 6대 문장 다듬기, 개인정보 마스킹, 번호 매기기 도구가 제공된다', async () => {
     await act(() =>
       root.render(

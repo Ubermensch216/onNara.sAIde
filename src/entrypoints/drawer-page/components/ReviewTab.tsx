@@ -55,6 +55,9 @@ export function ReviewTab({
   const spellAbortRef = useRef<AbortController | null>(null);
   const [isApplyingSpell, setIsApplyingSpell] = useState<boolean>(false);
   const [confirmApply, setConfirmApply] = useState<boolean>(false);
+  // 응답을 기다리는 반영 요청. 응답이 끝내 오지 않으면 그 사실을 알린다.
+  const pendingApplyRef = useRef<string | null>(null);
+  const confirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── 2. 블럭 메뉴 (AI 문장 작성 지원) 상태 ──
   const [selectedBlockText, setSelectedBlockText] = useState<string>('');
@@ -93,6 +96,7 @@ export function ReviewTab({
           showToast(`기안기에서 제목·본문 텍스트를 찾지 못했습니다. 본문작성 창이 열려 있는지 확인해 주세요.${detail}`);
         }
       } else if (data.type === 'DRAFT_REPLACE_FIELDS_RESULT') {
+        pendingApplyRef.current = null;
         setIsApplyingSpell(false);
         setConfirmApply(false);
         showToast(typeof data.message === 'string' && data.message ? data.message : data.success ? '기안기에 반영되었습니다.' : '반영하지 못했습니다.');
@@ -228,25 +232,33 @@ export function ReviewTab({
       showToast('교정으로 바뀐 내용이 없어 반영할 것이 없습니다.');
       return;
     }
+    if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current);
     if (!confirmApply) {
       setConfirmApply(true);
       showToast('기안기의 본문(제목)이 교정본으로 교체됩니다. 한 번 더 누르면 반영합니다.');
-      setTimeout(() => setConfirmApply(false), 6000);
+      confirmTimerRef.current = setTimeout(() => setConfirmApply(false), 6000);
       return;
     }
     setConfirmApply(false);
     setIsApplyingSpell(true);
+    const requestId = `fields_${Date.now()}`;
+    pendingApplyRef.current = requestId;
     window.parent.postMessage(
       {
         type: 'DRAFT_REPLACE_FIELDS',
-        requestId: `fields_${Date.now()}`,
+        requestId,
         ...(bodyChanged ? { body: newBody } : {}),
         ...(titleChanged ? { title: newTitle } : {}),
       },
       parentOrigin()
     );
-    // 응답이 없으면 버튼이 잠기지 않도록 풀어 준다.
-    setTimeout(() => setIsApplyingSpell(false), 15000);
+    // 응답이 없으면 버튼이 잠기지 않도록 풀어 주고, 반영되지 않았음을 알린다.
+    setTimeout(() => {
+      if (pendingApplyRef.current !== requestId) return;
+      pendingApplyRef.current = null;
+      setIsApplyingSpell(false);
+      showToast('기안기에서 응답이 없어 반영하지 못했습니다. 본문작성 창이 열려 있는지 확인한 뒤 다시 시도해 주세요.');
+    }, 15000);
   };
 
   // ── [블럭 메뉴 액션 실행] ──
