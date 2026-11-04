@@ -818,11 +818,8 @@ export default defineUnlistedScript(() => {
 
     const sourceUrl = location.href;
     const before = captureDraftContext(document, { tabId: 0, frameId: 0, origin: location.origin });
-    if (!window.confirm('선택한 위치에 다음 초안을 삽입하시겠습니까?\n\n' + textToInsert.slice(0, 800) + (textToInsert.length > 800 ? '\n…' : ''))) {
-      iframe.contentWindow?.postMessage({ type: 'SAIDE_TARGET_INSERT_RESULT', status: 'cancelled', message: '삽입을 취소했습니다.' }, extensionOrigin);
-      return;
-    }
-    // 기본 클릭 동작으로 편집기 캐럿을 잡은 뒤, 승인한 문서와 대상이 여전히 같은지 확인한다.
+    // 위치를 클릭한 것 자체가 삽입 의사이므로 별도 확인창 없이 바로 붙여 넣는다.
+    // 기본 클릭 동작으로 편집기 캐럿을 잡은 뒤, 클릭 시점의 문서와 대상이 여전히 같은지 확인한다.
     setTimeout(async () => {
       try {
         const current = captureDraftContext(document, { tabId: 0, frameId: 0, origin: location.origin });

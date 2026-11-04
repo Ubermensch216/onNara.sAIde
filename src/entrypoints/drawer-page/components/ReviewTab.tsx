@@ -385,7 +385,9 @@ export function ReviewTab({
   };
 
   return (
-    <div className="flex flex-col h-full bg-slate-50 text-slate-800">
+    // ★ 드로어 헤더·탭 아래 남은 높이만 차지해야 한다. h-full이면 헤더·탭 높이만큼 아래가 잘려
+    //   하단 버튼이 화면 밖으로 밀리고 스크롤로도 닿지 않는다(flex-1 + min-h-0).
+    <div className="flex flex-col flex-1 min-h-0 bg-slate-50 text-slate-800">
       {/* ── 1. 퇴고 탭 내부 서브 네비게이션 ── */}
       <div className="px-4 pt-3 pb-2 bg-white border-b border-slate-200 shadow-sm shrink-0">
         <div className="flex items-center justify-between mb-2">

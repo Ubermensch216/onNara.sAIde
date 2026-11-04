@@ -91,6 +91,8 @@ export function DrawerApp() {
   const [loading, setLoading] = useState(false);
   const [generationError, setGenerationError] = useState<string | null>(null);
   const [statusMsg, setStatusMsg] = useState('');
+  // 퇴고 탭 알림 타이머. 새 알림이 오면 이전 타이머가 새 알림을 지우지 않도록 갈아 끼운다.
+  const reviewToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [approvalModal, setApprovalModal] = useState<{
     open: boolean;
     token?: string;
@@ -845,6 +847,7 @@ export function DrawerApp() {
         />
       ) : activeTab === 'review' ? (
         /* ── 탭 3: 퇴고 화면 (본 화면 맞춤법 검사 및 블럭 메뉴) ── */
+        <>
         <ReviewTab
           settings={settings}
           docTitle={docTitle}
@@ -863,9 +866,22 @@ export function DrawerApp() {
           }}
           onShowToast={(msg) => {
             setStatusMsg(msg);
-            setTimeout(() => setStatusMsg(''), 3200);
+            if (reviewToastTimerRef.current) clearTimeout(reviewToastTimerRef.current);
+            // 반영 결과처럼 긴 안내도 읽을 수 있게 글자 수에 따라 더 오래 둔다.
+            reviewToastTimerRef.current = setTimeout(() => setStatusMsg(''), Math.max(3200, msg.length * 90));
           }}
         />
+        {/* 퇴고 탭의 알림(반영 확인 요청·반영 결과)도 보이게 한다. 초안 작성 탭의 알림은 그 탭 스크롤 영역 안에 있다. */}
+        {statusMsg && (
+          <div
+            role="status"
+            aria-live="polite"
+            className="shrink-0 px-3 py-2 bg-blue-50 border-t border-blue-200 text-blue-900 text-center font-medium text-xs"
+          >
+            {statusMsg}
+          </div>
+        )}
+        </>
       ) : (
         /* ── 탭 1: 공문 초안 작성 화면 (작성 설정 → 작성 요청 → 생성 결과 → 온나라에 적용) ── */
         <>
