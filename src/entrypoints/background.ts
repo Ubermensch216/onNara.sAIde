@@ -804,14 +804,16 @@ async function handleMainWorldHwpGetSelection(tabId: number): Promise<{ text: st
  * ★ 서식(프레임)의 수신·경유·기관명 같은 고정 글자와 화면 버튼 글자는 검사 대상이 아니다.
  *   문서 전체를 읽는 GetTextFile('TEXT')나 페이지 전체 텍스트를 쓰지 않고,
  *   누름틀(필드) '제목'·'본문'의 값만 읽는다. 필드를 못 찾으면 빈 값을 돌려준다.
+ *   온나라 누름틀 이름은 'NormalField72¡본문¡…' 꼴이라 필드 목록에서 이름 가운데 칸으로 찾는다.
+ *   debug에는 어떤 필드가 보였는지 남긴다(현장 확인용).
  */
-async function handleMainWorldHwpGetBody(tabId: number): Promise<{ text: string; title: string }> {
+async function handleMainWorldHwpGetBody(tabId: number): Promise<{ text: string; title: string; debug: string }> {
   try {
     const results = await chrome.scripting.executeScript({
       target: { tabId, allFrames: true },
       world: 'MAIN',
       func: async () => {
-        return new Promise<{ title: string; body: string }>((resolve) => {
+        return new Promise<{ title: string; body: string; debug: string }>((resolve) => {
           try {
             function findHwpInWindow(w: any): any {
               if (!w) return null;
@@ -887,9 +889,9 @@ async function handleMainWorldHwpGetBody(tabId: number): Promise<{ text: string;
               return null;
             }
 
-            var TITLE_FIELDS = ['제목', 'title', 'TITLE', '기안제목', 'docTitle', '기안문_제목', '기안문제목', '문서제목', 'SUBJECT', 'subject', 'titleText'];
-            var BODY_FIELDS = ['본문', 'body', 'BODY', 'content', '기안문본문', '기안문_본문', '내용', '본문내용'];
             var PLACEHOLDER = /^(본문|제목|내용)을?\s*입력\s*하\s*(십시오|세요)\.?$/;
+            var TITLE_LABELS = ['제목', 'title', 'TITLE', '기안제목', 'docTitle', '기안문_제목', '기안문제목', '문서제목', 'SUBJECT', 'subject', 'titleText'];
+            var BODY_LABELS = ['본문', 'body', 'BODY', 'content', '기안문본문', '기안문_본문', '본문내용'];
 
             function clean(v: any): string {
               if (typeof v !== 'string') return '';
@@ -898,40 +900,96 @@ async function handleMainWorldHwpGetBody(tabId: number): Promise<{ text: string;
               return PLACEHOLDER.test(s) ? '' : s;
             }
 
-            function readField(h: any, names: string[]): string {
-              if (typeof h.GetFieldText !== 'function') return '';
-              for (var i = 0; i < names.length; i++) {
+            // 동기·Promise·콜백 어느 방식으로 답하든 문자열 하나로 받는다.
+            async function callStr(h: any, fnName: string, args: any[]): Promise<string> {
+              var fn = h[fnName];
+              if (typeof fn !== 'function') return '';
+              var r: any;
+              try { r = fn.apply(h, args); } catch (e) { return ''; }
+              if (r && typeof r.then === 'function') {
+                try { r = await r; } catch (e) { return ''; }
+              }
+              if (typeof r === 'string') return r;
+              if (r && typeof r === 'object') {
+                var o = r.data || r.result || r.text;
+                if (typeof o === 'string') return o;
+              }
+              return await new Promise<string>(function (res) {
+                var t = setTimeout(function () { res(''); }, 1200);
                 try {
-                  if (typeof h.FieldExist === 'function' && !h.FieldExist(names[i])) continue;
-                  var v = clean(h.GetFieldText(names[i]));
+                  fn.apply(h, args.concat([function (v: any) {
+                    clearTimeout(t);
+                    res(typeof v === 'string' ? v : ((v && (v.data || v.result || v.text)) || ''));
+                  }]));
+                } catch (e) { clearTimeout(t); res(''); }
+              });
+            }
+
+            // 온나라 누름틀 이름은 'NormalField72¡본문¡본문을 입력하십시오¡T¡T', 'CellField2¡제목¡F' 꼴이다.
+            // 이름 가운데 칸이 실제 필드 이름이다. 단순한 이름('본문')도 그대로 인정한다.
+            function labelOf(name: string): string {
+              var base = name.replace(/\{\{\d+\}\}$/, '');
+              var parts = base.split('¡');
+              return ((parts.length >= 2 ? parts[1] : base) || '').trim();
+            }
+
+            async function listFields(h: any): Promise<string[]> {
+              var tries: any[][] = [[0, 0], [0, 1], [0, 2], [0, 3], []];
+              for (var i = 0; i < tries.length; i++) {
+                var raw = await callStr(h, 'GetFieldList', tries[i] || []);
+                if (raw && raw.trim()) {
+                  return raw.split(/[\x02\n]+/).map(function (s) { return s.trim(); }).filter(Boolean);
+                }
+              }
+              return [];
+            }
+
+            async function readByLabels(h: any, names: string[], labels: string[]): Promise<string> {
+              // 1) 목록에서 이름 가운데 칸이 '제목'·'본문'인 필드
+              for (var li = 0; li < labels.length; li++) {
+                for (var ni = 0; ni < names.length; ni++) {
+                  var fname = names[ni] || '';
+                  if (labelOf(fname) !== labels[li]) continue;
+                  var v = clean(await callStr(h, 'GetFieldText', [fname]));
                   if (v) return v;
-                } catch (e) {}
+                }
+              }
+              // 2) 목록을 못 받았을 때: 단순 이름으로 직접 조회
+              if (!names.length) {
+                for (var di = 0; di < labels.length; di++) {
+                  try {
+                    if (typeof h.FieldExist === 'function' && !h.FieldExist(labels[di])) continue;
+                  } catch (e) { continue; }
+                  var d = clean(await callStr(h, 'GetFieldText', [labels[di]]));
+                  if (d) return d;
+                }
               }
               return '';
             }
 
-            // HWP가 아닌 일반 편집기(textarea·contenteditable)의 본문 대체 경로. 본문만 읽는다.
+            // HWP가 아닌 화면의 본문 입력란. 이름이 body·content인 입력란만 본다(서식 전체가 섞이는 편집 영역은 읽지 않는다).
             function readDomBody(): string {
               try {
-                var doc = window.document;
-                if (doc) {
-                  var ta = doc.querySelector('textarea[name*="body"], textarea[name*="content"], textarea#body, textarea#content');
-                  if (ta && (ta as any).value && (ta as any).value.trim().length > 0) return (ta as any).value.trim();
-                  var ce = doc.querySelector('[contenteditable="true"]');
-                  if (ce && ce.textContent && ce.textContent.trim().length > 0) return ce.textContent.trim();
-                }
+                var ta = window.document.querySelector('textarea[name*="body" i], textarea[name*="content" i], textarea#body, textarea#content');
+                var v = ta && (ta as any).value ? String((ta as any).value).trim() : '';
+                return v;
               } catch (e) {}
               return '';
             }
 
-            var h = findHwp();
-            if (h) {
-              resolve({ title: readField(h, TITLE_FIELDS), body: readField(h, BODY_FIELDS) });
-              return;
-            }
-            resolve({ title: '', body: readDomBody() });
+            (async function () {
+              var h = findHwp();
+              if (!h) {
+                resolve({ title: '', body: readDomBody(), debug: 'HwpCtrl 없음' });
+                return;
+              }
+              var names = await listFields(h);
+              var title = await readByLabels(h, names, TITLE_LABELS);
+              var body = await readByLabels(h, names, BODY_LABELS);
+              resolve({ title: title, body: body, debug: 'HwpCtrl 있음; 필드 ' + names.length + '개: ' + names.slice(0, 12).join(' | ') });
+            })().catch(function () { resolve({ title: '', body: '', debug: '읽기 오류' }); });
           } catch {
-            resolve({ title: '', body: '' });
+            resolve({ title: '', body: '', debug: '예외' });
           }
         });
       },
@@ -939,14 +997,16 @@ async function handleMainWorldHwpGetBody(tabId: number): Promise<{ text: string;
 
     let title = '';
     let text = '';
+    const debug: string[] = [];
     for (const r of results ?? []) {
-      const v = r?.result as { title?: string; body?: string } | undefined;
+      const v = r?.result as { title?: string; body?: string; debug?: string } | undefined;
       if (!title && v?.title) title = v.title;
       if (!text && v?.body) text = v.body;
+      if (v?.debug) debug.push(v.debug);
     }
-    return { text, title };
-  } catch {
-    return { text: '', title: '' };
+    return { text, title, debug: [...new Set(debug)].join(' // ') };
+  } catch (e) {
+    return { text: '', title: '', debug: String(e) };
   }
 }
 

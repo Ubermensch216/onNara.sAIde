@@ -87,7 +87,8 @@ export function ReviewTab({
           setBodySource(data.source || '');
           showToast(`기안기 제목·본문을 불러왔습니다. (제목 ${title.length}자, 본문 ${body.length}자)`);
         } else {
-          showToast('기안기에서 제목·본문 텍스트를 찾지 못했습니다. 본문작성 창이 열려 있는지 확인해 주세요.');
+          const detail = typeof data.debug === 'string' && data.debug ? ` (${data.debug})` : '';
+          showToast(`기안기에서 제목·본문 텍스트를 찾지 못했습니다. 본문작성 창이 열려 있는지 확인해 주세요.${detail}`);
         }
       } else if (data.type === 'DRAFT_SELECTION_TEXT_RESPONSE') {
         setIsFetchingSelection(false);

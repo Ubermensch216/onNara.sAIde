@@ -122,6 +122,7 @@ export type DraftResponse =
       requestId: string;
       text: string;
       title?: string;
+      debug?: string;
       source?: string;
       error?: string;
     }

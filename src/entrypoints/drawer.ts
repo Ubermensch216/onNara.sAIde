@@ -954,38 +954,23 @@ export default defineUnlistedScript(() => {
   }
 
   // 맞춤법 검사 대상(기안기 '제목'과 '본문')만 추출한다.
-  // ★ 서식(프레임)의 고정 글자나 화면 버튼 글자가 섞이므로 페이지 전체 텍스트(collectDocumentText)는 쓰지 않는다.
-  async function extractDraftBodyText(): Promise<{ text: string; title: string; source: string; error?: string }> {
+  // ★ 서식(프레임)의 고정 글자·화면 버튼 글자가 섞이므로 페이지 전체 텍스트, 문서 전체 텍스트,
+  //   편집 영역 전체 텍스트(contenteditable·임의 textarea)는 어떤 경우에도 읽지 않는다.
+  async function extractDraftBodyText(): Promise<{ text: string; title: string; source: string; debug: string; error?: string }> {
     let text = '';
     let title = '';
-    let source = 'none';
+    let debug = '';
 
     if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
       try {
-        const bgRes = await new Promise<{ text?: string; title?: string; error?: string }>((resolve) => {
+        const bgRes = await new Promise<{ text?: string; title?: string; debug?: string; error?: string }>((resolve) => {
           chrome.runtime.sendMessage({ type: 'DRAFT_MAIN_WORLD_HWP_GET_BODY' }, (resp) =>
             resolve(resp || { text: '' })
           );
         });
         text = (bgRes?.text || '').trim();
         title = (bgRes?.title || '').trim();
-        if (text || title) source = 'webhwp';
-      } catch {}
-    }
-
-    // 한글 기안기에서 본문을 못 읽었으면 일반 편집기(textarea·contenteditable) 본문을 읽는다.
-    if (!text) {
-      try {
-        const tabInfo = { tabId: 0, frameId: 0, origin: location.origin };
-        const ctx = captureDraftContext(document, tabInfo);
-        const { adapter } = await resolveEditorAdapter(ctx, document);
-        if (adapter.read) {
-          const readRes = await adapter.read(ctx, document);
-          if (readRes?.text && readRes.text.trim()) {
-            text = readRes.text.trim();
-            if (source === 'none') source = adapter.id;
-          }
-        }
+        debug = bgRes?.debug || '';
       } catch {}
     }
 
@@ -995,11 +980,11 @@ export default defineUnlistedScript(() => {
         const tabInfo = { tabId: 0, frameId: 0, origin: location.origin };
         const ctx = captureDraftContext(document, tabInfo);
         title = (ctx.title.value || '').trim();
-        if (title && source === 'none') source = 'title-input';
       } catch {}
     }
 
-    return { text, title, source };
+    console.info('[sAIde] 맞춤법 검사 대상 읽기', { titleLength: title.length, bodyLength: text.length, debug });
+    return { text, title, source: text || title ? 'webhwp' : 'none', debug };
   }
 
   // 기안기 본문에서 현재 블럭 지정(Selection)된 텍스트 추출
@@ -1229,6 +1214,7 @@ export default defineUnlistedScript(() => {
           requestId: msg.requestId,
           text: bodyRes.text,
           title: bodyRes.title,
+          debug: bodyRes.debug,
           source: bodyRes.source,
           error: bodyRes.error,
         },
