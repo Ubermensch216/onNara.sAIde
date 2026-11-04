@@ -121,6 +121,7 @@ export type DraftResponse =
       type: 'DRAFT_BODY_TEXT_RESPONSE';
       requestId: string;
       text: string;
+      title?: string;
       source?: string;
       error?: string;
     }

@@ -21,7 +21,6 @@ import { findWriteBodyButton, isExactDraftPath, isMetadataField } from '@/lib/on
 import { DRAWER_GAP_PX, applyPageLayoutShift } from '@/lib/onnara/drawer-layout';
 import { createSelectionBubble } from '@/lib/onnara/selection-bubble';
 import { applyDraftTitleToDom } from '@/lib/onnara/draft-title';
-import { collectDocumentText } from '@/lib/extract/document-text';
 import { captureActiveSelection, replaceSelectedText } from '@/lib/onnara/selection-manager';
 
 const SELECTION_BRIDGE_REQUEST = 'SAIDE_SELECTION_BUBBLE_REQUEST';
@@ -954,41 +953,53 @@ export default defineUnlistedScript(() => {
     }
   }
 
-  // 기안기 본문 전체 텍스트 추출 (웹한글 HwpCtrl 및 일반 DOM 에디터 통합)
-  async function extractDraftBodyText(): Promise<{ text: string; source: string; error?: string }> {
+  // 맞춤법 검사 대상(기안기 '제목'과 '본문')만 추출한다.
+  // ★ 서식(프레임)의 고정 글자나 화면 버튼 글자가 섞이므로 페이지 전체 텍스트(collectDocumentText)는 쓰지 않는다.
+  async function extractDraftBodyText(): Promise<{ text: string; title: string; source: string; error?: string }> {
+    let text = '';
+    let title = '';
+    let source = 'none';
+
     if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
       try {
-        const bgRes = await new Promise<{ text?: string; error?: string }>((resolve) => {
+        const bgRes = await new Promise<{ text?: string; title?: string; error?: string }>((resolve) => {
           chrome.runtime.sendMessage({ type: 'DRAFT_MAIN_WORLD_HWP_GET_BODY' }, (resp) =>
             resolve(resp || { text: '' })
           );
         });
-        if (bgRes?.text && bgRes.text.trim()) {
-          return { text: bgRes.text.trim(), source: 'webhwp' };
+        text = (bgRes?.text || '').trim();
+        title = (bgRes?.title || '').trim();
+        if (text || title) source = 'webhwp';
+      } catch {}
+    }
+
+    // 한글 기안기에서 본문을 못 읽었으면 일반 편집기(textarea·contenteditable) 본문을 읽는다.
+    if (!text) {
+      try {
+        const tabInfo = { tabId: 0, frameId: 0, origin: location.origin };
+        const ctx = captureDraftContext(document, tabInfo);
+        const { adapter } = await resolveEditorAdapter(ctx, document);
+        if (adapter.read) {
+          const readRes = await adapter.read(ctx, document);
+          if (readRes?.text && readRes.text.trim()) {
+            text = readRes.text.trim();
+            if (source === 'none') source = adapter.id;
+          }
         }
       } catch {}
     }
 
-    try {
-      const tabInfo = { tabId: 0, frameId: 0, origin: location.origin };
-      const ctx = captureDraftContext(document, tabInfo);
-      const { adapter } = await resolveEditorAdapter(ctx, document);
-      if (adapter.read) {
-        const readRes = await adapter.read(ctx, document);
-        if (readRes?.text && readRes.text.trim()) {
-          return { text: readRes.text.trim(), source: adapter.id };
-        }
-      }
-    } catch {}
+    // 제목은 HWP 필드에서 못 읽었을 때 화면의 제목 입력란 값으로 대신한다.
+    if (!title) {
+      try {
+        const tabInfo = { tabId: 0, frameId: 0, origin: location.origin };
+        const ctx = captureDraftContext(document, tabInfo);
+        title = (ctx.title.value || '').trim();
+        if (title && source === 'none') source = 'title-input';
+      } catch {}
+    }
 
-    try {
-      const text = collectDocumentText(document);
-      if (text && text.trim()) {
-        return { text: text.trim(), source: 'document-text' };
-      }
-    } catch {}
-
-    return { text: '', source: 'none' };
+    return { text, title, source };
   }
 
   // 기안기 본문에서 현재 블럭 지정(Selection)된 텍스트 추출
@@ -1217,6 +1228,7 @@ export default defineUnlistedScript(() => {
           type: 'DRAFT_BODY_TEXT_RESPONSE',
           requestId: msg.requestId,
           text: bodyRes.text,
+          title: bodyRes.title,
           source: bodyRes.source,
           error: bodyRes.error,
         },

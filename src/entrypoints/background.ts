@@ -799,15 +799,19 @@ async function handleMainWorldHwpGetSelection(tabId: number): Promise<{ text: st
 
 /**
  * 온나라 기안기 탭의 모든 프레임에서 메인 월드(world: 'MAIN')로
- * 한컴 웹기안기(HwpCtrl) 또는 에디터의 전체 본문 텍스트를 조회한다.
+ * 맞춤법 검사 대상인 '제목'과 '본문'만 읽는다.
+ *
+ * ★ 서식(프레임)의 수신·경유·기관명 같은 고정 글자와 화면 버튼 글자는 검사 대상이 아니다.
+ *   문서 전체를 읽는 GetTextFile('TEXT')나 페이지 전체 텍스트를 쓰지 않고,
+ *   누름틀(필드) '제목'·'본문'의 값만 읽는다. 필드를 못 찾으면 빈 값을 돌려준다.
  */
-async function handleMainWorldHwpGetBody(tabId: number): Promise<{ text: string }> {
+async function handleMainWorldHwpGetBody(tabId: number): Promise<{ text: string; title: string }> {
   try {
     const results = await chrome.scripting.executeScript({
       target: { tabId, allFrames: true },
       world: 'MAIN',
       func: async () => {
-        return new Promise<string>((resolve) => {
+        return new Promise<{ title: string; body: string }>((resolve) => {
           try {
             function findHwpInWindow(w: any): any {
               if (!w) return null;
@@ -883,82 +887,66 @@ async function handleMainWorldHwpGetBody(tabId: number): Promise<{ text: string 
               return null;
             }
 
-            function resolveFallback() {
+            var TITLE_FIELDS = ['제목', 'title', 'TITLE', '기안제목', 'docTitle', '기안문_제목', '기안문제목', '문서제목', 'SUBJECT', 'subject', 'titleText'];
+            var BODY_FIELDS = ['본문', 'body', 'BODY', 'content', '기안문본문', '기안문_본문', '내용', '본문내용'];
+            var PLACEHOLDER = /^(본문|제목|내용)을?\s*입력\s*하\s*(십시오|세요)\.?$/;
+
+            function clean(v: any): string {
+              if (typeof v !== 'string') return '';
+              // 같은 이름의 누름틀이 여럿이면 제어문자(\x02)로 이어서 돌려준다. 줄바꿈으로 바꾼다.
+              var s = v.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]+/g, '\n').replace(/\r\n?/g, '\n').trim();
+              return PLACEHOLDER.test(s) ? '' : s;
+            }
+
+            function readField(h: any, names: string[]): string {
+              if (typeof h.GetFieldText !== 'function') return '';
+              for (var i = 0; i < names.length; i++) {
+                try {
+                  if (typeof h.FieldExist === 'function' && !h.FieldExist(names[i])) continue;
+                  var v = clean(h.GetFieldText(names[i]));
+                  if (v) return v;
+                } catch (e) {}
+              }
+              return '';
+            }
+
+            // HWP가 아닌 일반 편집기(textarea·contenteditable)의 본문 대체 경로. 본문만 읽는다.
+            function readDomBody(): string {
               try {
                 var doc = window.document;
                 if (doc) {
-                  var ta = doc.querySelector('textarea[name*="body"], textarea[name*="content"], textarea#body, textarea#content, textarea');
-                  if (ta && (ta as any).value && (ta as any).value.trim().length > 0) {
-                    resolve((ta as any).value.trim());
-                    return;
-                  }
+                  var ta = doc.querySelector('textarea[name*="body"], textarea[name*="content"], textarea#body, textarea#content');
+                  if (ta && (ta as any).value && (ta as any).value.trim().length > 0) return (ta as any).value.trim();
                   var ce = doc.querySelector('[contenteditable="true"]');
-                  if (ce && ce.textContent && ce.textContent.trim().length > 0) {
-                    resolve(ce.textContent.trim());
-                    return;
-                  }
+                  if (ce && ce.textContent && ce.textContent.trim().length > 0) return ce.textContent.trim();
                 }
               } catch (e) {}
-              resolve('');
+              return '';
             }
 
             var h = findHwp();
-            if (h && typeof h.GetTextFile === 'function') {
-              var isDone = false;
-              var timer = setTimeout(function() {
-                if (!isDone) {
-                  isDone = true;
-                  resolveFallback();
-                }
-              }, 1200);
-
-              function finish(val: any) {
-                if (!isDone) {
-                  isDone = true;
-                  clearTimeout(timer);
-                  var s = (typeof val === 'string' ? val : (val?.data || val?.result || val?.text || '')).trim();
-                  if (s) {
-                    resolve(s);
-                  } else {
-                    resolveFallback();
-                  }
-                }
-              }
-
-              try {
-                var r = h.GetTextFile('TEXT', '', function(textResult: any) {
-                  finish(textResult);
-                });
-                if (typeof r === 'string' && r.trim()) {
-                  finish(r);
-                  return;
-                }
-                if (r && typeof r.then === 'function') {
-                  r.then(function(val: any) { finish(val); }).catch(function() { finish(''); });
-                  return;
-                }
-              } catch (err) {
-                finish('');
-              }
+            if (h) {
+              resolve({ title: readField(h, TITLE_FIELDS), body: readField(h, BODY_FIELDS) });
               return;
             }
-
-            resolveFallback();
+            resolve({ title: '', body: readDomBody() });
           } catch {
-            resolve('');
+            resolve({ title: '', body: '' });
           }
         });
       },
     });
 
+    let title = '';
+    let text = '';
     for (const r of results ?? []) {
-      if (r?.result && typeof r.result === 'string' && r.result.trim()) {
-        return { text: r.result.trim() };
-      }
+      const v = r?.result as { title?: string; body?: string } | undefined;
+      if (!title && v?.title) title = v.title;
+      if (!text && v?.body) text = v.body;
     }
-    return { text: '' };
+    return { text, title };
   } catch {
-    return { text: '' };
+    return { text: '', title: '' };
   }
 }
 

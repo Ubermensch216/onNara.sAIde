@@ -42,9 +42,12 @@ export function ReviewTab({
   const [subTab, setSubTab] = useState<'spellcheck' | 'block'>('spellcheck');
 
   // ── 1. 본 화면 맞춤법 검사 상태 ──
+  // 검사 대상은 기안기의 '제목'과 '본문'뿐이다. 서식(프레임)·버튼 글자는 포함하지 않는다.
+  const [titleText, setTitleText] = useState<string>('');
   const [bodyText, setBodyText] = useState<string>('');
   const [isFetchingBody, setIsFetchingBody] = useState<boolean>(false);
   const [bodySource, setBodySource] = useState<string>('');
+  const [spellCheckedTitle, setSpellCheckedTitle] = useState<string>('');
   const [spellCheckedText, setSpellCheckedText] = useState<string>('');
   const [isCheckingSpell, setIsCheckingSpell] = useState<boolean>(false);
   const [spellCheckError, setSpellCheckError] = useState<string | null>(null);
@@ -76,12 +79,15 @@ export function ReviewTab({
 
       if (data.type === 'DRAFT_BODY_TEXT_RESPONSE') {
         setIsFetchingBody(false);
-        if (data.text && typeof data.text === 'string') {
-          setBodyText(data.text);
+        const title = typeof data.title === 'string' ? data.title : '';
+        const body = typeof data.text === 'string' ? data.text : '';
+        setTitleText(title);
+        if (body || title) {
+          setBodyText(body);
           setBodySource(data.source || '');
-          showToast(`기안기 본문을 성공적으로 불러왔습니다. (${data.text.length}자)`);
+          showToast(`기안기 제목·본문을 불러왔습니다. (제목 ${title.length}자, 본문 ${body.length}자)`);
         } else {
-          showToast('기안기에서 본문 텍스트를 찾지 못했습니다. 본문작성 창이 열려 있는지 확인해 주세요.');
+          showToast('기안기에서 제목·본문 텍스트를 찾지 못했습니다. 본문작성 창이 열려 있는지 확인해 주세요.');
         }
       } else if (data.type === 'DRAFT_SELECTION_TEXT_RESPONSE') {
         setIsFetchingSelection(false);
@@ -145,8 +151,9 @@ export function ReviewTab({
   // ── [본 화면 맞춤법 검사 실행] ──
   const handleRunSpellCheck = async () => {
     const textToProcess = bodyText.trim();
-    if (!textToProcess) {
-      showToast('검사할 기안기 본문 텍스트가 없습니다. 먼저 본문을 불러오거나 입력해 주세요.');
+    const titleToProcess = titleText.trim();
+    if (!textToProcess && !titleToProcess) {
+      showToast('검사할 기안기 제목·본문 텍스트가 없습니다. 먼저 불러오거나 입력해 주세요.');
       return;
     }
 
@@ -160,21 +167,29 @@ export function ReviewTab({
     setSpellCheckError(null);
 
     try {
-      // 본문이 긴 경우에도 안정적으로 교정할 수 있도록 문서 맥락과 함께 전달
-      const result = await transformTextWithAI(
-        'spellcheck',
-        textToProcess,
-        abort.signal,
-        {
-          title: docTitle,
-          bodyContext: textToProcess.slice(0, 1500),
-        }
-      );
+      // 제목과 본문을 따로 교정한다. 본문이 긴 경우에도 안정적이도록 문서 맥락과 함께 전달
+      const context = {
+        title: titleToProcess || docTitle,
+        bodyContext: textToProcess.slice(0, 1500),
+      };
 
-      const cleaned = cleanAdminDraft(result);
-      setSpellCheckedText(cleaned);
+      if (titleToProcess) {
+        const titleResult = await transformTextWithAI('spellcheck', titleToProcess, abort.signal, context);
+        // 제목은 한 줄이다. 줄바꿈이 섞여 나오면 한 줄로 합친다.
+        setSpellCheckedTitle(cleanAdminDraft(titleResult).replace(/\s*\n+\s*/g, ' ').trim());
+      } else {
+        setSpellCheckedTitle('');
+      }
+
+      if (textToProcess) {
+        const result = await transformTextWithAI('spellcheck', textToProcess, abort.signal, context);
+        setSpellCheckedText(cleanAdminDraft(result));
+      } else {
+        setSpellCheckedText('');
+      }
+
       setSpellViewMode('diff');
-      showToast('본문 맞춤법 및 띄어쓰기 교정이 완료되었습니다.');
+      showToast('제목·본문 맞춤법 및 띄어쓰기 교정이 완료되었습니다.');
     } catch (err: any) {
       if (abort.signal.aborted) return;
       const msg = err?.message || '맞춤법 검사 중 오류가 발생했습니다.';
@@ -424,7 +439,7 @@ export function ReviewTab({
             <div className="bg-white border border-slate-200 rounded-xl p-3.5 shadow-xs space-y-2.5">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-1.5">
-                  <span className="font-bold text-xs text-slate-700">기안기 본문 내용</span>
+                  <span className="font-bold text-xs text-slate-700">기안기 제목·본문</span>
                   {bodyText && (
                     <span className="text-[11px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-500 font-mono">
                       {bodyText.length.toLocaleString()}자
@@ -449,6 +464,15 @@ export function ReviewTab({
                 </button>
               </div>
 
+              <label className="block text-[11px] font-semibold text-slate-500">제목</label>
+              <input
+                type="text"
+                value={titleText}
+                onChange={(e) => setTitleText(e.target.value)}
+                placeholder="기안기 제목"
+                className="w-full text-xs font-sans px-2.5 py-1.5 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-slate-50/50"
+              />
+              <label className="block text-[11px] font-semibold text-slate-500">본문</label>
               <textarea
                 value={bodyText}
                 onChange={(e) => setBodyText(e.target.value)}
@@ -475,7 +499,7 @@ export function ReviewTab({
                     <button
                       type="button"
                       onClick={handleRunSpellCheck}
-                      disabled={!bodyText.trim() || isCheckingSpell}
+                      disabled={(!bodyText.trim() && !titleText.trim()) || isCheckingSpell}
                       className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                     >
                       <MaterialIcon name="spellcheck" size={15} />
@@ -506,7 +530,7 @@ export function ReviewTab({
             </div>
 
             {/* 맞춤법 검사 결과 카드 */}
-            {spellCheckedText && (
+            {(spellCheckedText || spellCheckedTitle) && (
               <div className="bg-white border border-slate-200 rounded-xl p-3.5 shadow-xs space-y-3">
                 <div className="flex items-center justify-between border-b border-slate-100 pb-2">
                   <div className="flex items-center gap-2">
@@ -547,22 +571,45 @@ export function ReviewTab({
 
                 {/* 내용 뷰어 */}
                 {spellViewMode === 'diff' ? (
-                  <div>
-                    <div className="flex items-center gap-2 text-[10px] text-slate-500 mb-1.5">
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2 text-[10px] text-slate-500">
                       <span className="inline-block w-2.5 h-2.5 bg-rose-900/80 rounded" />
                       <span>교정 전 삭제 내용</span>
                       <span className="inline-block w-2.5 h-2.5 bg-emerald-800/80 rounded ml-2" />
                       <span>교정 후 추가·수정 내용</span>
                     </div>
-                    {renderDiff(bodyText, spellCheckedText)}
+                    {spellCheckedTitle && (
+                      <div>
+                        <div className="text-[11px] font-semibold text-slate-500 mb-1">제목</div>
+                        {renderDiff(titleText, spellCheckedTitle)}
+                      </div>
+                    )}
+                    {spellCheckedText && (
+                      <div>
+                        <div className="text-[11px] font-semibold text-slate-500 mb-1">본문</div>
+                        {renderDiff(bodyText, spellCheckedText)}
+                      </div>
+                    )}
                   </div>
                 ) : (
-                  <textarea
-                    value={spellCheckedText}
-                    onChange={(e) => setSpellCheckedText(e.target.value)}
-                    rows={8}
-                    className="w-full text-xs font-sans p-2.5 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y leading-relaxed bg-white"
-                  />
+                  <div className="space-y-2">
+                    {spellCheckedTitle && (
+                      <input
+                        type="text"
+                        value={spellCheckedTitle}
+                        onChange={(e) => setSpellCheckedTitle(e.target.value)}
+                        className="w-full text-xs font-sans px-2.5 py-1.5 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                      />
+                    )}
+                    {spellCheckedText && (
+                      <textarea
+                        value={spellCheckedText}
+                        onChange={(e) => setSpellCheckedText(e.target.value)}
+                        rows={8}
+                        className="w-full text-xs font-sans p-2.5 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y leading-relaxed bg-white"
+                      />
+                    )}
+                  </div>
                 )}
 
                 {/* 결과 액션 바 */}
@@ -571,8 +618,12 @@ export function ReviewTab({
                     <button
                       type="button"
                       onClick={() => {
-                        copyDraftToClipboard(spellCheckedText);
-                        showToast('교정된 본문이 클립보드에 복사되었습니다.');
+                        copyDraftToClipboard(
+                          [spellCheckedTitle && `제목: ${spellCheckedTitle}`, spellCheckedText]
+                            .filter(Boolean)
+                            .join('\n\n')
+                        );
+                        showToast('교정된 제목·본문이 클립보드에 복사되었습니다.');
                       }}
                       className="px-2.5 py-1.5 text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition inline-flex items-center gap-1 cursor-pointer"
                     >
@@ -583,6 +634,7 @@ export function ReviewTab({
                     <button
                       type="button"
                       onClick={() => {
+                        setSpellCheckedTitle('');
                         setSpellCheckedText('');
                         setSpellCheckError(null);
                       }}
@@ -595,8 +647,9 @@ export function ReviewTab({
                   <button
                     type="button"
                     onClick={handleApplySpellCheckToBody}
-                    className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5 shadow-sm cursor-pointer"
-                    title="기안기 본문에 교정된 전체 내용을 반영합니다"
+                    disabled={!spellCheckedText.trim()}
+                    className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5 shadow-sm cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                    title="기안기 본문에 교정된 본문 내용을 반영합니다 (제목은 반영되지 않습니다)"
                   >
                     <MaterialIcon name="check" size={15} />
                     <span>기안기 본문에 반영</span>

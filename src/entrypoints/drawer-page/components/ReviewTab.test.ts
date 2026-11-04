@@ -62,7 +62,7 @@ describe('ReviewTab (퇴고 탭) 컴포넌트 검증', () => {
     expect(document.body.textContent).toContain('공문서 퇴고 및 교정');
     expect(document.body.textContent).toContain('본 화면 맞춤법 검사');
     expect(document.body.textContent).toContain('블럭 메뉴 (문장 지원)');
-    expect(document.body.textContent).toContain('기안기 본문 내용');
+    expect(document.body.textContent).toContain('기안기 제목·본문');
     expect(document.body.textContent).toContain('맞춤법 검사 실행');
   });
 
@@ -121,6 +121,25 @@ describe('ReviewTab (퇴고 탭) 컴포넌트 검증', () => {
     const textarea = document.querySelector<HTMLTextAreaElement>('textarea');
     expect(textarea?.value).toBe(sampleBody);
     expect(document.body.textContent).toContain('한글 기안기');
+  });
+
+  it('제목이 함께 오면 제목 입력란에, 본문은 textarea에 따로 담긴다 (서식·버튼 글자는 없다)', async () => {
+    await act(() => root.render(createElement(ReviewTab, { settings: DEFAULT_SETTINGS })));
+    await settle();
+
+    await act(async () => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: { type: 'DRAFT_BODY_TEXT_RESPONSE', title: '2026년 업무계획 알림', text: '본문 내용입니다.', source: 'webhwp' },
+          origin: window.location.origin,
+          source: window.parent,
+        })
+      );
+    });
+    await settle();
+
+    expect(document.querySelector<HTMLInputElement>('input[type="text"]')?.value).toBe('2026년 업무계획 알림');
+    expect(document.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('본문 내용입니다.');
   });
 
   it('본문 맞춤법 검사를 실행하면 AI 변환 결과를 수신하여 Diff 및 교정본이 표시된다', async () => {
