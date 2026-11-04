@@ -52,6 +52,7 @@ import {
 
 import { isExactDraftPath } from '@/lib/onnara/draft-route';
 import { parseReferenceDocument, parseReferencePdf } from '@/lib/onnara/related-info';
+import { randomId } from '@/lib/random-id';
 
 const INJECTED_SCRIPT = 'injected.js';
 const DRAWER_SCRIPT = 'drawer.js';
@@ -1374,7 +1375,7 @@ async function readAlreadyOpenReference(info: { title: string; id?: string }, ca
     if (Date.now() >= deadline) break;
     const urlId = [...new URL(tab.url!).searchParams].find(([key]) => /^(?:docid|documentid|reportid)$/i.test(key))?.[1];
     if (info.id && urlId && urlId !== info.id) continue;
-    const control: RequestControl = { id: crypto.randomUUID(), deadline, expectedUrl: tab.url };
+    const control: RequestControl = { id: randomId(), deadline, expectedUrl: tab.url };
     let content: ReferenceContent | null = null;
     try {
       // 접수문서 카드는 본문을 변환 PDF 프레임으로 보여 준다. 브라우저 PDF 뷰어 프레임은 스크립트로 읽을 수 없어
@@ -1435,7 +1436,7 @@ export async function handleFetchRelatedDocContent(
   if (callerTabId === undefined) return { content: '', error: '원문을 조회할 온나라 탭을 확인할 수 없습니다.' };
   const source = await chrome.tabs.get(callerTabId).catch(() => null);
   if (!source?.url || !/^https?:/.test(source.url)) return { content: '', error: '온나라 로그인 화면을 확인해 주세요.' };
-  const control: RequestControl = { id: crypto.randomUUID(), deadline: Date.now() + 25_000, expectedUrl: source.url };
+  const control: RequestControl = { id: randomId(), deadline: Date.now() + 25_000, expectedUrl: source.url };
   // 관련정보 링크의 열기 함수가 보낼 조회 요청을 창 없이 기록해 그대로 fetch한다(주소·필드를 추측하지 않는다).
   const open = docInfo?.id ? await probeTimeout(chrome.scripting.executeScript({
     target: { tabId: callerTabId, frameIds: [0] }, world: 'MAIN', func: captureRelatedOpenRequest, args: [docInfo.id],
@@ -1526,7 +1527,7 @@ export async function diagnoseRelatedDocument(
   }), 45_000).catch(error => ({ error: String(error) }));
 
   // 실제 읽기 경로(직접 조회 → PDF → 제목 검증)를 그대로 돌려 단계별 결과를 남긴다.
-  const pipelineControl: RequestControl = { id: crypto.randomUUID(), deadline: Date.now() + 30_000, expectedUrl: caller.url };
+  const pipelineControl: RequestControl = { id: randomId(), deadline: Date.now() + 30_000, expectedUrl: caller.url };
   const reply = doc?.title ? await sendToFrame(callerTabId, 0, {
     type: 'FETCH_RELATED_DOCUMENT', doc: { title: doc.title, id: doc.id, url: doc.url, ...(open ? { open } : {}) }, control: pipelineControl,
   }, 30_000) : undefined;

@@ -15,6 +15,7 @@ import { loadSettings } from '@/lib/storage/settings';
 import { cleanAdminDraft } from './draft-cleaner';
 import { findTitleInputElement } from './draft-title';
 import { collectDocumentText } from '@/lib/extract/document-text';
+import { randomId } from '@/lib/random-id';
 
 export type PolishMode =
   | 'shorten'   // 내용 줄이기 (간결화)
@@ -283,7 +284,7 @@ export async function transformTextWithAI(
   // background 서비스 워커를 경유하여 요청한다.
   if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
     signal?.throwIfAborted();
-    const requestId = crypto.randomUUID();
+    const requestId = randomId();
     const cancel = () => { void chrome.runtime.sendMessage({ type: 'BUBBLE_CANCEL_AI', requestId }).catch(() => undefined); };
     signal?.addEventListener('abort', cancel, { once: true });
     let resp;

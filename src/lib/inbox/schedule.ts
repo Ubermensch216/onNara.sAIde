@@ -25,6 +25,7 @@ import { briefingCount, type Briefing } from './briefing';
 import { loadInboxLocation } from './location';
 import { recordSkippedRun, runBriefing } from './run';
 import { listInboxRuns } from './store';
+import { randomId } from '@/lib/random-id';
 
 /** 서비스 워커를 깨우는 알람 이름. */
 export const BRIEFING_ALARM = 'saide.inboxBriefing';
@@ -187,7 +188,7 @@ export async function maybeBrief(deps: BriefingDeps, now: Date = new Date()): Pr
     return true;
   }
 
-  const control: RequestControl = { id: crypto.randomUUID(), deadline: Date.now() + ALARM_BUDGET_MS };
+  const control: RequestControl = { id: randomId(), deadline: Date.now() + ALARM_BUDGET_MS };
   const reply = await deps.collect(settings.pageTokenBudget, control).catch(error => ({
     type: 'ERROR' as const,
     error: { code: 'UNKNOWN' as const, message: error instanceof Error ? error.message : String(error) },

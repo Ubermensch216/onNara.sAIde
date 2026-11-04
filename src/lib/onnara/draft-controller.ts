@@ -10,6 +10,7 @@ import { computeRevisionHash } from './draft-context';
 import type { EditorCapability, InsertTarget } from './draft-editor';
 import { resolveEditorAdapter, STALE_TARGET_MESSAGE } from './draft-editor';
 import type { InsertMode } from '../messaging/draft-protocol';
+import { randomId } from '@/lib/random-id';
 
 export interface DraftApprovalToken {
   token: string;
@@ -67,7 +68,7 @@ export class DraftTransactionController {
     const { adapter, capability } = await resolveEditorAdapter(ctx, doc);
     const prepared = await adapter.prepare(ctx, text, mode, doc);
 
-    const token = `draft_tok_${crypto.randomUUID()}`;
+    const token = `draft_tok_${randomId()}`;
     const tokenInfo: DraftApprovalToken = {
       token,
       documentKey: ctx.documentKey || 'unidentified-doc',

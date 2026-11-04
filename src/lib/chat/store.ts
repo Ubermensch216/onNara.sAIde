@@ -1,3 +1,4 @@
+import { randomId } from '@/lib/random-id';
 import { abortable } from '@/lib/async';
 import { downloadDocumentAttachments, formatAttachmentReport, releaseWorkTab } from '@/lib/onnara/download';
 import { cancelAutomation, enqueueAutomation, recordAutomation, workTabLock } from '@/lib/automation/jobs';
@@ -1301,7 +1302,7 @@ async function runWorkPlan(
   const abort = get().abort ?? new AbortController();
   const startedAt = nextStamp(get());
   const context = buildContext([{ role: 'user', content: workPlanInstruction(title) }], settings.numCtx, toAttachment(page, null));
-  const placeholder: UiMessage = { id: `streaming-${crypto.randomUUID()}`, conversationId: conv.id, role: 'assistant', content: '', createdAt: startedAt, streaming: true };
+  const placeholder: UiMessage = { id: `streaming-${randomId()}`, conversationId: conv.id, role: 'assistant', content: '', createdAt: startedAt, streaming: true };
   set(s => ({ messages: [...s.messages, placeholder], streaming: true, startedAt, expectedPrefillSec: uncachedPrefillSeconds(null, context), abort, error: null }));
   let raw = '';
   try {
@@ -1421,7 +1422,7 @@ async function runGeneration(set: Set, get: Get, settings: Settings, options?: S
   // 스트리밍 중 자리표시자. 실제 저장은 완료 후 한 번만 한다 —
   // 토큰마다 IndexedDB에 쓰면 21 tok/s에서도 부하가 크다.
   const placeholder: UiMessage = {
-    id: `streaming-${crypto.randomUUID()}`,
+    id: `streaming-${randomId()}`,
     conversationId: conv.id,
     role: 'assistant',
     content: '',
@@ -1614,7 +1615,7 @@ async function runAgent(set: Set, get: Get, settings: Settings, tab: AgentTab) {
   );
 
   const placeholder: UiMessage = {
-    id: `streaming-${crypto.randomUUID()}`,
+    id: `streaming-${randomId()}`,
     conversationId: conv.id,
     role: 'assistant',
     content: '',

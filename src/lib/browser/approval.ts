@@ -1,5 +1,6 @@
 import { assertCurrent } from './guards';
 import { requiresApproval, type PageAction, type RequestControl } from '@/lib/messaging/protocol';
+import { randomId } from '@/lib/random-id';
 
 /** Tickets live in the isolated content-script document, never in the page's DOM. */
 export function createApprovalRegistry(resolve: (selector: string) => HTMLElement | null, describe: (el: HTMLElement) => string) {
@@ -14,7 +15,7 @@ export function createApprovalRegistry(resolve: (selector: string) => HTMLElemen
       if (!requiresApproval(action)) throw new Error('승인 대상 동작이 아닙니다.');
       const element = 'selector' in action ? resolve(action.selector) : null;
       if ('selector' in action && !element) throw new Error('대상을 명확히 확인할 수 없습니다.');
-      const token = crypto.randomUUID();
+      const token = randomId();
       for (const [id, ticket] of tickets) if (ticket.until <= Date.now()) tickets.delete(id);
       if (tickets.size >= 32) tickets.delete(tickets.keys().next().value!);
       tickets.set(token, { action: JSON.stringify(action), element, fingerprint: fingerprint(element), url: location.href, until: Date.now() + 120_000 });

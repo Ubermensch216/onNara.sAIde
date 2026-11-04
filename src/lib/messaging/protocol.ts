@@ -4,6 +4,7 @@ import type { StructuredDocumentList } from '@/lib/onnara/document-list';
 import type { AttachmentItem, AttachmentScan } from '@/lib/onnara/attachments';
 import type { DocumentListLocation } from '@/lib/onnara/document-navigation';
 import type { PdfSource } from '@/lib/extract/pdf-text';
+import { randomId } from '@/lib/random-id';
 
 /**
  * 계약 ② — Side Panel ↔ Service Worker ↔ Content Script 3자 통신 규약.
@@ -350,7 +351,7 @@ export async function sendToSW(msg: PanelToSW, signal?: AbortSignal, timeoutMs =
   const guard = deadlineSignal(timeoutMs, signal);
   const control: RequestControl = {
     ...msg.control,
-    id: crypto.randomUUID(),
+    id: randomId(),
     deadline: Date.now() + timeoutMs,
   };
   const cancel = () => {

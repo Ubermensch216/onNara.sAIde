@@ -10,6 +10,7 @@
 
 import { create } from 'zustand';
 import type { AppError, AttachmentDownloadResult } from '@/lib/messaging/protocol';
+import { randomId } from '@/lib/random-id';
 
 /**
  * 작업 종류.
@@ -129,7 +130,7 @@ export async function clearAutomationHistory(): Promise<void> {
 /** AI 대화 안에서 이미 실행한 자동화 결과를 기록에 남긴다. */
 export function recordAutomation(entry: { kind: AutomationKind; label: string } & JobOutcome): AutomationJob {
   const job: AutomationJob = {
-    id: crypto.randomUUID(), kind: entry.kind, label: entry.label, origin: 'chat', createdAt: Date.now(), finishedAt: Date.now(),
+    id: randomId(), kind: entry.kind, label: entry.label, origin: 'chat', createdAt: Date.now(), finishedAt: Date.now(),
     status: statusOf(entry), ...pick(entry),
   };
   useAutomation.setState(state => ({ jobs: [job, ...state.jobs] }));
@@ -169,7 +170,7 @@ export function enqueueAutomation(spec: {
   lock?: boolean;
 }): { id: string; finished: Promise<AutomationJob> } {
   const job: AutomationJob = {
-    id: crypto.randomUUID(), kind: spec.kind, label: spec.label, origin: spec.origin ?? 'automation',
+    id: randomId(), kind: spec.kind, label: spec.label, origin: spec.origin ?? 'automation',
     status: 'queued', createdAt: Date.now(),
   };
   const finished = new Promise<AutomationJob>(resolve => {

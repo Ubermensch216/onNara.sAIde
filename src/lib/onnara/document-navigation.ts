@@ -1,4 +1,5 @@
 import { findDocumentOpenTarget } from './document-list';
+import { randomId } from '@/lib/random-id';
 
 /** 복제 탭의 메모리 상태에 의존하지 않고 실제 목록 요청을 복원한다. */
 export interface DocumentListLocation {
@@ -113,7 +114,7 @@ export function restoreDocumentListLocation(location: DocumentListLocation, doc 
     frame = [...doc.querySelectorAll<HTMLIFrameElement | HTMLFrameElement>('iframe, frame')]
       .find(element => location.frameName ? element.name === location.frameName : element.contentWindow === target);
     if (!frame) return false;
-    targetName = frame.name || `saide-list-${crypto.randomUUID()}`;
+    targetName = frame.name || `saide-list-${randomId()}`;
     frame.name = targetName;
   }
   if (!location.form) {
