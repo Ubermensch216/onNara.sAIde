@@ -5,6 +5,7 @@ import {
   findWriteBodyButton,
   hasDraftEditorSignals,
   isAllowedOrigin,
+  isEditableViewPath,
   isExactDraftPath,
   isMetadataField,
   isDraftCardScreen,
@@ -32,6 +33,10 @@ describe('draft-route', () => {
       expect(isExactDraftPath('https://onnara.go.kr/bms/dct/modifyoreportbodyview.do')).toBe(true);
       expect(isExactDraftPath('http://99.1.2.134/bms/dct/addhwpbody.do')).toBe(true);
       expect(isExactDraftPath('http://99.1.2.134/bms/dct/hwpctrl.do')).toBe(true);
+      // 기존 문서를 다시 연 문서관리카드(본문 편집 신호는 드로어가 따로 확인)
+      expect(isExactDraftPath('http://99.1.2.134/bms/dct/viewreport.do')).toBe(true);
+      expect(isEditableViewPath('http://99.1.2.134/bms/dct/viewreport.do')).toBe(true);
+      expect(isEditableViewPath('http://99.1.2.134/bms/dct/addoreportbodyview.do')).toBe(false);
     });
 
     it('유사한 가짜 경로 또는 목록 경로는 false를 반환한다', () => {

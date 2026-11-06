@@ -40,6 +40,31 @@ const EXACT_DRAFT_PATHS = [
   '/bms/sanctn/addoreportbodyview.do',
 ];
 
+/**
+ * 기존 문서(임시저장·반려·수정 등)를 다시 열면 문서관리카드가 `viewreport.do`로 뜬다.
+ * 같은 주소가 단순 열람에도 쓰이므로, 경로만으로는 후보로만 보고
+ * 드로어는 본문 편집 신호(`hasEditableBodySignals`)가 보일 때 붙인다.
+ */
+const EDITABLE_VIEW_PATHS = ['/bms/dct/viewreport.do'];
+
+export function isEditableViewPath(url: string): boolean {
+  if (!url) return false;
+  try {
+    const path = new URL(url, 'http://localhost').pathname.toLowerCase();
+    return EDITABLE_VIEW_PATHS.some(p => path === p || path.endsWith(p));
+  } catch {
+    return false;
+  }
+}
+
+/** 단순 열람 화면과 구분되는 본문 편집 신호: 본문저장·본문(검정변환) 버튼이 실제로 보일 때 */
+export function hasEditableBodySignals(doc: Document): boolean {
+  return Array.from(doc.querySelectorAll<HTMLElement>('button, a, input[type="button"], .btn, span')).some(b => {
+    const t = (b.textContent || (b as HTMLInputElement).value || '').replace(/\s+/g, '');
+    return (t === '본문저장' || t === '본문(검정변환)') && isElementVisible(b);
+  });
+}
+
 /** URL의 origin이 허용된 온나라 origin 목록에 포함되는지 검사 */
 export function isAllowedOrigin(url: string, allowedOrigins?: string[]): boolean {
   if (!allowedOrigins || allowedOrigins.length === 0) {
@@ -76,6 +101,9 @@ export function isExactDraftPath(url: string): boolean {
       return false;
     }
     if (EXACT_DRAFT_PATHS.some(exact => path === exact || path.endsWith(exact))) {
+      return true;
+    }
+    if (isEditableViewPath(url)) {
       return true;
     }
     // 추가 일반 패턴: /bms/ 또는 /dct/ 또는 /sanctn/ 하위에서 기안문/보고서 본문 작성 경로 (.do 확장자 완결)

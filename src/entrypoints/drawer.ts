@@ -17,7 +17,7 @@ function isStyledPayload(value: unknown): value is StyledInsertPayload {
     && v.paras.every(p => p && typeof p.text === 'string' && typeof p.height === 'number'));
 }
 import { DraftTransactionController } from '@/lib/onnara/draft-controller';
-import { findWriteBodyButton, isExactDraftPath, isMetadataField } from '@/lib/onnara/draft-route';
+import { findWriteBodyButton, hasEditableBodySignals, isEditableViewPath, isExactDraftPath, isMetadataField } from '@/lib/onnara/draft-route';
 import { DRAWER_GAP_PX, applyPageLayoutShift } from '@/lib/onnara/drawer-layout';
 import { createSelectionBubble } from '@/lib/onnara/selection-bubble';
 import { applyDraftTitleToDom } from '@/lib/onnara/draft-title';
@@ -78,10 +78,39 @@ declare global {
   interface Window {
     __saideDrawerInjected?: () => boolean;
     __saideToggleDrawer?: () => void;
+    __saideDrawerPending?: boolean;
   }
 }
 
+/** 상위 문서와 같은 출처 하위 프레임 중 하나라도 본문 편집 신호가 보이는지 */
+function editableBodyVisible(doc: Document = document): boolean {
+  if (hasEditableBodySignals(doc)) return true;
+  for (const frame of Array.from(doc.querySelectorAll<HTMLIFrameElement>('iframe, frame'))) {
+    try {
+      if (frame.contentDocument && editableBodyVisible(frame.contentDocument)) return true;
+    } catch {}
+  }
+  return false;
+}
+
 export default defineUnlistedScript(() => {
+  // viewreport.do는 열람에도 쓰인다. 본문 편집 버튼이 보일 때까지 기다렸다가 런처를 붙인다.
+  if (window.self === window.top && isEditableViewPath(window.location.href) && !editableBodyVisible()) {
+    if (window.__saideDrawerPending) return;
+    window.__saideDrawerPending = true;
+    const timer = setInterval(() => {
+      if (!editableBodyVisible()) return;
+      clearInterval(timer);
+      window.__saideDrawerPending = false;
+      mountDrawer();
+    }, 700);
+    window.addEventListener('pagehide', () => clearInterval(timer), { once: true });
+    return;
+  }
+  mountDrawer();
+});
+
+function mountDrawer() {
   if (window.self !== window.top) {
     // 하위 프레임(본문 에디터 iframe 등)에서는 독립 버블 메뉴를 항상 마운트하여
     // 상위 프레임의 경로 일치 여부나 프레임 중첩 구조에 구애받지 않고 블럭 메뉴가 즉각 작동하도록 보장한다.
@@ -1335,4 +1364,4 @@ export default defineUnlistedScript(() => {
   });
 
   attachHostToDOM();
-});
+}
