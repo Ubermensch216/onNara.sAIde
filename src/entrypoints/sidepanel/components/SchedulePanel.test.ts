@@ -317,6 +317,8 @@ it('고른 보기 방식은 다음에 열 때도 유지된다', async () => {
 });
 
 it('★ 캘린더에 공휴일이 표시되고 빨간색 및 공휴일명이 렌더링된다', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  vi.setSystemTime(new Date('2026-10-05T09:00:00+09:00'));
   await render('month');
   const holidayCells = document.querySelectorAll('.cal-cell.holiday');
   expect(holidayCells.length).toBeGreaterThan(0);

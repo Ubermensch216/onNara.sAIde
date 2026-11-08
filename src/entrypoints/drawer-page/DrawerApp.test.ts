@@ -796,7 +796,7 @@ describe('업무계획에서 넘어온 회신 준비', () => {
     await act(() => root.render(createElement(DrawerApp)));
     await settle();
 
-    const reviewTabButton = [...document.querySelectorAll('button[role="tab"]')].find(
+    const reviewTabButton = [...document.querySelectorAll<HTMLButtonElement>('button[role="tab"]')].find(
       (btn) => btn.textContent?.includes('문장 다듬기')
     );
     expect(reviewTabButton).toBeDefined();

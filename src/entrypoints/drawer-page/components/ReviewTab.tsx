@@ -130,6 +130,13 @@ export function ReviewTab({
         } else {
           showToast(`반영 실패: ${data.message || '선택 영역을 확인해 주세요.'}`);
         }
+      } else if (data.type === 'SAIDE_SET_REVIEW_PREVIEW') {
+        if (data.titleText !== undefined) setTitleText(data.titleText);
+        if (data.bodyText !== undefined) setBodyText(data.bodyText);
+        if (data.spellCheckedTitle !== undefined) setSpellCheckedTitle(data.spellCheckedTitle);
+        if (data.spellCheckedText !== undefined) setSpellCheckedText(data.spellCheckedText);
+        if (data.subTab !== undefined) setSubTab(data.subTab);
+        if (data.spellViewMode !== undefined) setSpellViewMode(data.spellViewMode);
       }
     };
 

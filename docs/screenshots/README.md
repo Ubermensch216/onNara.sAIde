@@ -1,9 +1,9 @@
 # 사용자 매뉴얼 화면 캡처 자산 가이드
 
-기준일: **2026-09-29**. 이 디렉터리의 17개 스크린샷은 온나라 sAIde 사용자 매뉴얼([`README.md`](../../README.md))에 싣는 공식 문서용 UI 캡처입니다.
+기준일: **2026-11-08**. 이 디렉터리의 19개 스크린샷은 온나라 sAIde 사용자 매뉴얼([`README.md`](../../README.md))에 싣는 공식 문서용 UI 캡처입니다.
 
 1. **실제 온나라 시스템 연동 캡처 (2종)**: 실제 공공기관 온나라 전자문서시스템 화면(받은문서 목록, 문서관리카드 기안기)과 우측 sAIde 사이드패널·사이드카가 나란히 연동되어 작동하는 실제 구동 환경 캡처입니다. 처음 보는 실무자도 온나라와의 실제 연동 구조를 한눈에 직관적으로 이해할 수 있습니다.
-2. **독립 하네스 상세 UI 캡처 (15종)**: 실제 프런트엔드 React 컴포넌트와 행정 블루 디자인 토큰을 독립된 미리보기 환경(`docs/preview/`)에서 렌더링하고 Headless Chromium으로 캡처한 고해상도 상세 인터페이스입니다.
+2. **독립 하네스 상세 UI 캡처 (17종)**: 실제 프런트엔드 React 컴포넌트와 행정 블루 디자인 토큰을 독립된 미리보기 환경(`docs/preview/`)에서 렌더링하고 Headless Chromium으로 캡처한 고해상도 상세 인터페이스입니다.
 
 ---
 
@@ -25,9 +25,11 @@
 | [**06-automation.png**](06-automation.png) | 520 × 940 | 도구 탭 및 공문 본문·첨부 자동화 | `AutomationPanel`, 작업 대상, 받기 카드와 그 안의 `받을 대상` 선택(첨부만·본문만·본문+첨부), 눈치코치 꾸러미 내보내기 카드, 실행 기록과 폴더 열기 |
 | [**13-knowledge.png**](13-knowledge.png) | 520 × 940 | 내 지식 탭 (TONGDAL.ai 지식 연동) | `KnowledgePanel` — 지식 공간(`second_brain`) 연결 상태, 색인 진행 안내 칩, 검색/분류 탭, 지식 검색창 |
 | [**14-knowledge-chat.png**](14-knowledge-chat.png) | 520 × 940 | AI 대화 중 지식 인용 및 조치 추천 | `App`, `MessageList` — 조치카드 내 `관련 내 자료 (TONGDAL.ai)` 추천, AI 답변 본문 및 `근거 자료 (TONGDAL.ai)` `[1]`, `[2]` 출처 카드, 하단 `내 지식 · 켜짐` 토글 |
-| [**10-drafter.png**](10-drafter.png) | 520 × 940 | 온나라 공문서 기안 도우미 (초안 작성 및 제목 반영) | `DrawerApp` — 공문서 서식 선택, 내 참고자료 영역, 추천 공문 제목 자동 추출 및 [제목 반영], 표준 공문서 서식 초안 생성, 원클릭 복사 및 클릭 타깃 삽입 |
+| [**10-drafter.png**](10-drafter.png) | 520 × 940 | 온나라 공문서 기안 도우미 (초안 작성 및 제목 반영) | `DrawerApp` — 3대 탭(초안작성·서식관리·퇴고), 공문서 서식 선택, 내 참고자료 영역, 추천 공문 제목 자동 추출 및 [제목 반영], 표준 공문서 서식 초안 생성, 원클릭 복사 및 클릭 타깃 삽입 |
 | [**12-drafter-references.png**](12-drafter-references.png) | 520 × 940 | 기안 도우미 (참고문서 연동 및 내 파일 분석) | `ReferencePicker` — 온나라 관련정보 2건 감지 및 내 참고자료(HWPX, DOCX) 2건 보관·체크, 파일 올리기 및 드래그앤드롭, 역할 지정(내용 근거/작성 예시), 3단계 정밀 분석 및 원문 대조 사실 확인 |
 | [**11-template-manager.png**](11-template-manager.png) | 520 × 940 | 공문서 서식 관리자 (Template Manager) | `TemplateManager` — 4대 표준 서식 및 **`[파일에서 가져오기]`**(HWPX·ODT 서식 자동 분석 등록), 사용자 정의 서식 관리 |
+| [**16-drafter-review.png**](16-drafter-review.png) | 520 × 940 | 기안 도우미 퇴고 탭 (맞춤법 검사 및 문장 다듬기) | `ReviewTab` — 기안기 제목·본문 실시간 읽기, 맞춤법·띄어쓰기 AI 검사, 원문 대비 Diff 비교 뷰, 소제목/항목기호 보호, 교정 항목별 `×` 제외 버튼, 기안기 1클릭 직접 반영 및 블럭 메뉴 |
+| [**17-workplan.png**](17-workplan.png) | 520 × 940 | 업무계획 카드 (/업무계획 · 처리카드) | `WorkPlan` — 수신 요청(요청기관·요청유형), 해야 할 일(할 일·기한·제출물·문의처), 원문 대조 근거 문장, 회신 준비 요구사항 점검, 첨부문서 요약 분석, [기안문 작성 연계] Handoff |
 | [**03-settings.png**](03-settings.png) | 1120 × 1000 | 확장 옵션 및 모델 연결 | `OptionsApp` — Ollama 연결 확인, 토큰 예산, `num_ctx`, 모델 유지 시간 |
 | [**09-briefing-settings.png**](09-briefing-settings.png) | 1120 × 1000 | 공유/공람 브리핑 설정 | `InboxSettings` — 아침 브리핑·브리핑 시각, 대상 화면, 대상 범위와 포함·제외 키워드, 열람 처리(미열람 유지), 보관 기간 |
 | [**04-memory.png**](04-memory.png) | 1120 × 1000 | 로컬 기억 및 지식 저장소 | `MemoryPanel` — IndexedDB 벡터 저장소 목록과 보관 기간 |
@@ -42,7 +44,7 @@ README 상단의 [**infographic.png**](../infographic.png)(1200 × 1360)은 위�
 
 ## 2. 화면 캡처 재생성 절차
 
-UI를 고친 뒤에는 아래 순서대로 15장의 기능별 상세 캡처를 다시 만듭니다. (상단의 실제 온나라 시스템 연동 캡처 2종은 실제 운영 환경 캡처 자산으로 보존됩니다.)
+UI를 고친 뒤에는 아래 순서대로 17장의 기능별 상세 캡처를 다시 만듭니다. (상단의 실제 온나라 시스템 연동 캡처 2종은 실제 운영 환경 캡처 자산으로 보존됩니다.)
 
 ### 1단계: 미리보기 서버 실행 (첫 번째 터미널)
 ```powershell
@@ -57,7 +59,7 @@ node scripts/docs-preview.mjs
 ./scripts/capture-docs.ps1
 ```
 * 시스템의 Chrome 또는 Edge를 자동 탐지합니다(`-ChromePath`로 지정 가능).
-* 각 기능별 뷰 15종(`panel`, `inbox`, `approval`, `schedule`, `automation`, `options`, `memory`, `presets`, `briefing`, `drafter`, `drafter-refs`, `templates`, `knowledge`, `knowledge-chat`, `options-tongdal`)을 헤드리스로 렌더링해 `docs/screenshots/`의 PNG 15장을 덮어씁니다.
+* 각 기능별 뷰 17종(`panel`, `inbox`, `approval`, `schedule`, `automation`, `options`, `memory`, `presets`, `briefing`, `drafter`, `drafter-refs`, `templates`, `knowledge`, `knowledge-chat`, `options-tongdal`, `drafter-review`, `workplan-chat`)을 헤드리스로 렌더링해 `docs/screenshots/`의 PNG 17장을 덮어씁니다.
 * 캡처가 끝나면 첫 번째 터미널에서 `Ctrl + C`로 서버를 종료합니다.
 
 ### 3단계: 소개 인포그래픽 재생성 (UI가 크게 바뀐 경우)

@@ -484,6 +484,14 @@ if (mode.startsWith('options') || OPTION_VIEWS.includes(mode)) {
   });
 
   window.addEventListener('message', (event) => {
+    if (event.data?.type === 'DRAFT_GET_BODY_TEXT') {
+      window.postMessage({
+        type: 'DRAFT_BODY_TEXT_RESPONSE',
+        title: '2026년도 인공지능 행정업무 시범사업 추진계획 수립의 건',
+        text: '1. 추진 목적 및 배경\n  가. 인공지능 행정업무 시범사업 추진계획에 따른 지자체 행정 효율성을 제고함.\n  나. 온나라 전자문서 시스템과 연계한 마춤형 AI 사이드패널 도입을 추진코자 함.\n\n2. 주요 추진 내용\n  가. 부서별 공문서 검토 및 핵심 조치사항 도출 자동화 환경을 구축함.\n  나. 대용량 첨부파일 및 공문 본문의 스마트 일괄 수신 체계를 마련함.',
+        source: '웹기안기 본문',
+      }, '*');
+    }
     if (event.data?.type === 'DRAFT_GET_CONTEXT') {
       window.postMessage({
         type: 'DRAFT_CONTEXT_RESPONSE',
@@ -516,6 +524,55 @@ if (mode.startsWith('options') || OPTION_VIEWS.includes(mode)) {
             type: 'SAIDE_SET_DRAFT_PREVIEW',
             activeTab: 'templates',
           }, '*');
+        } else if (mode === 'drafter-review') {
+          window.postMessage({
+            type: 'SAIDE_SET_DRAFT_PREVIEW',
+            activeTab: 'review',
+          }, '*');
+          const sampleTitleBefore = '2026년도 인공지능 행정업무 시범사업 추진계획 수립의 건';
+          const sampleBodyBefore = `1. 추진 목적 및 배경
+  가. 인공지능 행정업무 시범사업 추진계획에 따른 지자체 행정 효율성을 제고함.
+  나. 온나라 전자문서 시스템과 연계한 마춤형 AI 사이드패널 도입을 추진코자 함.
+
+2. 주요 추진 내용
+  가. 부서별 공문서 검토 및 핵심 조치사항 도출 자동화 환경을 구축함.
+  나. 대용량 첨부파일 및 공문 본문의 스마트 일괄 수신 체계를 마련함.
+
+3. 세부 일정 및 조치계획
+  가. 시범사업 수요조사서 및 보안서약서 제출: 2026. 9. 22.(화)한
+  나. 부서 의견 수렴 및 시스템 연계 테스트: 2026. 10. 15.까지
+
+4. 행정 사항
+  가. 본 사업 추진을 위한 정보화 예산 집행 협의 완료.
+  나. 관련 서식: 붙임 시범사업 수요조사서 1부.  끝.`;
+          const sampleTitleAfter = '2026년도 인공지능 행정업무 시범사업 추진계획 수립의 건';
+          const sampleBodyAfter = `1. 추진 목적 및 배경
+  가. 인공지능 행정업무 시범사업 추진계획에 따른 지자체 행정 효율성을 제고함.
+  나. 온나라 전자문서 시스템과 연계한 맞춤형 AI 사이드패널 도입을 추진하고자 함.
+
+2. 주요 추진 내용
+  가. 부서별 공문서 검토 및 핵심 조치사항 도출 자동화 환경을 구축함.
+  나. 대용량 첨부파일 및 공문 본문의 스마트 일괄 수신 체계를 마련함.
+
+3. 세부 일정 및 조치계획
+  가. 시범사업 수요조사서 및 보안서약서 제출: 2026. 9. 22.(화)한
+  나. 부서 의견 수렴 및 시스템 연계 테스트: 2026. 10. 15.까지
+
+4. 행정 사항
+  가. 본 사업 추진을 위한 정보화 예산 집행 협의 완료.
+  나. 관련 서식: 붙임 시범사업 수요조사서 1부.  끝.`;
+
+          setTimeout(() => {
+            window.postMessage({
+              type: 'SAIDE_SET_REVIEW_PREVIEW',
+              titleText: sampleTitleBefore,
+              bodyText: sampleBodyBefore,
+              spellCheckedTitle: sampleTitleAfter,
+              spellCheckedText: sampleBodyAfter,
+              subTab: 'spellcheck',
+              spellViewMode: 'diff',
+            }, '*');
+          }, 120);
         } else if (mode === 'drafter-refs') {
           window.postMessage({
             type: 'SAIDE_SET_DRAFT_PREVIEW',
