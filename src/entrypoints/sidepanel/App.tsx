@@ -1110,6 +1110,15 @@ function EmptyState({
         <p className="empty-desc">
           {health.state === 'ok'
             ? t('panel.empty.desc')
+                .split('\n')
+                .map((line, idx) => (
+                  <span
+                    key={idx}
+                    className={idx === 0 ? 'empty-desc-lead' : 'empty-desc-sub'}
+                  >
+                    {line}
+                  </span>
+                ))
             : t('panel.empty.body')}
         </p>
       </div>
