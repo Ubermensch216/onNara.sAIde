@@ -335,6 +335,31 @@ export function withAttachedFileTexts(
   };
 }
 
+/**
+ * `[첨부문서: 파일명]` 표식을 기준으로 문서 본문과 각 첨부문서 본문을 분리한다.
+ */
+export function splitBodyAndAttachments(
+  text: string,
+): { bodyText: string; attachments: Array<{ name: string; text: string }> } {
+  const markerRegex = /\[첨부문서:\s*([^\]]+)\]\r?\n/g;
+  const matches = [...text.matchAll(markerRegex)];
+  if (!matches.length) {
+    return { bodyText: text.trim(), attachments: [] };
+  }
+  const firstIndex = matches[0]!.index ?? 0;
+  const bodyText = text.slice(0, firstIndex).trim();
+  const attachments: Array<{ name: string; text: string }> = [];
+  for (let i = 0; i < matches.length; i++) {
+    const current = matches[i]!;
+    const name = (current[1] ?? '').trim();
+    const start = (current.index ?? 0) + current[0].length;
+    const end = i + 1 < matches.length ? (matches[i + 1]!.index ?? text.length) : text.length;
+    const attText = text.slice(start, end).trim();
+    if (name) attachments.push({ name, text: attText });
+  }
+  return { bodyText, attachments };
+}
+
 /** 요약 페이로드용 요약본: 직접 받을 수 있는 링크와 스크립트 방식 항목 수. */
 export function scanAttachments(root: Document = document): AttachmentScan {
   const items = listAttachments(root);

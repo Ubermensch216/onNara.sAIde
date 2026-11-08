@@ -144,4 +144,23 @@ it('모델이 빈칸 대신 적은 "없음"은 항목으로 만들지 않고, �
   expect(parsed.requirements.map(item => item.item)).toEqual(['계단 이용']);
   const md = renderWorkPlan('승강기 점검 알림', parsed, '2. 점검 시간에는 계단을 이용하여 주시기 바랍니다. 끝.');
   expect(md).toContain('알림 공문으로 보여 회신이 필요 없을 수 있습니다');
+
+  const withAtt = parseWorkPlan(JSON.stringify({
+    summary: '스마트 행정 혁신사업 수요조사 회신 요청',
+    actions: [], deliverables: [], deadlines: [], contact: '',
+    requester: '행정안전부', requestType: '회신·제출', conditions: [], requirements: [],
+    attachmentSummaries: [{ name: '붙임1_세부추진계획.hwpx', summary: '사업별 예산 산출 기준 및 제출 서식 안내' }],
+  }))!;
+  const attMd = renderWorkPlan(
+    '수요조사 회신 요청',
+    withAtt,
+    `${notice}\n\n[첨부문서: 붙임1_세부추진계획.hwpx]\n사업별 예산 산출 기준 안내`,
+    {},
+    undefined,
+    true,
+  );
+  expect(attMd).toContain('- 본문 요약: 스마트 행정 혁신사업 수요조사 회신 요청');
+  expect(attMd).toContain('**5. 첨부 자료 분석**');
+  expect(attMd).toContain('첨부 자료 요약:');
+  expect(attMd).toContain('[붙임1\\_세부추진계획.hwpx] 사업별 예산 산출 기준 및 제출 서식 안내');
 });

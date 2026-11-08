@@ -854,7 +854,7 @@ export function DrawerApp() {
           }`}
         >
           <MaterialIcon name="spellcheck" size={16} />
-          <span>퇴고</span>
+          <span>문장 다듬기</span>
         </button>
       </nav>
 

@@ -513,20 +513,8 @@ export function ReviewTab({
     // ★ 드로어 헤더·탭 아래 남은 높이만 차지해야 한다. h-full이면 헤더·탭 높이만큼 아래가 잘려
     //   하단 버튼이 화면 밖으로 밀리고 스크롤로도 닿지 않는다(flex-1 + min-h-0).
     <div className="flex flex-col flex-1 min-h-0 bg-slate-50 text-slate-800">
-      {/* ── 1. 퇴고 탭 내부 서브 네비게이션 ── */}
-      <div className="px-4 pt-3 pb-2 bg-white border-b border-slate-200 shadow-sm shrink-0">
-        <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center gap-2">
-            <span className="inline-flex items-center justify-center w-7 h-7 rounded-lg bg-blue-600 text-white shadow-sm">
-              <MaterialIcon name="spellcheck" size={17} />
-            </span>
-            <div>
-              <h2 className="text-sm font-bold text-slate-800 leading-tight">공문서 퇴고 및 교정</h2>
-              <p className="text-[11px] text-slate-500">본문 맞춤법 검사 · 블럭 지정 문장 작성 지원</p>
-            </div>
-          </div>
-        </div>
-
+      {/* ── 1. 서브 네비게이션 (맞춤법 검사 / 블럭 메뉴) ── */}
+      <div className="px-4 py-2 bg-white border-b border-slate-200 shadow-sm shrink-0">
         {/* 서브 탭 버튼 그룹 */}
         <div className="flex gap-1.5 p-1 bg-slate-100 rounded-lg border border-slate-200/80">
           <button
@@ -541,7 +529,7 @@ export function ReviewTab({
             }`}
           >
             <MaterialIcon name="spellcheck" size={15} />
-            <span>본 화면 맞춤법 검사</span>
+            <span>맞춤법 검사</span>
           </button>
 
           <button
@@ -834,12 +822,12 @@ export function ReviewTab({
               aria-label="사용 순서"
             >
               <li className="flex-1 flex flex-col items-center gap-1 py-1.5" title="기안기 본문에서 문장을 마우스로 드래그해 블럭 지정">
-                <span className="w-8 h-8 rounded-full bg-white text-indigo-600 flex items-center justify-center shadow-xs">
+                <span className="w-8 h-8 rounded-full bg-white text-blue-600 flex items-center justify-center shadow-xs">
                   <MaterialIcon name="highlightAlt" size={18} />
                 </span>
                 <span className="font-semibold">본문 드래그</span>
               </li>
-              <li className="flex items-center text-indigo-300" aria-hidden="true">
+              <li className="flex items-center text-blue-300" aria-hidden="true">
                 <MaterialIcon name="chevronRight" size={18} />
               </li>
               <li className="flex-1 flex">
@@ -850,17 +838,17 @@ export function ReviewTab({
                   className="flex-1 flex flex-col items-center gap-1 py-1.5 rounded-md hover:bg-indigo-100/80 transition disabled:opacity-50 cursor-pointer"
                   title="기안기 화면에서 현재 선택된 문장 가져오기"
                 >
-                  <span className="w-8 h-8 rounded-full bg-indigo-600 text-white flex items-center justify-center shadow-xs">
+                  <span className="w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center shadow-xs">
                     <MaterialIcon name="fileDownload" size={18} className={isFetchingSelection ? 'animate-pulse' : ''} />
                   </span>
-                  <span className="font-bold text-indigo-700">{isFetchingSelection ? '확인 중...' : '가져오기'}</span>
+                  <span className="font-bold text-blue-700">{isFetchingSelection ? '확인 중...' : '가져오기'}</span>
                 </button>
               </li>
-              <li className="flex items-center text-indigo-300" aria-hidden="true">
+              <li className="flex items-center text-blue-300" aria-hidden="true">
                 <MaterialIcon name="chevronRight" size={18} />
               </li>
               <li className="flex-1 flex flex-col items-center gap-1 py-1.5" title="아래 버튼으로 맞춤법 교정 또는 문장 다듬기 실행">
-                <span className="w-8 h-8 rounded-full bg-white text-indigo-600 flex items-center justify-center shadow-xs">
+                <span className="w-8 h-8 rounded-full bg-white text-blue-600 flex items-center justify-center shadow-xs">
                   <MaterialIcon name="autoFixHigh" size={18} />
                 </span>
                 <span className="font-semibold">교정·다듬기</span>
@@ -925,7 +913,7 @@ export function ReviewTab({
                     className="p-2 bg-slate-50 hover:bg-blue-50/60 hover:border-blue-300 border border-slate-200 rounded-lg text-left transition disabled:opacity-50 cursor-pointer"
                   >
                     <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800">
-                      <MaterialIcon name="article" size={14} className="text-indigo-600" />
+                      <MaterialIcon name="article" size={14} className="text-blue-600" />
                       <span>풍부하게</span>
                     </div>
                     <p className="text-[10px] text-slate-500 mt-0.5">추진 배경 · 타당성 보강</p>
@@ -938,7 +926,7 @@ export function ReviewTab({
                     className="p-2 bg-slate-50 hover:bg-blue-50/60 hover:border-blue-300 border border-slate-200 rounded-lg text-left transition disabled:opacity-50 cursor-pointer"
                   >
                     <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800">
-                      <MaterialIcon name="accountBalance" size={14} className="text-purple-600" />
+                      <MaterialIcon name="accountBalance" size={14} className="text-blue-600" />
                       <span>공문서 표준 어투</span>
                     </div>
                     <p className="text-[10px] text-slate-500 mt-0.5">~코자 함, ~바람</p>
@@ -951,7 +939,7 @@ export function ReviewTab({
                     className="p-2 bg-slate-50 hover:bg-blue-50/60 hover:border-blue-300 border border-slate-200 rounded-lg text-left transition disabled:opacity-50 cursor-pointer"
                   >
                     <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800">
-                      <MaterialIcon name="checklist" size={14} className="text-teal-600" />
+                      <MaterialIcon name="checklist" size={14} className="text-blue-600" />
                       <span>개조식 변환</span>
                     </div>
                     <p className="text-[10px] text-slate-500 mt-0.5">- · 항목화 분절</p>
@@ -964,7 +952,7 @@ export function ReviewTab({
                     className="p-2 bg-slate-50 hover:bg-blue-50/60 hover:border-blue-300 border border-slate-200 rounded-lg text-left transition disabled:opacity-50 cursor-pointer"
                   >
                     <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800">
-                      <MaterialIcon name="translate" size={14} className="text-emerald-600" />
+                      <MaterialIcon name="translate" size={14} className="text-blue-600" />
                       <span>쉬운 행정용어</span>
                     </div>
                     <p className="text-[10px] text-slate-500 mt-0.5">순화어 치환</p>
@@ -977,7 +965,7 @@ export function ReviewTab({
                     className="p-2 bg-slate-50 hover:bg-blue-50/60 hover:border-blue-300 border border-slate-200 rounded-lg text-left transition disabled:opacity-50 cursor-pointer"
                   >
                     <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800">
-                      <MaterialIcon name="chat" size={14} className="text-amber-600" />
+                      <MaterialIcon name="chat" size={14} className="text-blue-600" />
                       <span>정중한 협조체</span>
                     </div>
                     <p className="text-[10px] text-slate-500 mt-0.5">대외 협조 공문</p>

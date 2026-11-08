@@ -1089,5 +1089,10 @@ it('내 지식을 켜지 않으면 검색하지 않는다', async () => {
   const readCall = sendMessage.mock.calls.find(([m]) => m.type === 'READ_DOCUMENT')?.[0];
   expect(readCall?.includeAttachments).toBe(true);
   expect(sentMessages.some(m => m.content.includes('[첨부문서: 붙임1_세부계획.hwpx]'))).toBe(true);
-  expect(sentMessages.at(-1)!.content).toContain('첨부문서');
+  expect(sentMessages.at(-1)!.content).toContain('본문 요약:');
+  expect(sentMessages.at(-1)!.content).toContain('첨부 자료 요약:');
+  const finalAssistant = useChat.getState().messages.at(-1)!;
+  expect(finalAssistant.content).toContain('본문 요약:');
+  expect(finalAssistant.content).toContain('첨부 자료 요약:');
+  expect(finalAssistant.content).toContain('[붙임1_세부계획.hwpx]');
 });

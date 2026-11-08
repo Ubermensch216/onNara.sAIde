@@ -4,7 +4,8 @@ import { downloadDocumentAttachments, formatAttachmentReport, releaseWorkTab } f
 import { cancelAutomation, enqueueAutomation, recordAutomation, workTabLock } from '@/lib/automation/jobs';
 import { notifyJobFinished } from '@/lib/automation/notify';
 import { t } from '@/lib/i18n';
-import { buildWorkPlanHandoff, parseWorkPlan, renderWorkPlan, WORK_PLAN_SCHEMA, workPlanInstruction, type WorkPlanHandoff } from '@/lib/ai/work-plan';
+import { buildWorkPlanHandoff, parseWorkPlan, renderWorkPlan, WORK_PLAN_SCHEMA, WORK_PLAN_WITH_ATTACHMENTS_SCHEMA, workPlanInstruction, type WorkPlanHandoff } from '@/lib/ai/work-plan';
+import { splitBodyAndAttachments } from '@/lib/onnara/attachments';
 import { buildTaskCandidates, type TaskCandidate } from '@/lib/schedule/candidates';
 import {
   bodyRevision,
@@ -747,9 +748,7 @@ async function runDocumentCommand(
         return;
       }
       const baseInstruction = args.trim() || defaultInstruction('compare');
-      const instruction = includeAttachments
-        ? `${baseInstruction}\n(첨부문서([첨부문서: …]) 내용이 포함되어 있으면 문서 본문과 함께 비교·분석해 주세요.)`
-        : baseInstruction;
+      const instruction = documentCompareInstruction(baseInstruction, includeAttachments);
       await requireCapabilities(settings.endpoint, settings.model, [], signal);
       if (!owns()) return;
       ownSet({ documentProgress: 'AI가 문서들을 함께 읽고 답하는 중입니다. CPU에서는 수 분 걸릴 수 있습니다.' });
@@ -978,6 +977,29 @@ function describeCurrentScreen(page: ExtractedPage): string {
 
 function describeAttachedDocuments(page: ExtractedPage | null, titles: string[], includeAttachments = false): string {
   const names = titles.length ? titles.map((title, index) => `${index + 1}. ${title}`).join('\n') : page?.title ?? '';
+  if (!includeAttachments) {
+    return [
+      `문서 ${titles.length || 1}건의 본문을 읽어 대화에 붙였습니다.`,
+      names,
+      '이제 슬래시 없이 그냥 물어보세요. 예: "기한이 빠른 순서로 정리해줘"',
+      '앞서 다룬 문서에 대한 대화는 더 이상 참고하지 않습니다. 본문을 떼려면 본문 칩의 ×를 누르세요.',
+    ].filter(Boolean).join('\n');
+  }
+  const attachments = splitBodyAndAttachments(page?.text ?? '').attachments;
+  const attachmentNames = attachments.length
+    ? attachments.map(att => `- ${att.name}`).join('\n')
+    : '- 첨부 자료 없음';
+  return [
+    `문서 ${titles.length || 1}건의 본문과 첨부문서를 읽어 대화에 붙였습니다.`,
+    `본문:\n${names}`,
+    `첨부 자료:\n${attachmentNames}`,
+    '이제 슬래시 없이 그냥 물어보세요. 예: "본문과 첨부 자료 내용을 구분해서 정리해줘"',
+    '앞서 다룬 문서에 대한 대화는 더 이상 참고하지 않습니다. 본문을 떼려면 본문 칩의 ×를 누르세요.',
+  ].filter(Boolean).join('\n');
+}
+
+function _unusedDescribeAttachedDocumentsTail(page: ExtractedPage | null, titles: string[], includeAttachments = false): string {
+  const names = titles.length ? titles.map((title, index) => `${index + 1}. ${title}`).join('\n') : page?.title ?? '';
   return [includeAttachments
     ? `문서 ${titles.length || 1}건의 본문과 첨부문서를 읽어 대화에 붙였습니다.`
     : `문서 ${titles.length || 1}건의 본문을 읽어 대화에 붙였습니다.`, names,
@@ -1059,6 +1081,21 @@ async function runDocumentBatch(set: Set, get: Get, options: {
       ? await runWorkPlan(batchSet, get, settings, title, page, referenceOf(title), rowOf(title), includeAttachments)
       : await runGeneration(batchSet, instructionOnly(get, documentBatchInstruction(title, instruction, false, includeAttachments)), { ...settings, thinkMode: 'off' });
     if (!outcome) return;
+    if (command === 'summary' && includeAttachments) {
+      const formatted = formatSeparatedSummary(outcome.content, title, page.text);
+      if (formatted !== outcome.content) {
+        outcome.content = formatted;
+        const lastAssistant = [...get().messages].reverse().find(m => m.role === 'assistant');
+        if (lastAssistant) {
+          if (typeof lastAssistant.id === 'number') {
+            await db.messages.update(lastAssistant.id, { content: formatted });
+          }
+          batchSet(s => ({
+            messages: s.messages.map(m => m.id === lastAssistant.id ? { ...m, content: formatted } : m),
+          }));
+        }
+      }
+    }
     await saveDocResult(lookup, {
       bodyRevision: revision,
       content: outcome.content,
@@ -1224,8 +1261,19 @@ export function documentBatchInstruction(title: string, request: string, attachm
     '',
     '[형식]',
     '첫 줄: 문서 제목',
-    '둘째 줄: ■ 요지: 이 문서가 무엇을 하라는(알리는) 것인지 한 줄',
-    '이어서 "- 이름표: 내용" 꼴의 줄 2~5개. 이름표는 배경·내용·할 일·대상·기한·제출 중 본문에 실제로 있는 것만 골라 쓴다. 없는 이름표는 줄째 생략한다.',
+    ...(includeAttachments
+      ? [
+          '둘째 줄: 본문 요약:',
+          '셋째 줄: ■ 요지: 이 문서 본문이 무엇을 하라는(알리는) 것인지 한 줄',
+          ...(includeAttachments ? [] : ['이어서 "- 이름표: 내용" 꼴의 줄 2~5개. 이름표는 배경·내용·할 일·대상·기한·제출 중 본문에 실제로 있는 것만 골라 쓴다. 없는 이름표는 줄째 생략한다.']),
+          '그다음 빈 줄 뒤에: 첨부 자료 요약:',
+          '이어서 첨부문서([첨부문서: 파일명]) 내용을 바탕으로 "- [파일명] 핵심 요지 및 주요 내용" 꼴로 개조식 요약한다. 첨부문서가 없으면 "- 첨부 자료 없음" 한 줄만 적는다.',
+        ]
+      : [
+          '둘째 줄: ■ 요지: 이 문서가 무엇을 하라는(알리는) 것인지 한 줄',
+          ...(includeAttachments ? [] : ['이어서 "- 이름표: 내용" 꼴의 줄 2~5개. 이름표는 배경·내용·할 일·대상·기한·제출 중 본문에 실제로 있는 것만 골라 쓴다. 없는 이름표는 줄째 생략한다.']),
+        ]),
+    ...(includeAttachments ? [] : ['이어서 "- 이름표: 내용" 꼴의 줄 2~5개. 이름표는 배경·내용·할 일·대상·기한·제출 중 본문에 실제로 있는 것만 골라 쓴다. 없는 이름표는 줄째 생략한다.']),
     '',
     '[문체]',
     '- 개조식으로 쓴다. 문장으로 풀지 말고 "~ 제출", "~ 요청", "~ 일원화"처럼 명사로 끝낸다.',
@@ -1237,17 +1285,93 @@ export function documentBatchInstruction(title: string, request: string, attachm
     '',
     '[예시 — 형식만 참고하고 내용은 따라 하지 마라]',
     '2025년 청사 에너지 절약 추진 계획 알림',
+    ...(includeAttachments ? ['본문 요약:'] : []),
     '■ 요지: 동절기 청사 에너지 절약 지침 준수 요청',
     '- 내용: 실내 온도 18℃ 이하, 점심시간 소등',
     '- 대상: 전 부서',
     '- 기한: 2025. 12. 1. ~ 2026. 2. 28.',
+    ...(includeAttachments
+      ? [
+          '',
+          '첨부 자료 요약:',
+          '- [붙임1_세부추진계획.hwpx] 부서별 에너지 지킴이 지정 및 월 1회 자율 점검 실시',
+          '- [붙임2_점검표서식.xlsx] 난방기 가동 현황·소등 여부 점검표 서식',
+        ]
+      : []),
     '',
     '사용자 요청이 관점이나 형식을 따로 정하면 그것을 따르되, 개조식으로 짧게 쓴다는 원칙은 지켜라.',
     '화면에 메뉴·버튼·첨부 목록만 있고 본문을 찾을 수 없으면 그렇게 밝혀라.',
     // 다운로드 요청까지 모델에 그대로 넘기면 "다운로드 기능이 없다"고 답한다. 실제 다운로드는 앱이 따로 하고 결과를 아래에 붙인다.
     ...(attachmentsHandled ? ['첨부 파일 다운로드는 앱이 이미 처리해 결과를 따로 보여 준다. 다운로드에 대해서는 아무것도 쓰지 말고 문서 내용 요약만 하라.'] : []),
-    ...(includeAttachments ? ['첨부문서([첨부문서: …])의 본문도 함께 제공되었으므로 문서 본문과 첨부문서 내용을 함께 분석하여 요약에 반영하라.'] : []),
+    ...(includeAttachments ? [
+      '문서 본문과 첨부문서([첨부문서: 파일명]) 분석 내용을 하나로 합치지 말고, 반드시 "본문 요약:"과 "첨부 자료 요약:"을 구분하여 별도로 표시하라.',
+    ] : []),
     `사용자 요청: ${request}`,
+  ].join('\n');
+}
+
+/**
+ * 여러 문서를 함께 비교·분석(`/비교`)할 때 모델에 보내는 요청.
+ * `includeAttachments`가 켜져 있으면 본문 분석과 첨부파일 분석을 별도로 구분해 표시하도록 지시한다.
+ */
+export function documentCompareInstruction(request: string, includeAttachments = false): string {
+  if (!includeAttachments) return request;
+  return [
+    request,
+    '',
+    '[출력 형식 — 본문과 첨부파일 분석 분리]',
+    '문서 본문과 첨부문서([첨부문서: 파일명]) 분석 내용을 섞지 말고 반드시 아래 두 영역으로 구분하여 표시하라.',
+    '본문 요약: (또는 본문 분석:)',
+    '- 각 문서 본문의 핵심 내용과 비교·분석 결과',
+    '',
+    '첨부 자료 요약: (또는 첨부 자료 분석:)',
+    '- 각 문서에 첨부된 파일([첨부문서: 파일명])별 핵심 내용과 비교·분석 결과 (첨부파일이 없는 문서는 "첨부 자료 없음"으로 표시)',
+  ].join('\n');
+}
+
+/**
+ * 문서별 요약(`/요약`)에서 `includeAttachments`가 켜졌을 때
+ * 모델 출력에 `본문 요약:`과 `첨부 자료 요약:` 구분이 빠져 있으면 보완해 분리 표시를 보장한다.
+ */
+export function formatSeparatedSummary(content: string, title: string, pageText: string): string {
+  const trimmed = content.trim();
+  if (!trimmed) return content;
+  const hasBodyLabel = /본문\s*요약\s*:/u.test(trimmed);
+  const hasAttLabel = /첨부\s*(?:자료|문서|파일)\s*요약\s*:/u.test(trimmed);
+  if (hasBodyLabel && hasAttLabel) return trimmed;
+
+  const { attachments } = splitBodyAndAttachments(pageText);
+  const defaultAttachmentBlock = [
+    '첨부 자료 요약:',
+    ...(attachments.length
+      ? attachments.map(att => {
+          const firstLine = att.text.split(/\r?\n/).map(line => line.trim()).find(Boolean) ?? '첨부 내용 확인';
+          return `- [${att.name}] ${firstLine.slice(0, 120)}`;
+        })
+      : ['- 첨부 자료 없음']),
+  ].join('\n');
+
+  if (hasBodyLabel && !hasAttLabel) {
+    return `${trimmed}\n\n${defaultAttachmentBlock}`;
+  }
+
+  if (!hasBodyLabel && hasAttLabel) {
+    const match = trimmed.match(/첨부\s*(?:자료|문서|파일)\s*요약\s*:/u);
+    const splitAt = match?.index ?? trimmed.length;
+    const head = trimmed.slice(0, splitAt).trim();
+    const tail = trimmed.slice(splitAt).trim();
+    return `${insertBodySummaryLabel(head, title)}\n\n${tail}`;
+  }
+
+  return `${insertBodySummaryLabel(trimmed, title)}\n\n${defaultAttachmentBlock}`;
+}
+
+function insertBodySummaryLabel(bodySection: string, title: string): string {
+  const lines = bodySection.split(/\r?\n/);
+  if (lines.length > 1 && (lines[0]!.trim() === title.trim() || (!lines[0]!.trim().startsWith('■') && !lines[0]!.trim().startsWith('-')))) {
+    return [lines[0]!, '본문 요약:', ...lines.slice(1)].join('\n');
+  }
+  return ['본문 요약:', bodySection
   ].join('\n');
 }
 
@@ -1358,14 +1482,14 @@ async function runWorkPlan(
   try {
     const perf = await abortable(streamChat(settings.endpoint, {
       model: settings.model, messages: context, stream: true, think: false, keep_alive: settings.keepAlive,
-      format: WORK_PLAN_SCHEMA as unknown as Record<string, unknown>,
+      format: (includeAttachments ? WORK_PLAN_WITH_ATTACHMENTS_SCHEMA : WORK_PLAN_SCHEMA) as unknown as Record<string, unknown>,
       // 사실 추출이므로 표현의 다양성이 필요 없다.
       options: { temperature: 0, num_ctx: settings.numCtx },
     }, { onToken: token => { raw += token; } }, abort.signal), abort.signal);
     abort.signal.throwIfAborted();
     const card = parseWorkPlan(raw);
     if (!card) throw new Error('AI 응답을 업무계획 형식으로 읽지 못했습니다. 다시 요청해 보세요.');
-    const content = renderWorkPlan(title, card, page.text, { sender: row?.sender, reportDate: row?.reportDate }, page.pdfPageAnchors);
+    const content = renderWorkPlan(title, card, page.text, { sender: row?.sender, reportDate: row?.reportDate }, page.pdfPageAnchors, includeAttachments);
     // 일정 후보(S07). 등록은 사용자가 확인 카드에서 체크한 것만 — 여기서 저장되는 것은 후보일 뿐이다.
     const candidates = buildTaskCandidates(card, page.text, reference ?? new Date());
     // 출처 공문은 후보가 없어도 남긴다. "관련 내 자료"(TONGDAL) 추천이 이 제목으로 찾는다.

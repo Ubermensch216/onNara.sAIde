@@ -55,8 +55,8 @@ async function settle() {
   }
 }
 
-describe('ReviewTab (퇴고 탭) 컴포넌트 검증', () => {
-  it('기본 렌더링 시 본 화면 맞춤법 검사가 기본 서브탭으로 활성화된다', async () => {
+describe('ReviewTab (문장 다듬기 탭) 컴포넌트 검증', () => {
+  it('기본 렌더링 시 맞춤법 검사가 기본 서브탭으로 활성화된다', async () => {
     await act(() =>
       root.render(
         createElement(ReviewTab, {
@@ -69,8 +69,7 @@ describe('ReviewTab (퇴고 탭) 컴포넌트 검증', () => {
     );
     await settle();
 
-    expect(document.body.textContent).toContain('공문서 퇴고 및 교정');
-    expect(document.body.textContent).toContain('본 화면 맞춤법 검사');
+    expect(document.body.textContent).toContain('맞춤법 검사');
     expect(document.body.textContent).toContain('블럭 메뉴 (문장 지원)');
     expect(document.body.textContent).toContain('기안기 제목·본문');
     expect(document.body.textContent).toContain('맞춤법 검사 실행');

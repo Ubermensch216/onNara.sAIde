@@ -16,6 +16,7 @@
 
 import { escapeMarkdownText } from '@/lib/downloads/links';
 import { MIN_ANCHOR_CHARS } from '@/lib/extract/pdf-text';
+import { splitBodyAndAttachments } from '@/lib/onnara/attachments';
 import {
   ACTION_CARD_SCHEMA,
   actionCardInstruction,
@@ -40,7 +41,10 @@ export interface WorkPlan extends ActionCard {
   /** 적용 대상·자격·예외 조건. 해당 여부는 사용자가 판단한다. */
   conditions: Array<{ text: string; evidence: string }>;
   /** 회신·제출물에 반드시 갖출 것(서식, 연락처, 산출근거 등). */
+  /** 회신·제출물에 반드시 갖출 것(서식, 연락처, 산출근거 등). */
   requirements: Array<{ item: string; evidence: string }>;
+  /** 첨부문서별 요약 분석 (첨부문서분석포함 시). */
+  attachmentSummaries?: Array<{ name: string; summary: string }>;
 }
 
 /** 모델이 뽑은 항목 하나와 그 원문 대조 결과. 기안 코파일럿으로 넘기는 단위다. */
@@ -81,10 +85,32 @@ export const WORK_PLAN_SCHEMA = {
   required: [...ACTION_CARD_SCHEMA.required, 'requester', 'requestType', 'conditions', 'requirements'],
 } as const;
 
+export const WORK_PLAN_WITH_ATTACHMENTS_SCHEMA = {
+  type: 'object',
+  properties: {
+    ...WORK_PLAN_SCHEMA.properties,
+    attachmentSummaries: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          name: { type: 'string' },
+          summary: { type: 'string' },
+        },
+        required: ['name', 'summary'],
+      },
+    },
+  },
+  required: [...WORK_PLAN_SCHEMA.required, 'attachmentSummaries'],
+} as const;
+
 export function workPlanInstruction(title: string, includeAttachments = false): string {
   return [
     actionCardInstruction(title),
-    ...(includeAttachments ? ['첨부문서([첨부문서: …])의 내용도 문서 본문과 함께 분석하여 요지·할 일·제출물·기한·요구사항에 반영하라.'] : []),
+    ...(includeAttachments ? [
+      '문서 본문과 첨부문서([첨부문서: 파일명])를 함께 분석하되, summary에는 문서 본문의 요지만 적고 첨부문서별 분석 내용은 attachmentSummaries에 파일별로 분리하여 적는다.',
+      'attachmentSummaries: 각 첨부문서([첨부문서: 파일명])의 파일 이름(name)과 그 첨부파일의 핵심 요지·세부 요구사항 요약(summary). 첨부문서가 없으면 빈 배열.',
+    ] : []),
     'requester: 이 공문을 보낸 기관·부서 이름. 원문에 없으면 빈 문자열.',
     `requestType: 받은 부서에 요구하는 것. 자료를 보내거나 회신해야 하면 "${REQUEST_TYPES[0]}", 사업·지침을 시행해야 하면 "${REQUEST_TYPES[1]}", 알리기만 하면 "${REQUEST_TYPES[2]}".`,
     'conditions: 적용 대상·자격·예외 조건. text는 짧은 요약, evidence는 원문 문장 그대로. 없으면 빈 배열.',
@@ -114,6 +140,19 @@ export function parseWorkPlan(raw: string): WorkPlan | null {
       requestType: (REQUEST_TYPES as readonly string[]).includes(type) ? type as RequestType : '참고·알림',
       conditions: pairs(value.conditions, 'text'),
       requirements: pairs(value.requirements, 'item'),
+      ...(Array.isArray(value.attachmentSummaries)
+        ? {
+            attachmentSummaries: value.attachmentSummaries.flatMap(item => {
+              if (!item || typeof item !== 'object') return [];
+              const record = item as Record<string, unknown>;
+              const name = text(record.name);
+              const summary = text(record.summary);
+              return (name || summary) && !isPlaceholder(summary || name)
+                ? [{ name: name || '첨부 자료', summary }]
+                : [];
+            }),
+          }
+        : {}),
     };
   } catch {
     return null;
@@ -285,6 +324,7 @@ export function renderWorkPlan(
   title: string, plan: WorkPlan, source: string, row: WorkPlanListRow = {},
   /** 본문이 PDF 한 건이면 쪽 표식(ExtractedPage.pdfPageAnchors). 근거 위치에 쪽 번호를 붙인다. */
   pageAnchors?: string[],
+  includeAttachments = false,
 ): string {
   // "2026. 9. 30."이 줄 앞에 오면 마크다운이 번호 목록으로 읽어 "30."만 남긴다. 숫자 뒤 마침표도 이스케이프한다.
   const md = (text: string) => escapeMarkdownText(text).replace(/(\d)\./g, '$1\\.');
@@ -298,7 +338,12 @@ export function renderWorkPlan(
   else lines.push('- 요청 기관: 본문에 없음');
   if (row.reportDate) lines.push(`- 목록 일자: ${md(row.reportDate)}`);
   lines.push(`- 요청 유형: ${plan.requestType}`);
-  lines.push(`- 요지: ${md(plan.summary || '요지를 만들지 못했습니다.')}`, '');
+  lines.push(
+    includeAttachments
+      ? `- 본문 요약: ${md(plan.summary || '요지를 만들지 못했습니다.')}`
+      : `- 요지: ${md(plan.summary || '요지를 만들지 못했습니다.')}`,
+    '',
+  );
 
   // ── 2. 해야 할 일 ──
   lines.push('**2. 해야 할 일**');
@@ -358,5 +403,24 @@ export function renderWorkPlan(
     lines.push('- 회신에 갖출 항목을 찾지 못했습니다. 원문을 확인하세요.');
   }
   lines.push('- 초안을 만든 뒤 기안 코파일럿의 `요구사항 점검`으로 충족 여부를 확인합니다.');
+  if (includeAttachments) {
+    lines.push('', '**5. 첨부 자료 분석**', '첨부 자료 요약:');
+    const modelItems = plan.attachmentSummaries ?? [];
+    if (modelItems.length) {
+      for (const att of modelItems) {
+        lines.push(`- [${md(att.name)}] ${md(att.summary || '내용 요약 없음')}`);
+      }
+    } else {
+      const parsedAttachments = splitBodyAndAttachments(source).attachments;
+      if (parsedAttachments.length) {
+        for (const att of parsedAttachments) {
+          const snippet = att.text.split(/\r?\n/).map(line => line.trim()).find(Boolean) ?? '첨부 내용 확인';
+          lines.push(`- [${md(att.name)}] ${md(snippet.slice(0, 120))}`);
+        }
+      } else {
+        lines.push('- 첨부 자료 없음');
+      }
+    }
+  }
   return lines.join('\n');
 }
