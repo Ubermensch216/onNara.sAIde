@@ -81,9 +81,10 @@ export const WORK_PLAN_SCHEMA = {
   required: [...ACTION_CARD_SCHEMA.required, 'requester', 'requestType', 'conditions', 'requirements'],
 } as const;
 
-export function workPlanInstruction(title: string): string {
+export function workPlanInstruction(title: string, includeAttachments = false): string {
   return [
     actionCardInstruction(title),
+    ...(includeAttachments ? ['첨부문서([첨부문서: …])의 내용도 문서 본문과 함께 분석하여 요지·할 일·제출물·기한·요구사항에 반영하라.'] : []),
     'requester: 이 공문을 보낸 기관·부서 이름. 원문에 없으면 빈 문자열.',
     `requestType: 받은 부서에 요구하는 것. 자료를 보내거나 회신해야 하면 "${REQUEST_TYPES[0]}", 사업·지침을 시행해야 하면 "${REQUEST_TYPES[1]}", 알리기만 하면 "${REQUEST_TYPES[2]}".`,
     'conditions: 적용 대상·자격·예외 조건. text는 짧은 요약, evidence는 원문 문장 그대로. 없으면 빈 배열.',

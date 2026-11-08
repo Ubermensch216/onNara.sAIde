@@ -10,7 +10,7 @@ import { assertCurrent, captureTab, trustedPanel, validPanelRequest } from '@/li
 import { committedSince, duplicateWorkTab, forgetWorkTab, panelTab, registerWorkTabListeners, tabsSpawnedBy, workTabs } from '@/lib/browser/work-tabs';
 import { forgetPanelSpawn, isReportedPanelTab, notePanelSpawn, panelOpener, rememberPanelTab } from '@/lib/browser/panel-sync';
 import type { AppError, AttachmentDownloadResult, AttachmentNaming, ExtractedPage, RequestControl, SWToContent } from '@/lib/messaging/protocol';
-import { isHtmlAttachmentName } from '@/lib/onnara/attachments';
+import { ATTACHMENT_MARK_ATTR, captureMarkedAttachmentRequest, isHtmlAttachmentName, withAttachedFileTexts, type ExtractedAttachmentText } from '@/lib/onnara/attachments';
 import { sanitizeSegment } from '@/lib/downloads/naming';
 import { originalDocTitle } from '@/lib/downloads/doc-title';
 import { clearDownloadName, registerDownloadNaming, reserveDownloadName } from '@/lib/downloads/rename';
@@ -2104,7 +2104,14 @@ export async function handlePanelMessage(msg: PanelToSW): Promise<SWToPanel> {
         budgetTokens: msg.budgetTokens,
         control,
       });
-      if (res.type === 'EXTRACTED') return { type: 'PAGE_EXTRACTED', payload: res.payload };
+      if (res.type === 'EXTRACTED') {
+        let payload = res.payload;
+        if (msg.includeAttachments && !payload.structuredData) {
+          const extractedAttachments = await extractAttachmentsInTab(msg.tabId, control, payload);
+          payload = withAttachedFileTexts(payload, extractedAttachments, msg.budgetTokens);
+        }
+        return { type: 'PAGE_EXTRACTED', payload };
+      }
       if (res.type === 'FAILED') return { type: 'ERROR', error: res.error };
       return { type: 'ERROR', error: { code: 'UNKNOWN', message: t('sw.extractFailed') } };
     }
@@ -2122,7 +2129,10 @@ export async function handlePanelMessage(msg: PanelToSW): Promise<SWToPanel> {
             };
           }
         : undefined;
-      return runExclusive(() => readDocumentInBackground(msg.tabId, title, msg.budgetTokens, control, withAttachments, { keepWorkTab: msg.keepWorkTab }));
+      return runExclusive(() => readDocumentInBackground(msg.tabId, title, msg.budgetTokens, control, withAttachments, {
+        keepWorkTab: msg.keepWorkTab,
+        includeAttachments: msg.includeAttachments,
+      }));
     }
 
     case 'RELEASE_WORK_TAB':
@@ -2429,7 +2439,7 @@ export async function readDocumentInBackground(
   control: RequestControl,
   /** 상세 화면을 찾은 뒤 작업 탭이 닫히기 전에 실행할 후속 작업(예: 첨부 다운로드). */
   onDetail?: (target: DetailTarget) => Promise<SWToPanel>,
-  options: { keepWorkTab?: boolean } = {},
+  options: { keepWorkTab?: boolean; includeAttachments?: boolean } = {},
 ): Promise<SWToPanel> {
   const temporary = new Set<number>();
   let keptWorkTabId: number | undefined;
@@ -2448,7 +2458,11 @@ export async function readDocumentInBackground(
   const open = await alreadyOpenDetail(sourceTabId, source.url, title, budgetTokens, taskControl);
   if (cancelled.has(control.id)) return { type: 'ERROR', error: { code: 'ABORTED', message: '문서 읽기를 중단했습니다.' } };
   if (open) {
-    const payload = { ...open.payload, url: source.url ?? open.payload.url, title: open.payload.title || title };
+    let payload = { ...open.payload, url: source.url ?? open.payload.url, title: open.payload.title || title };
+    if (options.includeAttachments) {
+      const extractedAttachments = await extractAttachmentsInTab(open.tabId, taskControl, payload);
+      payload = withAttachedFileTexts(payload, extractedAttachments, budgetTokens);
+    }
     if (!onDetail) return { type: 'DOCUMENT_READ', requestedTitle: title, payload };
     try {
       return await onDetail({ tabId: open.tabId, payload, control: taskControl });
@@ -2547,8 +2561,16 @@ export async function readDocumentInBackground(
     stage = 'detail';
     const detailStarted = Date.now();
     const detailDeadline = Math.min(taskControl.deadline, detailStarted + DETAIL_WAIT_MS);
+    let preBodyAttachments: ExtractedAttachmentText[] = [];
     const finish = async (detail: ExtractedPage, tabId: number): Promise<SWToPanel> => {
-      const payload = { ...detail, url: source.url ?? detail.url, title: detail.title || title };
+      let payload = { ...detail, url: source.url ?? detail.url, title: detail.title || title };
+      if (options.includeAttachments) {
+        const extractedAttachments = preBodyAttachments.length
+          ? preBodyAttachments
+          : await extractAttachmentsInTab(tabId, taskControl, payload);
+        payload = withAttachedFileTexts(payload, extractedAttachments, budgetTokens);
+      }
+
       if (onDetail) {
         stage = 'followUp';
         return await onDetail({ tabId, payload, control: taskControl });
@@ -2661,6 +2683,9 @@ export async function readDocumentInBackground(
       // 클라우드 온나라는 여기까지가 문서카드다. '본문보기'가 있으면 눌러 본문까지 따라간다.
       // 첨부 받기 등 후속 작업은 붙임 목록이 있는 카드 화면에서 하므로 건드리지 않는다.
       if (bodyView === undefined && !onDetail) {
+        if (options.includeAttachments && !preBodyAttachments.length) {
+          preBodyAttachments = await extractAttachmentsInTab(targetTabId, taskControl, result.payload);
+        }
         const target = await openBodyView(targetTabId, taskControl);
         bodyView = target === undefined ? null : { card: result.payload, tabId: targetTabId, at: Date.now(), ...(target ? { target } : {}) };
         if (bodyView) {
@@ -3387,6 +3412,109 @@ const DOWNLOAD_START_TIMEOUT_MS = 15_000;
 /** 꾸러미에 싣는 본문을 다시 읽을 때의 예산. 대화용 예산과 달리 본문 전체를 담는 것이 목적이다. */
 const PACKAGE_BODY_BUDGET_TOKENS = 100_000;
 const ATTACHMENT_SCAN_MS = 5000;
+
+/**
+ * 상세 화면의 모든 프레임에서 첨부 문서를 찾아 텍스트로 추출한다.
+ * 직접 URL이 있는 첨부는 바로 fetch하고, 스크립트(onclick) 방식 첨부는 MAIN 월드에서
+ * 다운로드 요청(GET/POST)을 가로채 바이트를 읽은 뒤 텍스트를 뽑는다.
+ */
+export async function extractAttachmentsInTab(
+  tabId: number,
+  control: RequestControl,
+  payload?: ExtractedPage,
+): Promise<ExtractedAttachmentText[]> {
+  const frameControl: RequestControl = { ...control, expectedUrl: undefined };
+  let frames: Array<{ frameId: number }> = [{ frameId: 0 }];
+  try {
+    const discovered = await chrome.webNavigation.getAllFrames({ tabId });
+    if (discovered?.length) frames = discovered;
+  } catch {
+    // 최상위 프레임만 확인한다.
+  }
+
+  const found: Array<{ frameId: number; index: number; name: string; url?: string }> = [];
+  const seen = new Set<string>();
+  for (const frame of frames) {
+    const reply = await sendToFrame(tabId, frame.frameId, { type: 'SCAN_ATTACHMENTS', control: frameControl });
+    if (reply.type !== 'ATTACHMENTS_FOUND') continue;
+    for (const item of reply.items) {
+      const key = item.url ?? `name:${item.name}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      found.push({ frameId: frame.frameId, ...item });
+    }
+  }
+  if (!found.length && payload?.attachments?.links?.length) {
+    for (const link of payload.attachments.links) {
+      const key = link.url || `name:${link.name}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      found.push({ frameId: payload.sourceFrameId ?? 0, index: -1, name: link.name, url: link.url });
+    }
+  }
+  if (!found.length) return [];
+
+  const extracted: ExtractedAttachmentText[] = [];
+  for (const item of found) {
+    assertCurrent(frameControl, '', cancelled.has(control.id));
+    let request: import('@/lib/onnara/related-open-capture').CapturedOpenRequest | undefined;
+    if (!item.url && item.index >= 0) {
+      const marked = await sendToFrame(tabId, item.frameId, {
+        type: 'MARK_ATTACHMENT',
+        index: item.index,
+        name: item.name,
+        control: frameControl,
+      });
+      if (marked.type === 'ATTACHMENT_MARKED' && marked.marked) {
+        try {
+          const results = await frameTimeout(chrome.scripting.executeScript({
+            target: { tabId, frameIds: [item.frameId] },
+            world: 'MAIN',
+            func: captureMarkedAttachmentRequest,
+            args: [ATTACHMENT_MARK_ATTR],
+          }), frameControl);
+          const captured = results?.[0]?.result;
+          if (captured && typeof captured === 'object' && 'url' in captured) {
+            request = captured as import('@/lib/onnara/related-open-capture').CapturedOpenRequest;
+          }
+        } catch {
+          // MAIN 월드 캡처 실패 시 READ_ATTACHMENT가 경고 문구를 반환한다.
+        }
+      }
+    }
+
+    const readReply = await sendToFrame(tabId, item.frameId, {
+      type: 'READ_ATTACHMENT',
+      name: item.name,
+      ...(item.url ? { url: item.url } : {}),
+      ...(request ? { request } : {}),
+      control: frameControl,
+    });
+    if (readReply.type !== 'ATTACHMENT_READ') continue;
+    if (readReply.pdf?.base64) {
+      const parsed = await pdfText({
+        ...readReply.pdf,
+        url: `attachment:${control.id}:${readReply.name}:${readReply.pdf.url}`,
+      });
+      if (parsed.text.trim()) {
+        extracted.push({ name: readReply.name, text: parsed.text });
+      } else {
+        extracted.push({
+          name: readReply.name,
+          text: '',
+          warning: parsed.error || 'PDF 첨부 문서에서 글자를 찾지 못했습니다(스캔본일 수 있음).',
+        });
+      }
+    } else {
+      extracted.push({
+        name: readReply.name,
+        text: readReply.text,
+        ...(readReply.warning ? { warning: readReply.warning } : {}),
+      });
+    }
+  }
+  return extracted;
+}
 
 /**
  * 상세 화면의 모든 프레임에서 첨부를 찾아 한 파일씩 받는다.

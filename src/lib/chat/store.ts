@@ -191,7 +191,7 @@ export interface ChatState {
    *   체크된 상태를 되살려야 하는데, 그 사이 목록은 이미 달라져 있을 수 있다.
    *   명령 전체를 다시 돌리는 편이 정직하다.
    */
-  lastCommand: { text: string; command: DocumentCommandId; args: string } | null;
+  lastCommand: { text: string; command: DocumentCommandId; args: string; includeAttachments?: boolean } | null;
   /** 직전 명령에서 모델을 부르지 않고 재사용한 문서 수. 0이면 안내를 보이지 않는다. */
   cacheReused: number;
 
@@ -201,13 +201,13 @@ export interface ChatState {
   /** 탭 안에서 화면이 바뀌었음을 기록한다. 붙어 있는 본문이 그 화면의 것이면 떼어낸다. */
   noteScreenChange: (frameId: number) => void;
   openConversation: (conversation: Conversation) => Promise<void>;
-  attachPage: (tabId: number, settings: Settings, force?: boolean) => Promise<ExtractedPage | null>;
+  attachPage: (tabId: number, settings: Settings, force?: boolean, options?: { includeAttachments?: boolean }) => Promise<ExtractedPage | null>;
   attachScreenshot: (tabId: number) => Promise<string | null>;
   detachPage: () => void;
   detachScreenshot: () => void;
   send: (text: string, settings: Settings, options?: SendOptions) => Promise<void>;
   /** 문서등록대장 목록 명령 실행. 무엇을 할지는 문장이 아니라 명령 id가 정한다. */
-  runCommand: (text: string, command: DocumentCommandId, args: string, settings: Settings, options?: { bypassCache?: boolean }) => Promise<void>;
+  runCommand: (text: string, command: DocumentCommandId, args: string, settings: Settings, options?: { bypassCache?: boolean; includeAttachments?: boolean }) => Promise<void>;
   /** 직전 목록 명령을 캐시 없이 다시 실행한다(B1의 `다시 분석`). */
   rerunLastCommand: (settings: Settings) => Promise<void>;
   /** `@일정` 자연어 명령. 조회는 바로 답하고, 쓰기는 확인 카드를 띄운다. */
@@ -353,7 +353,7 @@ export function createChatSession() {
      *   재추출은 낭비일 뿐 아니라, 본문이 1바이트라도 달라지면 접두사가 바뀌어
      *   KV 캐시가 통째로 무효화된다(프리필 183ms → 7,684ms).
      */
-    async attachPage(tabId, settings, force = false) {
+    async attachPage(tabId, settings, force = false, options) {
       const current = get().page;
       if (get().extracting || get().loading) return current;
       const epoch = ++epochs.attachment;
@@ -365,6 +365,7 @@ export function createChatSession() {
           type: 'EXTRACT_PAGE',
           tabId,
           budgetTokens: settings.pageTokenBudget,
+          ...(options?.includeAttachments ? { includeAttachments: true } : {}),
           control: { id: '', deadline: 0, expectedUrl: expectedUrl || undefined },
         });
         if (epoch !== epochs.attachment) return null;
@@ -443,13 +444,13 @@ export function createChatSession() {
     },
     async runCommand(text, command, args, settings, options) {
       await settled();
-      await track(runDocumentCommand(set, get, text, command, args, settings, epochs, options?.bypassCache ?? false));
+      await track(runDocumentCommand(set, get, text, command, args, settings, epochs, options?.bypassCache ?? false, options?.includeAttachments ?? false));
     },
     async rerunLastCommand(settings) {
       const last = get().lastCommand;
       if (!last) return;
       await settled();
-      await track(runDocumentCommand(set, get, last.text, last.command, last.args, settings, epochs, true));
+      await track(runDocumentCommand(set, get, last.text, last.command, last.args, settings, epochs, true, last.includeAttachments ?? false));
     },
     async sendAgent(text, settings, tab) {
       await settled();
@@ -676,6 +677,7 @@ async function runDocumentCommand(
   settings: Settings,
   epochs: SessionEpochs,
   bypassCache = false,
+  includeAttachments = false,
 ) {
   const trimmed = text.trim();
   if (!trimmed || get().streaming || get().loading) return;
@@ -684,7 +686,7 @@ async function runDocumentCommand(
   const ownSet = guardedSet(set, owns);
   // 이번 실행에서 다시 센다. 앞 실행의 "재사용 n건" 안내가 남아 있으면 안 된다.
   ownSet({ streaming: true, startedAt: Date.now(), abort: new AbortController(), error: null,
-    lastCommand: { text: trimmed, command, args }, cacheReused: 0 });
+    lastCommand: { text: trimmed, command, args, ...(includeAttachments ? { includeAttachments: true } : {}) }, cacheReused: 0 });
   try {
     const conv = await ensureConversation(ownSet, get, trimmed, owns);
     if (!conv || !owns()) return;
@@ -713,7 +715,7 @@ async function runDocumentCommand(
       ownSet(s => ({ messages: [...s.messages, { ...message, id: reportId }] }));
     };
 
-    const page = await get().attachPage(tabId, settings, true);
+    const page = await get().attachPage(tabId, settings, true, includeAttachments ? { includeAttachments: true } : undefined);
     if (!page || !owns() || signal.aborted) return;
     const list = page.structuredData;
 
@@ -738,13 +740,16 @@ async function runDocumentCommand(
 
     if (command === 'read' || command === 'compare') {
       // 상세 화면은 이미 붙인 본문을 그대로 쓴다.
-      if (list && !await readDocumentsTogether(ownSet, get, titles, settings, epochs, tabId, signal)) return;
+      if (list && !await readDocumentsTogether(ownSet, get, titles, settings, epochs, tabId, signal, includeAttachments)) return;
       if (!owns() || signal.aborted) return;
       if (command === 'read') {
-        await report(describeAttachedDocuments(get().page, titles));
+        await report(describeAttachedDocuments(get().page, titles, includeAttachments));
         return;
       }
-      const instruction = args.trim() || defaultInstruction('compare');
+      const baseInstruction = args.trim() || defaultInstruction('compare');
+      const instruction = includeAttachments
+        ? `${baseInstruction}\n(첨부문서([첨부문서: …]) 내용이 포함되어 있으면 문서 본문과 함께 비교·분석해 주세요.)`
+        : baseInstruction;
       await requireCapabilities(settings.endpoint, settings.model, [], signal);
       if (!owns()) return;
       ownSet({ documentProgress: 'AI가 문서들을 함께 읽고 답하는 중입니다. CPU에서는 수 분 걸릴 수 있습니다.' });
@@ -781,6 +786,7 @@ async function runDocumentCommand(
             list: list ?? null,
             signal,
             bypassCache,
+            includeAttachments,
           });
           // 중단은 실패가 아니라 취소다. "분석 완료"로 기록하면 하지 않은 일이 기록에 남는다.
           if (signal?.aborted || jobSignal.aborted) return { error: { code: 'ABORTED', message: '작업을 취소했습니다.' } };
@@ -970,9 +976,11 @@ function describeCurrentScreen(page: ExtractedPage): string {
   return lines.join('\n');
 }
 
-function describeAttachedDocuments(page: ExtractedPage | null, titles: string[]): string {
+function describeAttachedDocuments(page: ExtractedPage | null, titles: string[], includeAttachments = false): string {
   const names = titles.length ? titles.map((title, index) => `${index + 1}. ${title}`).join('\n') : page?.title ?? '';
-  return [`문서 ${titles.length || 1}건의 본문을 읽어 대화에 붙였습니다.`, names,
+  return [includeAttachments
+    ? `문서 ${titles.length || 1}건의 본문과 첨부문서를 읽어 대화에 붙였습니다.`
+    : `문서 ${titles.length || 1}건의 본문을 읽어 대화에 붙였습니다.`, names,
     '이제 슬래시 없이 그냥 물어보세요. 예: "기한이 빠른 순서로 정리해줘"',
     '앞서 다룬 문서에 대한 대화는 더 이상 참고하지 않습니다. 본문을 떼려면 본문 칩의 ×를 누르세요.'].filter(Boolean).join('\n');
 }
@@ -1002,8 +1010,9 @@ async function runDocumentBatch(set: Set, get: Get, options: {
   signal: AbortSignal | undefined;
   /** true면 캐시를 읽지 않고 반드시 모델을 부른다(`다시 분석`). 결과는 그대로 새로 저장한다. */
   bypassCache?: boolean;
+  includeAttachments?: boolean;
 }): Promise<void> {
-  const { command, settings, epochs, tabId, titles, instruction, detailPage, list, signal, bypassCache = false } = options;
+  const { command, settings, epochs, tabId, titles, instruction, detailPage, list, signal, bypassCache = false, includeAttachments = false } = options;
   const rowOf = (title: string) => list?.rows.find(row => row.title === title);
   const referenceOf = (title: string): Date | null => parseReferenceDate(rowOf(title)?.reportDate);
   /** 이 문서·이 명령·이 지시·이 모델의 결과가 저장되는 자리(B1). */
@@ -1012,7 +1021,7 @@ async function runDocumentBatch(set: Set, get: Get, options: {
     command,
     // 요약 지시문이 바뀌면 예전 결과(옮겨적기에 가까운 요약)를 재사용하지 않는다.
     ...(command === 'summary' ? { analysisVersion: SUMMARY_PROMPT_VERSION } : {}),
-    instruction,
+    instruction: includeAttachments ? `${instruction} [첨부문서분석포함]` : instruction,
     endpoint: settings.endpoint,
     model: settings.model,
   });
@@ -1047,8 +1056,8 @@ async function runDocumentBatch(set: Set, get: Get, options: {
     }
 
     const outcome = command === 'workplan'
-      ? await runWorkPlan(batchSet, get, settings, title, page, referenceOf(title), rowOf(title))
-      : await runGeneration(batchSet, instructionOnly(get, documentBatchInstruction(title, instruction)), { ...settings, thinkMode: 'off' });
+      ? await runWorkPlan(batchSet, get, settings, title, page, referenceOf(title), rowOf(title), includeAttachments)
+      : await runGeneration(batchSet, instructionOnly(get, documentBatchInstruction(title, instruction, false, includeAttachments)), { ...settings, thinkMode: 'off' });
     if (!outcome) return;
     await saveDocResult(lookup, {
       bodyRevision: revision,
@@ -1075,6 +1084,7 @@ async function runDocumentBatch(set: Set, get: Get, options: {
       const response = await workTabLock(() => sendToSW({
         type: 'READ_DOCUMENT', tabId, title, budgetTokens: settings.pageTokenBudget,
         ...(keepWorkTab ? { keepWorkTab } : {}),
+        ...(includeAttachments ? { includeAttachments: true } : {}),
         control: { id: '', deadline: 0, expectedUrl: get().currentUrl || undefined },
       }, signal, 120_000));
       if (epoch !== epochs.attachment || signal?.aborted) return;
@@ -1135,6 +1145,7 @@ async function readDocumentsTogether(
   epochs: SessionEpochs,
   tabId: number,
   signal: AbortSignal | undefined,
+  includeAttachments = false,
 ): Promise<boolean> {
   const epoch = ++epochs.attachment;
   const share = Math.max(400, Math.floor(settings.pageTokenBudget / titles.length));
@@ -1149,6 +1160,7 @@ async function readDocumentsTogether(
       const response = await workTabLock(() => sendToSW({
         type: 'READ_DOCUMENT', tabId, title, budgetTokens: share,
         ...(keepWorkTab ? { keepWorkTab } : {}),
+        ...(includeAttachments ? { includeAttachments: true } : {}),
         control: { id: '', deadline: 0, expectedUrl: get().currentUrl || undefined },
       }, signal, 120_000));
       if (signal?.aborted || epoch !== epochs.attachment) return false;
@@ -1205,7 +1217,7 @@ export const SUMMARY_PROMPT_VERSION = 4;
  *   - 871자 실태점검 공문: 판본 2 796자(91%) → 판본 4 296자(34%), 기한·제출 자료 유지
  * ★ 예시는 요약할 공문과 동떨어진 주제로 둔다. 비슷한 주제면 작은 모델이 예시 내용을 섞는다.
  */
-export function documentBatchInstruction(title: string, request: string, attachmentsHandled = false): string {
+export function documentBatchInstruction(title: string, request: string, attachmentsHandled = false, includeAttachments = false): string {
   return [
     `첨부된 페이지 내용은 문서 '${title}'의 상세 화면이다. 이 문서 한 건을 개조식으로 짧게 요약하라.`,
     '원문을 옮겨 적지 말고, 한눈에 핵심이 보이게 줄여라.',
@@ -1234,6 +1246,7 @@ export function documentBatchInstruction(title: string, request: string, attachm
     '화면에 메뉴·버튼·첨부 목록만 있고 본문을 찾을 수 없으면 그렇게 밝혀라.',
     // 다운로드 요청까지 모델에 그대로 넘기면 "다운로드 기능이 없다"고 답한다. 실제 다운로드는 앱이 따로 하고 결과를 아래에 붙인다.
     ...(attachmentsHandled ? ['첨부 파일 다운로드는 앱이 이미 처리해 결과를 따로 보여 준다. 다운로드에 대해서는 아무것도 쓰지 말고 문서 내용 요약만 하라.'] : []),
+    ...(includeAttachments ? ['첨부문서([첨부문서: …])의 본문도 함께 제공되었으므로 문서 본문과 첨부문서 내용을 함께 분석하여 요약에 반영하라.'] : []),
     `사용자 요청: ${request}`,
   ].join('\n');
 }
@@ -1332,12 +1345,13 @@ interface DocumentOutcome {
 async function runWorkPlan(
   set: Set, get: Get, settings: Settings, title: string, page: ExtractedPage, reference: Date | null,
   row?: Partial<Record<'sender' | 'reportDate', string>>,
+  includeAttachments = false,
 ): Promise<DocumentOutcome | null> {
   const conv = get().conversation;
   if (!conv) return null;
   const abort = get().abort ?? new AbortController();
   const startedAt = nextStamp(get());
-  const context = buildContext([{ role: 'user', content: workPlanInstruction(title) }], settings.numCtx, toAttachment(page, null));
+  const context = buildContext([{ role: 'user', content: workPlanInstruction(title, includeAttachments) }], settings.numCtx, toAttachment(page, null));
   const placeholder: UiMessage = { id: `streaming-${randomId()}`, conversationId: conv.id, role: 'assistant', content: '', createdAt: startedAt, streaming: true };
   set(s => ({ messages: [...s.messages, placeholder], streaming: true, startedAt, expectedPrefillSec: uncachedPrefillSeconds(null, context), abort, error: null }));
   let raw = '';

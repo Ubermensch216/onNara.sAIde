@@ -50,10 +50,10 @@ export function validPanelRequest(v: unknown): v is PanelToSW {
   if (v.type === 'MARK_DOCUMENTS_READ') return Array.isArray(v.titles) && v.titles.length >= 1 && v.titles.length <= 50 &&
     v.titles.every(title => text(title, 500));
   if (v.type === 'DOWNLOAD_ATTACHMENTS') return (v.title === undefined || text(v.title, 500)) && optionalFlag(v.keepWorkTab) && (v.mode === undefined || ['attachments', 'body', 'all'].includes(v.mode as string));
-  if (v.type === 'EXTRACT_PAGE') return Number.isInteger(v.budgetTokens) && (v.budgetTokens as number) >= 1 && (v.budgetTokens as number) <= 8000;
+  if (v.type === 'EXTRACT_PAGE') return Number.isInteger(v.budgetTokens) && (v.budgetTokens as number) >= 1 && (v.budgetTokens as number) <= 8000 && optionalFlag(v.includeAttachments);
   if (v.type === 'READ_DOCUMENT') return text(v.title, 500) && Number.isInteger(v.budgetTokens) &&
     (v.budgetTokens as number) >= 1 && (v.budgetTokens as number) <= 8000 &&
-    optionalFlag(v.withAttachments) && optionalFlag(v.keepWorkTab);
+    optionalFlag(v.withAttachments) && optionalFlag(v.includeAttachments) && optionalFlag(v.keepWorkTab);
   if (v.type === 'PREPARE_ACTION') return validAction(v.action) && requiresApproval(v.action);
   if (v.type === 'EXEC_ACTION') return validAction(v.action) && (!requiresApproval(v.action) || !!v.control.approvalToken);
   return false;

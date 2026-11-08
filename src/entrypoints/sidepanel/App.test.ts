@@ -326,6 +326,78 @@ it('다른 탭에서 일어난 화면 변화는 지금 보고 있는 본문을 �
   await act(async () => { await useChat.getState().attachPage(1, DEFAULT_SETTINGS); });
 
   await act(async () => { push({ type: 'SCREEN_CHANGED', tabId: 99, frameId: 5, url: 'https://other.test/' }); });
+});
+
+it('AI 탭에서 문서 분석 기능을 실행할 때 첨부문서분석포함 옵션을 제공하고 사용자 확인 후 진행한다', async () => {
+  const common = { url: LIST_URL, title: '받은문서', text: '목록', charCount: 100,
+    truncated: false, keptRatio: 1, estimatedTokens: 30, method: 'innerText' as const, extractedAt: Date.now() };
+  sendMessage.mockImplementation(async (message: { type: string; title?: string; includeAttachments?: boolean }) => {
+    if (message.type === 'GET_ACTIVE_TAB') return { type: 'ACTIVE_TAB', tab: listTab };
+    if (message.type === 'EXTRACT_PAGE') return { type: 'PAGE_EXTRACTED', payload: { ...common, structuredData: {
+      kind: 'onnara-document-list', listName: '받은문서', columns: [], rows: [{ title: '업무보고' }],
+      selectedTitles: ['업무보고'],
+    } } };
+    if (message.type === 'READ_DOCUMENT') {
+      return {
+        type: 'DOCUMENT_READ',
+        requestedTitle: message.title,
+        payload: {
+          ...common,
+          title: message.title,
+          text: message.includeAttachments ? '본문\n\n[첨부문서: 붙임.hwpx]\n첨부 내용' : '본문',
+        },
+      };
+    }
+    return { type: 'ACTIVE_TAB', tab: listTab };
+  });
+
+  await act(() => root.render(createElement(App)));
+  await settle();
+
+  const pageOptionCheckbox = document.querySelector<HTMLInputElement>('.pageactions-option input[type="checkbox"]');
+  expect(pageOptionCheckbox).not.toBeNull();
+  expect(document.querySelector('.pageactions-option')!.textContent).toContain('첨부문서분석포함');
+
+  await act(async () => { typeInComposer('/요약'); });
+  await act(async () => { pressEnter(); });
+  await settle();
+
+  const dialog = document.querySelector('[role="alertdialog"]');
+  expect(dialog).not.toBeNull();
+  expect(dialog!.textContent).toContain('문서 분석 확인');
+  expect(dialog!.textContent).toContain('첨부문서분석포함');
+  expect(sendMessage.mock.calls.some(([m]) => m.type === 'READ_DOCUMENT')).toBe(false);
+
+  const confirmCheckbox = dialog!.querySelector<HTMLInputElement>('.analysis-confirm-option input[type="checkbox"]')!;
+  expect(confirmCheckbox.checked).toBe(false);
+  await act(async () => {
+    confirmCheckbox.click();
+  });
+  expect(confirmCheckbox.checked).toBe(true);
+
+  const proceedBtn = [...dialog!.querySelectorAll<HTMLButtonElement>('button')]
+    .find(btn => btn.textContent?.includes('분석 진행'))!;
+  expect(proceedBtn).toBeDefined();
+  await act(async () => {
+    proceedBtn.click();
+  });
+  await settle();
+
+  expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+  const readDocMsg = sendMessage.mock.calls.find(([m]) => m.type === 'READ_DOCUMENT')?.[0];
+  expect(readDocMsg).toBeDefined();
+  expect(readDocMsg.includeAttachments).toBe(true);
+  expect(useChat.getState().page?.text).toContain('[첨부문서: 붙임.hwpx]');
+});
+
+it('다른 탭의 화면 변화가 본문을 유지하는지 다시 확인한다', async () => {
+  await panelWithConversation();
+  const page = { url: LIST_URL, title: '받은문서', text: '문서 A의 본문', charCount: 20, truncated: false,
+    keptRatio: 1, estimatedTokens: 10, method: 'innerText' as const, extractedAt: Date.now() - 1000, sourceFrameId: 5 };
+  sendMessage.mockImplementation(async (message: { type: string }) =>
+    message.type === 'EXTRACT_PAGE' ? { type: 'PAGE_EXTRACTED', payload: page } : { type: 'ACTIVE_TAB', tab: listTab });
+  await act(async () => { await useChat.getState().attachPage(1, DEFAULT_SETTINGS); });
+  await act(async () => { push({ type: 'SCREEN_CHANGED', tabId: 99, frameId: 5, url: 'https://other.test/' }); });
   await act(async () => { await useChat.getState().send('이 문서 요약해줘', DEFAULT_SETTINGS); });
   await settle();
 

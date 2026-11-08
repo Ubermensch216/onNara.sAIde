@@ -1051,4 +1051,43 @@ it('내 지식을 켜지 않으면 검색하지 않는다', async () => {
   await useChat.getState().openForTab(1, 'https://a.test');
   await useChat.getState().send('질문', DEFAULT_SETTINGS);
   expect(gather).not.toHaveBeenCalled();
+
+  // 첨부문서분석포함 옵션을 켜고 문서 분석 명령을 실행하면 READ_DOCUMENT에 includeAttachments가 전달되고 첨부문서와 함께 분석한다.
+  const common = { url: 'https://onnara.test/main', title: '받은문서', text: '목록', charCount: 100,
+    truncated: false, keptRatio: 1, estimatedTokens: 30, method: 'innerText' as const, extractedAt: Date.now() };
+  const sendMessage = vi.fn(async (message: { type: string; title?: string; includeAttachments?: boolean }) => {
+    if (message.type === 'EXTRACT_PAGE') return { type: 'PAGE_EXTRACTED', payload: { ...common, structuredData: {
+      kind: 'onnara-document-list', listName: '받은문서', columns: [], rows: [{ title: '추진계획 알림' }],
+      selectedTitles: ['추진계획 알림'],
+    } } };
+    if (message.type === 'READ_DOCUMENT') {
+      return {
+        type: 'DOCUMENT_READ',
+        requestedTitle: message.title,
+        payload: {
+          ...common,
+          title: message.title,
+          text: message.includeAttachments
+            ? '본문 내용\n\n[첨부문서: 붙임1_세부계획.hwpx]\n첨부 세부 내용'
+            : '본문 내용',
+        },
+      };
+    }
+    return { type: 'ACTIVE_TAB', tab: null };
+  });
+  vi.stubGlobal('chrome', { runtime: { sendMessage } });
+  let sentMessages: { role: string; content: string }[] = [];
+  vi.spyOn(stream, 'streamChat').mockImplementation(async (_endpoint, request, handlers) => {
+    sentMessages = request.messages;
+    handlers.onToken?.('본문과 첨부 요약 결과');
+    return null;
+  });
+
+  await useChat.getState().openForTab(2, common.url);
+  await useChat.getState().runCommand('/요약', 'summary', '', DEFAULT_SETTINGS, { includeAttachments: true });
+
+  const readCall = sendMessage.mock.calls.find(([m]) => m.type === 'READ_DOCUMENT')?.[0];
+  expect(readCall?.includeAttachments).toBe(true);
+  expect(sentMessages.some(m => m.content.includes('[첨부문서: 붙임1_세부계획.hwpx]'))).toBe(true);
+  expect(sentMessages.at(-1)!.content).toContain('첨부문서');
 });

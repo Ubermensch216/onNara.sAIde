@@ -1,4 +1,5 @@
 import type { RelatedDocumentRequest, RelatedDocumentSources } from '@/lib/onnara/related-document-fetch';
+import type { CapturedOpenRequest } from '@/lib/onnara/related-open-capture';
 import { abortable, deadlineSignal } from '@/lib/async';
 import type { StructuredDocumentList } from '@/lib/onnara/document-list';
 import type { AttachmentItem, AttachmentScan } from '@/lib/onnara/attachments';
@@ -179,12 +180,12 @@ export type PanelToSW = (
   /** naming: 저장할 파일 이름을 정규화한다(B5). 없으면 브라우저가 정한 이름을 그대로 쓴다. */
   /** mode: 'attachments'(첨부만) | 'body'(본문만 PDF) | 'all'(본문+첨부). 기본값은 'attachments'. */
   | { type: 'DOWNLOAD_ATTACHMENTS'; tabId: number; title?: string; keepWorkTab?: boolean; naming?: AttachmentNaming; mode?: DownloadTargetMode }
-  | { type: 'EXTRACT_PAGE'; tabId: number; budgetTokens: number }
+  | { type: 'EXTRACT_PAGE'; tabId: number; budgetTokens: number; includeAttachments?: boolean }
   /**
    * withAttachments: 본문을 읽은 같은 상세 화면에서 첨부도 받는다(문서를 두 번 열지 않는다).
    * keepWorkTab: 여러 문서를 이어서 처리할 때 복제한 목록 탭을 닫지 않고 다음 문서에 재사용한다.
    */
-  | { type: 'READ_DOCUMENT'; tabId: number; title: string; budgetTokens: number; withAttachments?: boolean; keepWorkTab?: boolean }
+  | { type: 'READ_DOCUMENT'; tabId: number; title: string; budgetTokens: number; withAttachments?: boolean; includeAttachments?: boolean; keepWorkTab?: boolean }
   /** keepWorkTab으로 남겨 둔 작업 탭을 닫는다. 여러 문서 처리가 끝나면 반드시 보낸다. */
   | { type: 'RELEASE_WORK_TAB'; tabId: number }
   | { type: 'CAPTURE_SCREENSHOT'; tabId: number }
@@ -310,6 +311,8 @@ export type SWToContent = (
   | { type: 'RESTORE_DOCUMENT_LIST'; location: DocumentListLocation }
   | { type: 'SCAN_ATTACHMENTS' }
   | { type: 'CLICK_ATTACHMENT'; index: number; name: string }
+  | { type: 'MARK_ATTACHMENT'; index: number; name: string }
+  | { type: 'READ_ATTACHMENT'; name: string; url?: string; request?: CapturedOpenRequest }
   | { type: 'CHECK_DIALOG' }
   | { type: 'GET_BODY_PDF' }
   | { type: 'ACT'; action: PageAction }
@@ -338,6 +341,8 @@ export type ContentToSW =
   | { type: 'DOCUMENT_LIST_RESTORED'; restored: boolean }
   | { type: 'ATTACHMENTS_FOUND'; items: AttachmentItem[] }
   | { type: 'ATTACHMENT_CLICKED'; clicked: boolean }
+  | { type: 'ATTACHMENT_MARKED'; marked: boolean }
+  | { type: 'ATTACHMENT_READ'; name: string; text: string; pdf?: PdfSource; warning?: string }
   | { type: 'DIALOG_CHECKED'; message?: string | null }
   | { type: 'MARK_READ_PREPARED'; checked: string[]; missing: string[]; buttonMarked: boolean }
   | { type: 'READ_BUTTON_MARKED'; marked: boolean }

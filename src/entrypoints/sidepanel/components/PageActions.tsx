@@ -15,13 +15,21 @@ import { DOCUMENT_COMMANDS, type DocumentCommandId } from '@/lib/onnara/commands
 interface Props {
   disabled: boolean;
   extracting: boolean;
+  includeAttachments?: boolean;
+  onToggleIncludeAttachments?: (checked: boolean) => void;
   onRun: (command: DocumentCommandId) => void;
 }
 
 const AI_COMMANDS = DOCUMENT_COMMANDS.filter(c => c.usesModel);
 const TOOL_COMMANDS = DOCUMENT_COMMANDS.filter(c => !c.usesModel);
 
-export function PageActions({ disabled, extracting, onRun }: Props) {
+export function PageActions({
+  disabled,
+  extracting,
+  includeAttachments = false,
+  onToggleIncludeAttachments,
+  onRun,
+}: Props) {
   const t = useT();
 
   return (
@@ -43,6 +51,17 @@ export function PageActions({ disabled, extracting, onRun }: Props) {
             </button>
           ))}
         </div>
+        {onToggleIncludeAttachments && (
+          <label className="pageactions-option" title={t('page.analysis.includeAttachmentsHint')}>
+            <input
+              type="checkbox"
+              checked={includeAttachments}
+              disabled={disabled || extracting}
+              onChange={(e) => onToggleIncludeAttachments(e.target.checked)}
+            />
+            <span>{t('page.analysis.includeAttachments')}</span>
+          </label>
+        )}
       </div>
 
       <div className="pageactions-group">

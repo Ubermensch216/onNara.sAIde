@@ -44,6 +44,7 @@ import {
 import { canRunAgent as agentAllowed } from '@/lib/agent/executor';
 import { SaideIcon, Wordmark } from './components/BrandMark';
 import { ApprovalCard } from './components/ApprovalCard';
+import { AnalysisConfirmCard, type PendingDocumentAnalysis } from './components/AnalysisConfirmCard';
 import { ErrorBanner } from './components/ErrorBanner';
 import { HealthBanner } from './components/HealthBanner';
 import { MessageList } from './components/MessageList';
@@ -114,6 +115,8 @@ export default function App() {
    * 기본 꺼짐인 이유는 비용이다 — 툴 8종 설명이 매 턴 프리필에 들어간다.
    */
   const [agentMode, setAgentMode] = useState(false);
+  const [includeAttachments, setIncludeAttachments] = useState(false);
+  const [pendingAnalysis, setPendingAnalysis] = useState<PendingDocumentAnalysis | null>(null);
   /**
    * "내 지식 포함"(TONGDAL.ai 연동). 켜면 질문마다 TONGDAL을 검색해 근거를 붙인다.
    * ★ TONGDAL과 연결되지 않았으면 단추 자체가 보이지 않는다. 켜 둔 채 연결이 끊기면 답변 위에 그 사실이 남는다.
@@ -256,6 +259,7 @@ export default function App() {
       return;
     }
     void chat.openForTab(t.tabId, t.url);
+    setPendingAnalysis(null);
     // chat은 zustand 스토어라 참조가 안정적이다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -448,11 +452,32 @@ export default function App() {
   const runDocumentCommand = async (command: DocumentCommandId, args = '') => {
     if (!tab || chat.streaming) return;
     if (!(await ensureAccess(tab.url))) return;
-    const slash = findDocumentCommand(command)?.slash ?? '';
+    const meta = findDocumentCommand(command);
+    const slash = meta?.slash ?? '';
     const typed = args.trim() ? `${slash} ${args.trim()}` : slash;
+    // 문서 분석·읽기 명령(/요약, /업무계획, /비교, /읽기)은 '첨부문서분석포함' 옵션과 함께 사용자 확인을 받은 뒤 진행한다.
+    if (meta?.usesModel || command === 'read') {
+      setPendingAnalysis({
+        typed,
+        command,
+        args,
+        includeAttachments,
+      });
+      return;
+    }
     // ★ `@` 명령이라고 화면을 옮기지 않는다. 결과는 AI 창에 남고, 그 탭으로 가는 길은
     //   답변 안의 링크다(lib/panel/links.ts). 갈지 말지는 누르는 사람이 정한다.
     await chat.runCommand(typed, command, args, settings);
+  };
+
+  const confirmDocumentAnalysis = async () => {
+    if (!pendingAnalysis || chat.streaming) return;
+    const current = pendingAnalysis;
+    setPendingAnalysis(null);
+    setIncludeAttachments(current.includeAttachments);
+    await chat.runCommand(current.typed, current.command, current.args, settings, {
+      includeAttachments: current.includeAttachments,
+    });
   };
 
   /**
@@ -704,7 +729,7 @@ export default function App() {
           <span className="conv-chip">{chat.conversation.title}</span>
         )}
         <div className="spacer" />
-        <button className="icon-btn" onClick={() => { setDraft(''); void chat.resetConversation(); }}
+        <button className="icon-btn" onClick={() => { setDraft(''); setPendingAnalysis(null); void chat.resetConversation(); }}
           disabled={chat.loading || (!chat.messages.length && !chat.streaming && !chat.page && !chat.screenshot)}
           title={t('panel.resetConversation')} aria-label={t('panel.resetConversation')}>
           <ResetIcon />
@@ -803,6 +828,11 @@ export default function App() {
             tab={tab}
             extracting={chat.extracting}
             blocked={blocked}
+            includeAttachments={includeAttachments}
+            onToggleIncludeAttachments={(checked) => {
+              setIncludeAttachments(checked);
+              setPendingAnalysis(prev => prev ? { ...prev, includeAttachments: checked } : null);
+            }}
             onRun={runDocumentCommand}
           />
         ) : (
@@ -932,6 +962,18 @@ export default function App() {
           <ApprovalCard
             request={chat.pendingApproval.request}
             onDecide={chat.resolveApproval}
+          />
+        )}
+
+        {pendingAnalysis && !chat.streaming && (
+          <AnalysisConfirmCard
+            pending={pendingAnalysis}
+            onToggleIncludeAttachments={(checked) => {
+              setIncludeAttachments(checked);
+              setPendingAnalysis(prev => prev ? { ...prev, includeAttachments: checked } : null);
+            }}
+            onConfirm={() => void confirmDocumentAnalysis()}
+            onCancel={() => setPendingAnalysis(null)}
           />
         )}
 
@@ -1092,6 +1134,8 @@ function EmptyState({
   tab,
   extracting,
   blocked,
+  includeAttachments,
+  onToggleIncludeAttachments,
   onRun,
 }: {
   health: HealthReport;
@@ -1099,6 +1143,8 @@ function EmptyState({
   tab: TabSummary | null;
   extracting: boolean;
   blocked: boolean;
+  includeAttachments: boolean;
+  onToggleIncludeAttachments: (checked: boolean) => void;
   onRun: (command: DocumentCommandId) => void;
 }) {
   const t = useT();
@@ -1124,7 +1170,13 @@ function EmptyState({
       </div>
 
       {canReadPage ? (
-        <PageActions disabled={blocked} extracting={extracting} onRun={onRun} />
+        <PageActions
+          disabled={blocked}
+          extracting={extracting}
+          includeAttachments={includeAttachments}
+          onToggleIncludeAttachments={onToggleIncludeAttachments}
+          onRun={onRun}
+        />
       ) : (
         tab && (
           <div className="pageactions-hint restricted">{t('panel.restrictedHint')}</div>

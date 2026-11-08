@@ -17,7 +17,7 @@ import { requiresApproval, type RequestControl } from '@/lib/messaging/protocol'
  */
 
 import { Readability } from '@mozilla/readability';
-import { clickAttachment, listAttachments, scanAttachments } from '@/lib/onnara/attachments';
+import { clickAttachment, listAttachments, markAttachment, readAttachmentContent, scanAttachments } from '@/lib/onnara/attachments';
 import { captureDocumentListLocation, captureListLocation, restoreDocumentListLocation } from '@/lib/onnara/document-navigation';
 import { findBodyViewButton } from '@/lib/onnara/body-view';
 import { fetchInboxPage } from '@/lib/onnara/inbox-pages';
@@ -140,6 +140,21 @@ export default defineUnlistedScript(() => {
           sendResponse({ type: 'READ_BUTTON_MARKED', marked: markReadButton() } satisfies ContentToSW);
         } else if (msg.type === 'SCAN_ATTACHMENTS') {
           sendResponse({ type: 'ATTACHMENTS_FOUND', items: listAttachments() } satisfies ContentToSW);
+        } else if (msg.type === 'MARK_ATTACHMENT') {
+          sendResponse({ type: 'ATTACHMENT_MARKED', marked: markAttachment(msg.index, msg.name) } satisfies ContentToSW);
+        } else if (msg.type === 'READ_ATTACHMENT') {
+          const result = await readAttachmentContent(
+            { name: msg.name, ...(msg.url ? { url: msg.url } : {}), ...(msg.request ? { request: msg.request } : {}) },
+            AbortSignal.timeout(Math.max(1, msg.control.deadline - Date.now())),
+          );
+          assertCurrent(msg.control, location.href, cancelled.has(msg.control.id));
+          sendResponse({
+            type: 'ATTACHMENT_READ',
+            name: result.name,
+            text: result.text,
+            ...(result.pdf ? { pdf: result.pdf } : {}),
+            ...(result.warning ? { warning: result.warning } : {}),
+          } satisfies ContentToSW);
         } else if (msg.type === 'GET_BODY_PDF') {
           const pdfUrls = findPdfUrls();
           const pdf = pdfUrls.length ? await readPdfSources(pdfUrls) : [];
