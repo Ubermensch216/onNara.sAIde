@@ -79,6 +79,8 @@ const ko = {
   'panel.conversations': '대화 목록',
   'panel.resetConversation': '현재 대화 초기화',
   'panel.empty.ready': '무엇을 도와드릴까요?',
+  'panel.empty.desc':
+    '온나라 공문서 분석부터 업무계획 수립까지,\n외부 유출 없는 안전한 로컬 AI가 스마트하게 도와드립니다.',
   'panel.empty.readyBody':
     '설정한 Ollama 모델로 돕는 AI 조력자입니다. 기본값은 이 컴퓨터의 로컬 서버입니다.',
   'panel.empty.body': '내 컴퓨터에서만 도는 AI 브라우저 조력자. 인터넷 없이 작동합니다.',
@@ -126,6 +128,8 @@ const ko = {
   'msg.deleteAfterGeneration': '작업이 끝나거나 중단한 뒤 삭제할 수 있습니다.',
 
   /* ── 페이지 첨부 ── */
+  'page.group.ai': 'AI 문서 분석',
+  'page.group.tools': '문서 및 도구',
   'page.method.readability': '본문',
   'page.method.innerText': '화면 텍스트',
   'page.method.youtube': '자막',
@@ -937,6 +941,8 @@ const en = {
   'panel.conversations': 'Conversations',
   'panel.resetConversation': 'Reset current conversation',
   'panel.empty.ready': 'How can I help?',
+  'panel.empty.desc':
+    'From official document analysis to drafting work plans,\nsafe local AI assists your daily workflow securely.',
   'panel.empty.readyBody':
     'An AI aide using your configured Ollama model. The default is a local server on this computer.',
   'panel.empty.body': 'An AI browser aide that runs on your machine. Works without internet.',
@@ -986,6 +992,8 @@ const en = {
   'page.method.innerText': 'Screen text',
   'page.method.youtube': 'Captions',
   'page.method.onnaraList': 'OnNara document list',
+  'page.group.ai': 'AI Document Analysis',
+  'page.group.tools': 'Document & Tools',
   'page.method.pdf': 'PDF body',
   'page.detach': 'Detach page',
   'page.truncated': 'first {pct}% only',

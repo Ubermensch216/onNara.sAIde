@@ -5,10 +5,41 @@
 .pageactions {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 16px;
   align-items: center;
   width: 100%;
-  max-width: 320px;
+  max-width: 340px;
+}
+
+.pageactions-group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.pageactions-divider {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  color: var(--fg-muted);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.pageactions-divider::before,
+.pageactions-divider::after {
+  content: '';
+  flex: 1;
+  border-bottom: 1px solid var(--border);
+}
+
+.pageactions-divider span {
+  padding: 0 10px;
+  white-space: nowrap;
+  opacity: 0.85;
 }
 
 .pageactions-row {

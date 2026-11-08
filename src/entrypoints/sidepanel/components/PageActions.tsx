@@ -18,27 +18,50 @@ interface Props {
   onRun: (command: DocumentCommandId) => void;
 }
 
+const AI_COMMANDS = DOCUMENT_COMMANDS.filter(c => c.usesModel);
+const TOOL_COMMANDS = DOCUMENT_COMMANDS.filter(c => !c.usesModel);
+
 export function PageActions({ disabled, extracting, onRun }: Props) {
   const t = useT();
 
   return (
     <div className="pageactions">
-      <div className="pageactions-row">
-        {DOCUMENT_COMMANDS.map(command => (
-          <button
-            key={command.id}
-            className="chipbtn"
-            disabled={disabled || extracting}
-            onClick={() => onRun(command.id)}
-            title={`${command.slash} · ${command.hint}`}
-          >
-            {command.label}
-          </button>
-        ))}
+      <div className="pageactions-group">
+        <div className="pageactions-divider">
+          <span>{t('page.group.ai')}</span>
+        </div>
+        <div className="pageactions-row">
+          {AI_COMMANDS.map(command => (
+            <button
+              key={command.id}
+              className="chipbtn"
+              disabled={disabled || extracting}
+              onClick={() => onRun(command.id)}
+              title={`${command.slash} · ${command.hint}`}
+            >
+              {command.label}
+            </button>
+          ))}
+        </div>
       </div>
 
-      <div className="pageactions-hint">
-        {extracting ? t('page.reading') : t('page.commandHint')}
+      <div className="pageactions-group">
+        <div className="pageactions-divider">
+          <span>{t('page.group.tools')}</span>
+        </div>
+        <div className="pageactions-row">
+          {TOOL_COMMANDS.map(command => (
+            <button
+              key={command.id}
+              className="chipbtn"
+              disabled={disabled || extracting}
+              onClick={() => onRun(command.id)}
+              title={`${command.slash} · ${command.hint}`}
+            >
+              {command.label}
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );

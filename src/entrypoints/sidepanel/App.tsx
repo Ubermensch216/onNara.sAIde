@@ -799,7 +799,6 @@ export default function App() {
         {chat.messages.length === 0 ? (
           <EmptyState
             health={health}
-            settings={settings}
             canReadPage={canReadPage}
             tab={tab}
             extracting={chat.extracting}
@@ -1089,7 +1088,6 @@ function WarmupProgress({ seconds }: { seconds: number }) {
 
 function EmptyState({
   health,
-  settings,
   canReadPage,
   tab,
   extracting,
@@ -1097,7 +1095,6 @@ function EmptyState({
   onRun,
 }: {
   health: HealthReport;
-  settings: Settings;
   canReadPage: boolean;
   tab: TabSummary | null;
   extracting: boolean;
@@ -1107,13 +1104,15 @@ function EmptyState({
   const t = useT();
   return (
     <div className="empty">
-      <SaideIcon size={48} />
-      <h2>{health.state === 'ok' ? t('panel.empty.ready') : '온나라 sAIde'}</h2>
-      <p>
-        {health.state === 'ok'
-          ? t('panel.empty.readyBody')
-          : t('panel.empty.body')}
-      </p>
+      <div className="empty-header">
+        <SaideIcon size={52} />
+        <h2>{health.state === 'ok' ? t('panel.empty.ready') : '온나라 sAIde'}</h2>
+        <p className="empty-desc">
+          {health.state === 'ok'
+            ? t('panel.empty.desc')
+            : t('panel.empty.body')}
+        </p>
+      </div>
 
       {canReadPage ? (
         <PageActions disabled={blocked} extracting={extracting} onRun={onRun} />
@@ -1122,11 +1121,6 @@ function EmptyState({
           <div className="pageactions-hint restricted">{t('panel.restrictedHint')}</div>
         )
       )}
-
-      <div className="meta">
-        {settings.model} · num_ctx {settings.numCtx.toLocaleString()}
-        {health.resident && ` · ${health.onGpu ? 'GPU' : 'CPU'}`}
-      </div>
     </div>
   );
 }
