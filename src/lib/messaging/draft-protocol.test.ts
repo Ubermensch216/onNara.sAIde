@@ -16,7 +16,7 @@ describe('draft-protocol', () => {
         isValidTargetRef({
           tabId: 101,
           frameId: 0,
-          origin: 'http://99.1.2.134',
+          origin: 'http://onnara.example.go.kr',
           documentKey: 'DOC-12345',
           sessionEpoch: Date.now(),
         })
@@ -32,13 +32,13 @@ describe('draft-protocol', () => {
 
   describe('isAllowedOriginMatch', () => {
     it('포트와 프로토콜이 일치하는 origin을 통과시킨다', () => {
-      expect(isAllowedOriginMatch('http://99.1.2.134', 'http://99.1.2.134/some/path')).toBe(true);
+      expect(isAllowedOriginMatch('http://onnara.example.go.kr', 'http://onnara.example.go.kr/some/path')).toBe(true);
       expect(isAllowedOriginMatch('https://onnara.go.kr', 'https://onnara.go.kr')).toBe(true);
     });
 
     it('프로토콜이나 호스트가 다르면 거부한다', () => {
-      expect(isAllowedOriginMatch('http://99.1.2.134', 'https://99.1.2.134')).toBe(false);
-      expect(isAllowedOriginMatch('http://99.1.2.134', 'http://attacker.com')).toBe(false);
+      expect(isAllowedOriginMatch('http://onnara.example.go.kr', 'https://onnara.example.go.kr')).toBe(false);
+      expect(isAllowedOriginMatch('http://onnara.example.go.kr', 'http://attacker.com')).toBe(false);
     });
   });
 
@@ -46,12 +46,12 @@ describe('draft-protocol', () => {
     it('origin과 source가 일치할 때 통과시킨다', () => {
       const mockWindow = {} as Window;
       const event = {
-        origin: 'http://99.1.2.134',
+        origin: 'http://onnara.example.go.kr',
         source: mockWindow,
         data: { type: 'TEST' },
       } as unknown as MessageEvent;
 
-      expect(validatePostMessageEvent(event, 'http://99.1.2.134', mockWindow)).toBe(true);
+      expect(validatePostMessageEvent(event, 'http://onnara.example.go.kr', mockWindow)).toBe(true);
     });
 
     it('origin이 다르면 거부한다', () => {
@@ -62,19 +62,19 @@ describe('draft-protocol', () => {
         data: { type: 'TEST' },
       } as unknown as MessageEvent;
 
-      expect(validatePostMessageEvent(event, 'http://99.1.2.134', mockWindow)).toBe(false);
+      expect(validatePostMessageEvent(event, 'http://onnara.example.go.kr', mockWindow)).toBe(false);
     });
 
     it('source 윈도우가 다르면 거부한다', () => {
       const mockWindow1 = {} as Window;
       const mockWindow2 = {} as Window;
       const event = {
-        origin: 'http://99.1.2.134',
+        origin: 'http://onnara.example.go.kr',
         source: mockWindow1,
         data: { type: 'TEST' },
       } as unknown as MessageEvent;
 
-      expect(validatePostMessageEvent(event, 'http://99.1.2.134', mockWindow2)).toBe(false);
+      expect(validatePostMessageEvent(event, 'http://onnara.example.go.kr', mockWindow2)).toBe(false);
     });
   });
 });

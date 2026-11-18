@@ -392,7 +392,7 @@ if (mode.startsWith('options') || OPTION_VIEWS.includes(mode)) {
     createRoot(document.getElementById('root')!).render(<OptionsApp />);
   }
 
-} else if (['drafter', 'drawer', 'templates', 'drafter-refs', 'onnara-drafter-sidecar', 'knowledge-drafter', 'drafter-workplan'].includes(mode)) {
+} else if (['drafter', 'drawer', 'templates', 'drafter-refs', 'drafter-review', 'onnara-drafter-sidecar', 'knowledge-drafter', 'drafter-workplan'].includes(mode)) {
   await import('@/entrypoints/drawer-page/style.css');
   const { DrawerApp } = await import('@/entrypoints/drawer-page/DrawerApp');
   const { db } = await import('@/lib/storage/db');

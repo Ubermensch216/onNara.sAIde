@@ -33,6 +33,7 @@
 - [ ] 기관 및 서비스에 맞는 개인정보 처리방침(Privacy Policy) URL 및 지원 연락처 준비
 - [ ] [`docs/IMPLEMENTATION_STATUS.md`](../../docs/IMPLEMENTATION_STATUS.md)의 검증 완료 상태 확인
 - [ ] `npm run zip` 산출물(`onnara-saide-*.zip`) 및 manifest 권한 무결성 최종 확인 후 제출
+- [ ] 스토어 제출용 빌드는 `manifest.key`(확장 ID 고정 공개키)를 빼고 만든다: PowerShell에서 `$env:SAIDE_OMIT_EXTENSION_KEY='1'; npm run build; npm run verify; npm run zip` (스토어가 자체 키로 ID를 발급한다)
 
 ---
 

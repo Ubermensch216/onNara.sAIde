@@ -304,7 +304,7 @@ export function isMetadataField(el: HTMLElement | null): boolean {
     return true;
   }
 
-  // 3. 보고경로 테이블이나 문서정보 테이블 내부 텍스트 선택인지 검사 (기안 주무관 김명진 등)
+  // 3. 보고경로 테이블이나 문서정보 테이블 내부 텍스트 선택인지 검사 (기안 주무관 홍길동 등)
   const tr = el.closest('tr');
   if (tr) {
     const tableText = (tr.closest('table')?.textContent || '').replace(/\s+/g, '');

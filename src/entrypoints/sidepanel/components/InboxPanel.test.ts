@@ -17,7 +17,7 @@ import type { InboxDoc } from '@/lib/inbox/types';
 let root: Root;
 const tab = { tabId: 3, url: 'http://onnara.test/main', title: '온나라', active: true };
 /** 본문 목록이 실려 오는 다른 주소. 탭 주소만 허용해서는 읽히지 않는다. */
-const FRAME_ORIGIN = 'http://99.1.2.134';
+const FRAME_ORIGIN = 'http://onnara.example.go.kr';
 
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);

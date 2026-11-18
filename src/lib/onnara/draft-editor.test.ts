@@ -12,7 +12,7 @@ describe('draft-editor adapter system', () => {
   const dummyTab = {
     tabId: 1,
     frameId: 0,
-    origin: 'http://99.1.2.134',
+    origin: 'http://onnara.example.go.kr',
   };
 
   it('textarea가 있는 경우 TextareaEditorAdapter를 선택하고 삽입한다', async () => {

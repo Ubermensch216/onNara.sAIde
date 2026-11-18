@@ -6,3 +6,6 @@ stats.html
 .env
 .env.*
 !.env.example
+
+# 제출·배포 산출물 (npm run package:source)
+release/

@@ -100,7 +100,7 @@ describe('selection-manager', () => {
       titleInput.remove();
     });
 
-    it('문서관리카드 화면에서 보고경로 테이블(기안 주무관 김명진)의 이름을 선택해도 블럭 메뉴가 노출되지 않는다', () => {
+    it('문서관리카드 화면에서 보고경로 테이블(기안 주무관 홍길동)의 이름을 선택해도 블럭 메뉴가 노출되지 않는다', () => {
       const headerDiv = document.createElement('div');
       headerDiv.textContent = '문서관리카드';
       document.body.appendChild(headerDiv);
@@ -112,7 +112,7 @@ describe('selection-manager', () => {
       const table = document.createElement('table');
       table.innerHTML = `
         <tr><th>구분</th><th>직위</th><th>이름</th><th>본문</th></tr>
-        <tr><td>기안</td><td>주무관</td><td id="drafterName">김명진</td><td></td></tr>
+        <tr><td>기안</td><td>주무관</td><td id="drafterName">홍길동</td><td></td></tr>
       `;
       document.body.appendChild(table);
 
@@ -120,7 +120,7 @@ describe('selection-manager', () => {
       const textNode = drafterTd.firstChild!;
       const range = document.createRange();
       range.setStart(textNode, 0);
-      range.setEnd(textNode, 3); // '김명진'
+      range.setEnd(textNode, 3); // '홍길동'
       const selObj = window.getSelection();
       selObj?.removeAllRanges();
       selObj?.addRange(range);

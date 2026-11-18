@@ -42,7 +42,7 @@ describe('matchSlash', () => {
   it('/ 또는 @로 시작하지 않으면 뜨지 않는다', () => {
     expect(matchSlash('요약해줘', CMDS)).toEqual([]);
     expect(matchSlash('참고: /summary', CMDS)).toEqual([]);
-    expect(matchSlash('accdong@naver.com', CMDS)).toEqual([]);
+    expect(matchSlash('user@example.go.kr', CMDS)).toEqual([]);
   });
 
   it('★ 공백이 들어가면 더 이상 뜨지 않는다', () => {

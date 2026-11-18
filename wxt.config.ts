@@ -7,6 +7,13 @@ import tailwindcss from '@tailwindcss/vite';
 const CMAP_DIR = resolve('node_modules/pdfjs-dist/cmaps');
 const KOREAN_CMAP = /^(Adobe-Korea1-|KSC|UniKS-)/;
 
+// 확장 ID 고정용 공개키(manifest.key). 언팩 확장의 ID는 폴더 경로에서 정해져, 폴더를 옮기거나 다른 PC·폴더에 풀면
+// 저장소(IndexedDB·chrome.storage)가 통째로 분리된다. 공개키를 넣으면 ID가 이 키에서만 정해져 경로와 무관해진다.
+// 이 값은 공개키라 저장소에 둬도 안전하다(개인키는 보관하지 않았다). 결과 ID: popnobbmpmholgejlcflnkmicegjmjah
+// 웹 스토어에 올릴 빌드는 스토어가 키를 발급하므로 SAIDE_OMIT_EXTENSION_KEY=1 로 빌드해 이 필드를 뺀다.
+const EXTENSION_PUBLIC_KEY =
+  'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtTnqjJWvcK4g08Y9r2u7vXKvDDn03w6By5NwbXxNpiWkmmC4On8M0FlJpPjuzrVXD3IGFNTFgzPsVTBFA34acEhBbWUFsJifCZpuuaVRPTXy/j7vwYoo/KsS94C7V7gOl7fSy+ginvjeSD5b5nUz5ZUgvaifxa1kS/yvWoWP0Do4XxV+pbN3D3Wz9f5cGWHOiWgFSGku5MG9lMHLzUqLdcnCCTCMkEWj5ESWPoMYVgurbXudAdquVmgG7mZHDpLOPzBKsb1TBUt7/0oQZZ4XqkmomAwCTscAC5+U/vekeQTQMz+/SbS4zwev8tLr+x7SZtpG3tRcuSYY2rjcqkFDTQIDAQAB';
+
 // manifest 전체는 이 파일에서 단일 관리한다.
 export default defineConfig({
   srcDir: 'src',
@@ -69,6 +76,7 @@ export default defineConfig({
   },
 
   manifest: {
+    ...(process.env.SAIDE_OMIT_EXTENSION_KEY ? {} : { key: EXTENSION_PUBLIC_KEY }),
     storage: { managed_schema: 'managed-policy.json' },
     content_security_policy: {
       extension_pages: "script-src 'self'; object-src 'none'; img-src 'self' data: blob:; font-src 'self'; style-src 'self' 'unsafe-inline'; frame-src 'self';",
@@ -130,20 +138,21 @@ export default defineConfig({
       'unlimitedStorage',
     ],
 
-    // 기안기 사이드카 자동 주입 및 온나라 업무망 지원을 위해 설치 시 모든 사이트 권한을 요청한다.
-    // 선택 호스트 권한에도 <all_urls>를 중복 선언하면 Chrome이 redundant permission 경고를 낸다.
+    // 온나라 서버 주소는 기관마다 다르므로(도메인·내부 IP) 특정 주소를 적지 않는다.
+    // 온나라 화면은 주소가 아니라 경로(/bms/…do)와 화면 구조(표 머리글·버튼)로 알아보고, 요청은 그 화면의
+    // location.origin으로 보낸다(lib/onnara/draft-route.ts). 그래서 모든 사이트 권한 하나로 어느 기관에서도 동작한다.
+    // 특정 IP를 다시 적지 않도록 scripts/verify-build.mjs가 매니페스트의 IP 주소 리터럴을 검사한다.
     host_permissions: [
       '<all_urls>',
       'http://localhost:11434/*',
       'http://127.0.0.1:11434/*',
-      'http://99.1.2.134/*',
       'http://*/*',
       'https://*/*',
     ],
 
     content_scripts: [
       {
-        matches: ['<all_urls>', 'http://99.1.2.134/*', 'http://*/*', 'https://*/*'],
+        matches: ['<all_urls>', 'http://*/*', 'https://*/*'],
         js: ['drawer.js'],
         run_at: 'document_start',
         all_frames: true,

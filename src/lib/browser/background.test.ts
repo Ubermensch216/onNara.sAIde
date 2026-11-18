@@ -1152,7 +1152,7 @@ it('눈치코치 꾸러미로 공문 본문 PDF를 내려받을 때 다운로드
           return {
             type: 'BODY_PDF',
             pdf: {
-              url: `http://99.1.2.134/bms/dctenf/Document.pdf?sFileName=5EC27A4B_docconv.pdf&docTitle=${encodeURIComponent(`${docTitle}.pdf`)}&transFlag=N`,
+              url: `http://onnara.example.go.kr/bms/dctenf/Document.pdf?sFileName=5EC27A4B_docconv.pdf&docTitle=${encodeURIComponent(`${docTitle}.pdf`)}&transFlag=N`,
               base64: btoa('%PDF-1.7 body'),
             },
           };
@@ -1195,7 +1195,7 @@ it('눈치코치 꾸러미로 공문 본문 PDF를 내려받을 때 다운로드
     }],
   });
   expect(resolveBodyDocTitle('문서관리카드온나라 시스템', undefined, {
-    url: 'http://99.1.2.134/bms/dctenf/BmsDctEnfReceiptCardDetail.do',
+    url: 'http://onnara.example.go.kr/bms/dctenf/BmsDctEnfReceiptCardDetail.do',
     title: '문서관리카드[보기]',
     text: `수신 수신자 참조\n(경유)\n제목 ${docTitle}\n1. 공정한 채용문화 정착을 위하여`,
     charCount: 100,

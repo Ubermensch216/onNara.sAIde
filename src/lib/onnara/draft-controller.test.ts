@@ -7,7 +7,7 @@ describe('DraftTransactionController', () => {
   const dummyTab = {
     tabId: 1,
     frameId: 0,
-    origin: 'http://99.1.2.134',
+    origin: 'http://onnara.example.go.kr',
   };
 
   it('PREPARE 단계에서 일회용 승인 토큰을 발급한다', async () => {

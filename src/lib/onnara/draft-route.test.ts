@@ -13,11 +13,11 @@ import {
 } from './draft-route';
 
 describe('draft-route', () => {
-  const allowed = ['http://99.1.2.134', 'https://onnara.go.kr'];
+  const allowed = ['http://onnara.example.go.kr', 'https://onnara.go.kr'];
 
   describe('isAllowedOrigin', () => {
     it('허용된 origin에 대해 true를 반환한다', () => {
-      expect(isAllowedOrigin('http://99.1.2.134/bms/dct/addoreportbodyview.do', allowed)).toBe(true);
+      expect(isAllowedOrigin('http://onnara.example.go.kr/bms/dct/addoreportbodyview.do', allowed)).toBe(true);
       expect(isAllowedOrigin('https://onnara.go.kr/bms/dct/addoreportbodyview.do', allowed)).toBe(true);
     });
 
@@ -27,22 +27,44 @@ describe('draft-route', () => {
     });
   });
 
+  describe('기관별 서버 주소 독립성', () => {
+    // 온나라 서버 주소(도메인·내부 IP·포트)는 기관마다 다르다. 판정은 주소가 아니라 경로로 한다.
+    const hosts = [
+      'http://onnara.example.go.kr',
+      'https://onnara.saas.gcloud.go.kr',
+      'http://10.20.30.40:8080',
+      'http://192.168.0.5',
+      'https://eapproval.other-agency.go.kr:8443',
+    ];
+
+    it.each(hosts)('%s: 허용 목록이 없으면 http/https 주소를 모두 통과시킨다', (host) => {
+      expect(isAllowedOrigin(`${host}/bms/dct/addoreportbodyview.do`)).toBe(true);
+    });
+
+    it.each(hosts)('%s: 기안기·열람 경로를 주소와 무관하게 알아본다', (host) => {
+      expect(isExactDraftPath(`${host}/bms/dct/addoreportbodyview.do?popupflag=Y`)).toBe(true);
+      expect(isExactDraftPath(`${host}/bms/dct/addhwpbody.do`)).toBe(true);
+      expect(isEditableViewPath(`${host}/bms/dct/viewreport.do`)).toBe(true);
+      expect(isExactDraftPath(`${host}/bms/dct/rdoclist.do`)).toBe(false);
+    });
+  });
+
   describe('isExactDraftPath', () => {
     it('공식 기안기 및 본문작성 경로를 일치 판정한다', () => {
-      expect(isExactDraftPath('http://99.1.2.134/bms/dct/addoreportbodyview.do?popupflag=Y')).toBe(true);
+      expect(isExactDraftPath('http://onnara.example.go.kr/bms/dct/addoreportbodyview.do?popupflag=Y')).toBe(true);
       expect(isExactDraftPath('https://onnara.go.kr/bms/dct/modifyoreportbodyview.do')).toBe(true);
-      expect(isExactDraftPath('http://99.1.2.134/bms/dct/addhwpbody.do')).toBe(true);
-      expect(isExactDraftPath('http://99.1.2.134/bms/dct/hwpctrl.do')).toBe(true);
+      expect(isExactDraftPath('http://onnara.example.go.kr/bms/dct/addhwpbody.do')).toBe(true);
+      expect(isExactDraftPath('http://onnara.example.go.kr/bms/dct/hwpctrl.do')).toBe(true);
       // 기존 문서를 다시 연 문서관리카드(본문 편집 신호는 드로어가 따로 확인)
-      expect(isExactDraftPath('http://99.1.2.134/bms/dct/viewreport.do')).toBe(true);
-      expect(isEditableViewPath('http://99.1.2.134/bms/dct/viewreport.do')).toBe(true);
-      expect(isEditableViewPath('http://99.1.2.134/bms/dct/addoreportbodyview.do')).toBe(false);
+      expect(isExactDraftPath('http://onnara.example.go.kr/bms/dct/viewreport.do')).toBe(true);
+      expect(isEditableViewPath('http://onnara.example.go.kr/bms/dct/viewreport.do')).toBe(true);
+      expect(isEditableViewPath('http://onnara.example.go.kr/bms/dct/addoreportbodyview.do')).toBe(false);
     });
 
     it('유사한 가짜 경로 또는 목록 경로는 false를 반환한다', () => {
-      expect(isExactDraftPath('http://99.1.2.134/bms/dct/rdoclist.do')).toBe(false);
-      expect(isExactDraftPath('http://99.1.2.134/bms/dct/addoreportbodyview.do.fake')).toBe(false);
-      expect(isExactDraftPath('http://99.1.2.134/other/view.do')).toBe(false);
+      expect(isExactDraftPath('http://onnara.example.go.kr/bms/dct/rdoclist.do')).toBe(false);
+      expect(isExactDraftPath('http://onnara.example.go.kr/bms/dct/addoreportbodyview.do.fake')).toBe(false);
+      expect(isExactDraftPath('http://onnara.example.go.kr/other/view.do')).toBe(false);
     });
   });
 
@@ -92,7 +114,7 @@ describe('draft-route', () => {
       doc.body.innerHTML = '<input name="docTitle" value="2026 기안" />';
 
       const result = classifyDraftRoute(
-        'http://99.1.2.134/bms/dct/addoreportbodyview.do?popupflag=Y',
+        'http://onnara.example.go.kr/bms/dct/addoreportbodyview.do?popupflag=Y',
         doc,
         allowed
       );

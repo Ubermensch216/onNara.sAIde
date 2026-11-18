@@ -20,7 +20,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "postinstall": "wxt prepare",
-    "test:live": "vitest run --config vitest.live.config.ts"
+    "test:live": "vitest run --config vitest.live.config.ts",
+    "package:source": "node scripts/package-submission.mjs",
+    "release": "npm run build && npm run verify && npm run zip && npm run package:source"
   },
   "dependencies": {
     "@mozilla/readability": "^0.6.0",
