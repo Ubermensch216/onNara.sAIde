@@ -17,7 +17,7 @@ import { isRestrictedUrl } from '@/lib/messaging/protocol';
 import type { ErrorPresentation } from '@/lib/errors/describe';
 import { requestAccessForError, requestAllUrls } from '@/lib/permissions';
 import {
-  clearInboxError, clearInboxFocus, collectAndBrief, designateInbox, dismissDoc,
+  clearInboxError, clearInboxFocus, collectAndBrief, designateInbox, dismissDoc, dismissDocs,
   groupDocs, loadInbox, openTaskDraft, pendingDocs, refinePendingInbox, useInbox, type TaskDraftSession,
 } from '@/lib/inbox/panel';
 import type { InboxCategory, InboxDoc } from '@/lib/inbox/types';
@@ -47,9 +47,11 @@ function clock(at: number): string {
 
 export function InboxPanel({ tab, settings, onOpenSchedule }: Props) {
   const t = useT();
-  const { docs, briefing, lastRun, location, loaded, running, error, focus, draft } = useInbox();
+  const { docs, briefing, lastRun, location, loaded, running, error, focus, draft, dismissing, dismissingKeys } = useInbox();
   const [spotlight, setSpotlight] = useState<string | null>(null);
   const [showFiltered, setShowFiltered] = useState(false);
+  const [selectedNotice, setSelectedNotice] = useState<Set<string>>(() => new Set());
+  const [confirmBulk, setConfirmBulk] = useState<'all' | 'selected' | null>(null);
   /** 이미 눌러 둔 관심도 평가. 한 번에 읽어 카드에 나눠 준다(B4). */
   const [verdicts, setVerdicts] = useState<Map<string, FeedbackVerdict>>(new Map());
   const [examples, setExamples] = useState<Map<string, InboxFeedbackExample>>(new Map());
@@ -70,7 +72,48 @@ export function InboxPanel({ tab, settings, onOpenSchedule }: Props) {
 
   const pending = useMemo(() => pendingDocs(docs), [docs]);
   const groups = useMemo(() => groupDocs(pending), [pending]);
+  const noticeDocs = useMemo(() => groups.find(group => group.category === 'notice')?.docs ?? [], [groups]);
+  const noticeKeys = useMemo(() => new Set(noticeDocs.map(doc => doc.key)), [noticeDocs]);
+  const selectedNoticeDocs = useMemo(
+    () => noticeDocs.filter(doc => selectedNotice.has(doc.key)),
+    [noticeDocs, selectedNotice],
+  );
+  const allNoticeSelected = noticeDocs.length > 0 && selectedNoticeDocs.length === noticeDocs.length;
+  const someNoticeSelected = selectedNoticeDocs.length > 0 && !allNoticeSelected;
   const filtered = useMemo(() => docs.filter(doc => doc.category === 'filtered' && !doc.dismissedAt), [docs]);
+
+  useEffect(() => {
+    setSelectedNotice(prev => {
+      if (!prev.size) return prev;
+      let changed = false;
+      const next = new Set<string>();
+      for (const key of prev) {
+        if (noticeKeys.has(key)) next.add(key);
+        else changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [noticeKeys]);
+
+  useEffect(() => {
+    if (confirmBulk === 'selected' && selectedNoticeDocs.length === 0) setConfirmBulk(null);
+    if (confirmBulk === 'all' && noticeDocs.length === 0) setConfirmBulk(null);
+  }, [confirmBulk, selectedNoticeDocs.length, noticeDocs.length]);
+
+  const toggleNoticeSelect = (key: string) => {
+    setConfirmBulk(null);
+    setSelectedNotice(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const toggleNoticeSelectAll = () => {
+    setConfirmBulk(null);
+    setSelectedNotice(allNoticeSelected ? new Set() : new Set(noticeDocs.map(doc => doc.key)));
+  };
 
   const canDesignate = Boolean(tab && !isRestrictedUrl(tab.url));
 
@@ -160,21 +203,105 @@ export function InboxPanel({ tab, settings, onOpenSchedule }: Props) {
         </section>
       )}
 
-      {groups.map(group => (
-        <section className="auto-section" key={group.category}>
-          <div className="auto-section-head">
-            <span className="auto-section-title">{t(CATEGORY_KEY[group.category])}</span>
-            <span className="auto-section-count">{group.docs.length}</span>
-          </div>
-          <ul className="inbox-list">
-            {group.docs.map(doc => (
-              <InboxCard key={doc.key} doc={doc} lit={spotlight === doc.key}
-                verdict={verdicts.get(doc.key)} example={examples.get(doc.key)} onFeedbackSaved={refreshFeedback} onOpenSchedule={onOpenSchedule}
-                tab={tab} settings={settings} draft={draft?.key === doc.key ? draft : null} />
-            ))}
-          </ul>
-        </section>
-      ))}
+      {groups.map(group => {
+        const isNotice = group.category === 'notice';
+        const bulkTargets = confirmBulk === 'all' ? group.docs : selectedNoticeDocs;
+        return (
+          <section className="auto-section" key={group.category}>
+            <div className="auto-section-head">
+              <span className="auto-section-title">{t(CATEGORY_KEY[group.category])}</span>
+              <span className="auto-section-count">{group.docs.length}</span>
+            </div>
+            {isNotice && (
+              <>
+                <div className="inbox-notice-bar">
+                  <label className="inbox-select-all">
+                    <input
+                      type="checkbox"
+                      checked={allNoticeSelected}
+                      ref={node => { if (node) node.indeterminate = someNoticeSelected; }}
+                      disabled={Boolean(dismissing)}
+                      onChange={toggleNoticeSelectAll}
+                    />
+                    <span>
+                      {selectedNoticeDocs.length > 0
+                        ? t('inbox.notice.selectedCount', { n: selectedNoticeDocs.length })
+                        : t('inbox.notice.selectAll')}
+                    </span>
+                  </label>
+                  <span className="spacer" />
+                  <button
+                    type="button"
+                    className="inbox-btn inbox-btn-sm"
+                    disabled={Boolean(dismissing) || selectedNoticeDocs.length === 0}
+                    title={t('inbox.notice.dismissSelectedHint')}
+                    onClick={() => setConfirmBulk(current => current === 'selected' ? null : 'selected')}
+                  >
+                    {selectedNoticeDocs.length > 0
+                      ? t('inbox.notice.dismissSelectedCount', { n: selectedNoticeDocs.length })
+                      : t('inbox.notice.dismissSelected')}
+                  </button>
+                  <button
+                    type="button"
+                    className="inbox-btn inbox-btn-sm"
+                    disabled={Boolean(dismissing)}
+                    title={t('inbox.notice.dismissAllHint')}
+                    onClick={() => setConfirmBulk(current => current === 'all' ? null : 'all')}
+                  >
+                    {t('inbox.notice.dismissAll', { n: group.docs.length })}
+                  </button>
+                </div>
+
+                {confirmBulk && !dismissing && bulkTargets.length > 0 && (
+                  <div className="inbox-bulk-confirm" role="region" aria-label={t('inbox.notice.confirmTitle')}>
+                    <p className="inbox-bulk-confirm-text">
+                      {confirmBulk === 'all'
+                        ? t('inbox.notice.confirmAll', { n: bulkTargets.length })
+                        : t('inbox.notice.confirmSelected', { n: bulkTargets.length })}
+                    </p>
+                    <div className="inbox-bulk-confirm-actions">
+                      <button
+                        type="button"
+                        className="inbox-btn primary inbox-btn-sm"
+                        onClick={() => {
+                          setConfirmBulk(null);
+                          void dismissDocs(bulkTargets, tab);
+                        }}
+                      >
+                        {t('inbox.notice.confirmProceed', { n: bulkTargets.length })}
+                      </button>
+                      <button
+                        type="button"
+                        className="inbox-btn inbox-btn-sm"
+                        onClick={() => setConfirmBulk(null)}
+                      >
+                        {t('inbox.notice.confirmCancel')}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {dismissing === 'bulk' && (
+                  <div className="inbox-bulk-progress" role="status" aria-live="polite">
+                    <span className="inbox-check-dot" aria-hidden="true" />
+                    <span>{t('inbox.notice.dismissingBulk', { n: dismissingKeys.length })}</span>
+                  </div>
+                )}
+              </>
+            )}
+            <ul className="inbox-list">
+              {group.docs.map(doc => (
+                <InboxCard key={doc.key} doc={doc} lit={spotlight === doc.key}
+                  selectable={isNotice}
+                  selected={isNotice && selectedNotice.has(doc.key)}
+                  onToggleSelect={isNotice ? () => toggleNoticeSelect(doc.key) : undefined}
+                  verdict={verdicts.get(doc.key)} example={examples.get(doc.key)} onFeedbackSaved={refreshFeedback} onOpenSchedule={onOpenSchedule}
+                  tab={tab} settings={settings} draft={draft?.key === doc.key ? draft : null} />
+              ))}
+            </ul>
+          </section>
+        );
+      })}
 
       {filtered.length > 0 && (
         <section className="auto-section">
@@ -199,6 +326,9 @@ export function InboxPanel({ tab, settings, onOpenSchedule }: Props) {
 interface CardProps {
   doc: InboxDoc;
   lit: boolean;
+  selectable?: boolean;
+  selected?: boolean;
+  onToggleSelect?: () => void;
   verdict?: FeedbackVerdict | undefined;
   example?: InboxFeedbackExample | undefined;
   onFeedbackSaved: () => Promise<void>;
@@ -210,13 +340,25 @@ interface CardProps {
   draft: TaskDraftSession | null;
 }
 
-function InboxCard({ doc, lit, verdict, example, onFeedbackSaved, onOpenSchedule, tab, settings, draft }: CardProps) {
+function InboxCard({ doc, lit, selectable = false, selected = false, onToggleSelect, verdict, example, onFeedbackSaved, onOpenSchedule, tab, settings, draft }: CardProps) {
   const t = useT();
   const dismissing = useInbox(state => state.dismissing);
+  const dismissingKeys = useInbox(state => state.dismissingKeys);
+  const isDismissingThis = dismissing === doc.key || dismissingKeys.includes(doc.key);
   const meta = [doc.department, doc.sender, doc.reportDate].filter(Boolean);
   return (
-    <li className={`inbox-item ${doc.category} ${lit ? 'lit' : ''}`}>
+    <li className={`inbox-item ${doc.category} ${lit ? 'lit' : ''} ${selected ? 'is-selected' : ''}`}>
       <div className="inbox-item-head">
+        {selectable && (
+          <input
+            type="checkbox"
+            className="inbox-item-check"
+            checked={selected}
+            disabled={Boolean(dismissing)}
+            aria-label={t('inbox.notice.selectItem', { title: doc.title })}
+            onChange={onToggleSelect}
+          />
+        )}
         <span className="inbox-item-title">{doc.title}</span>
         {doc.dueDate && <span className="inbox-due">{doc.dueDate.slice(5)}</span>}
       </div>
@@ -244,7 +386,7 @@ function InboxCard({ doc, lit, verdict, example, onFeedbackSaved, onOpenSchedule
         <button type="button" className="inbox-link" disabled={Boolean(dismissing)}
           title={t('inbox.dismissHint')}
           onClick={() => void dismissDoc(doc, tab)}>
-          {dismissing === doc.key ? t('inbox.dismissing') : t('inbox.dismiss')}
+          {isDismissingThis ? t('inbox.dismissing') : t('inbox.dismiss')}
         </button>
       </div>
       {draft && <InboxTaskDraft doc={doc} session={draft} tab={tab} settings={settings} />}

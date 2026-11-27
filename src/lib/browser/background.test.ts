@@ -1128,6 +1128,94 @@ it('메인 화면에서 이미 열람되어 저장된 미열람 목록에서 문
   expect(response).toMatchObject({ type: 'DOCUMENTS_MARKED_READ', marked: ['이미 읽은 문서'], unconfirmed: [] });
 });
 
+it('여러 문서를 한 번에 읽기처리할 때 현재 페이지와 다른 페이지 문서를 모두 처리한다', async () => {
+  vi.useFakeTimers();
+  const page1Title = '첫 페이지 단순공람';
+  const page2TitleA = '둘째 페이지 단순공람 A';
+  const page2TitleB = '둘째 페이지 단순공람 B';
+  const location = { url: 'https://onnara.test/frame/list', framePath: [1], form: { method: 'post' as const, fields: [['pageIndex', '1']] } };
+  const common = { url: location.url, title: '받은문서', text: '행', charCount: 1, method: 'onnara-document-list', truncated: false, keptRatio: 1, estimatedTokens: 20, extractedAt: 1 };
+  let page1Marked = false;
+  let page2Marked = false;
+  let restored = false;
+
+  const sendMessage = vi.fn(async (tabId: number, message: { type: string; location?: typeof location; titles?: string[] }, options: { frameId: number }) => {
+    if (message.type === 'FETCH_INBOX_PAGE') {
+      const page = message.location!.form.fields[0]![1];
+      if (page === '1') {
+        return {
+          type: 'INBOX_PAGE',
+          list: { kind: 'onnara-document-list', listName: '받은문서', columns: [], rows: page1Marked ? [] : [{ title: page1Title, readState: '미열람' }] },
+          next: { ...location, form: { ...location.form, fields: [['pageIndex', '2']] } },
+        };
+      }
+      return {
+        type: 'INBOX_PAGE',
+        list: {
+          kind: 'onnara-document-list', listName: '받은문서', columns: [],
+          rows: page2Marked ? [] : [{ title: page2TitleA, readState: '미열람' }, { title: page2TitleB, readState: '미열람' }],
+        },
+        next: null,
+      };
+    }
+    if (message.type === 'RESTORE_DOCUMENT_LIST') {
+      if (tabId === 20 && options.frameId === 0) restored = true;
+      return { type: 'DOCUMENT_LIST_RESTORED', restored: tabId === 20 && options.frameId === 0 };
+    }
+    if (message.type === 'PREPARE_MARK_READ') {
+      return { type: 'MARK_READ_PREPARED', checked: message.titles, missing: [], buttonMarked: true };
+    }
+    if (options.frameId === 2) {
+      const rows = tabId === 20 && restored
+        ? (page2Marked ? [] : [{ title: page2TitleA, readState: '미열람' }, { title: page2TitleB, readState: '미열람' }])
+        : (page1Marked ? [] : [{ title: page1Title, readState: '미열람' }]);
+      return {
+        type: 'EXTRACTED',
+        payload: { ...common, structuredData: { kind: 'onnara-document-list', listName: '받은문서', columns: [{ key: 'title', label: '제목', sourceIndex: 0 }], rows } },
+      };
+    }
+    return { type: 'EXTRACTED', payload: { ...common, text: '메뉴', structuredData: undefined } };
+  });
+  const remove = vi.fn(async () => undefined);
+  vi.stubGlobal('chrome', {
+    storage: { local: { get: vi.fn(async () => ({ 'saide.inboxLocation': { location, listName: '받은문서' } })) } },
+    tabs: {
+      get: vi.fn(async (id: number) => ({ id, url: 'https://onnara.test/main', active: id === 9, status: 'complete', windowId: 1 })),
+      query: vi.fn(async () => [{ id: 9, url: 'https://onnara.test/main', active: true }, { id: 20, url: 'https://onnara.test/main' }]),
+      duplicate: vi.fn(async () => ({ id: 20, url: 'https://onnara.test/main', active: false, windowId: 1 })),
+      sendMessage, remove,
+    },
+    scripting: { executeScript: vi.fn(async (injection: { target: { tabId: number }; world?: string; func?: { name: string } }) => {
+      if (injection.world !== 'MAIN') return [];
+      if (injection.func?.name === 'clickMarkedReadButton') {
+        if (injection.target.tabId === 9) page1Marked = true;
+        if (injection.target.tabId === 20) page2Marked = true;
+        return [{ result: { clicked: true } }];
+      }
+      return [{ result: [] }];
+    }) },
+    webNavigation: { getAllFrames: vi.fn(async () => [
+      { frameId: 0, parentFrameId: -1, url: 'https://onnara.test/main' },
+      { frameId: 2, parentFrameId: 0, url: location.url },
+    ]) },
+  });
+
+  const pending = handlePanelMessage({
+    type: 'MARK_DOCUMENTS_READ', tabId: 9, titles: [page1Title, page2TitleA, page2TitleB],
+    control: { id: crypto.randomUUID(), deadline: Date.now() + 90_000 },
+  });
+  await vi.advanceTimersByTimeAsync(25_000);
+  expect(await pending).toMatchObject({
+    type: 'DOCUMENTS_MARKED_READ',
+    marked: [page1Title, page2TitleA, page2TitleB],
+    unconfirmed: [],
+    missing: [],
+  });
+  expect(sendMessage).toHaveBeenCalledWith(9, expect.objectContaining({ type: 'PREPARE_MARK_READ', titles: [page1Title] }), { frameId: 2 });
+  expect(sendMessage).toHaveBeenCalledWith(20, expect.objectContaining({ type: 'PREPARE_MARK_READ', titles: [page2TitleA, page2TitleB] }), { frameId: 2 });
+  expect(remove).toHaveBeenCalledWith(20);
+});
+
 it('문서 상세 프레임을 합칠 때 PDF 쪽 표식은 PDF를 품은 프레임이 하나일 때만 옮긴다', () => {
   const payload = (text: string, anchors?: string[]) => ({ url: 'https://onnara.test/x', title: '문서', text, charCount: text.length,
     truncated: false, keptRatio: 1, estimatedTokens: 10, extractedAt: 1, method: 'innerText' as const, ...(anchors ? { pdfPageAnchors: anchors } : {}) });

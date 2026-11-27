@@ -21,7 +21,7 @@ const FRAME_ORIGIN = 'http://onnara.example.go.kr';
 
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
-  useInbox.setState({ docs: [], briefing: null, lastRun: null, location: null, loaded: false, running: false, error: null, focus: null, draft: null, dismissing: null });
+  useInbox.setState({ docs: [], briefing: null, lastRun: null, location: null, loaded: false, running: false, error: null, focus: null, draft: null, dismissing: null, dismissingKeys: [] });
   document.body.innerHTML = '<div id="fixture"></div>';
   root = createRoot(document.getElementById('fixture')!);
 });
@@ -188,4 +188,114 @@ it('"넘기기"에서 열람으로 바뀐 것을 확인하지 못하면 카드�
   expect(kept.dismissedAt).toBeUndefined();
   // 온나라가 알린 글을 그대로 보인다.
   expect(document.querySelector('.banner')!.textContent).toContain('처리 권한이 없습니다');
+});
+
+function noticeDoc(key: string, title: string): InboxDoc {
+  return {
+    key, group: `g-${key}`, title, reportDate: '2026-09-18',
+    sender: '부산광역시', department: '총무과', hasAttachment: false, readState: 'unread',
+    category: 'notice', reason: '단순 공람', dueDate: '', classifier: 'rule', firstSeenAt: 1, lastSeenAt: 1,
+  };
+}
+
+it('단순 공람 문서를 선택하여 한 번에 넘길 수 있고, 내 업무 문서는 건드리지 않는다', async () => {
+  const sendMessage = vi.fn(async (message: { type: string; titles?: string[] }) =>
+    message.type === 'MARK_DOCUMENTS_READ'
+      ? { type: 'DOCUMENTS_MARKED_READ', marked: message.titles, unconfirmed: [], missing: [], dialogs: [] }
+      : { type: 'ACTIVE_TAB', tab: null });
+  vi.stubGlobal('chrome', {
+    runtime: { sendMessage, openOptionsPage: vi.fn() },
+    storage: { local: { get: vi.fn(async () => ({})), set: vi.fn(async () => undefined) } },
+  });
+
+  await act(() => root.render(createElement(InboxPanel, { tab, settings: DEFAULT_SETTINGS, onOpenSchedule: vi.fn() })));
+  await settle();
+  await act(async () => {
+    useInbox.setState({
+      docs: [
+        doc(),
+        noticeDoc('n1', '단순 공람 안내 1'),
+        noticeDoc('n2', '단순 공람 안내 2'),
+        noticeDoc('n3', '단순 공람 안내 3'),
+      ],
+      loaded: true,
+    });
+  });
+  await settle();
+
+  // 단순 공람 카드에만 선택 체크박스가 생긴다(내 업무 문서 제외).
+  const itemChecks = [...document.querySelectorAll<HTMLInputElement>('.inbox-item-check')];
+  expect(itemChecks).toHaveLength(3);
+  expect(button('선택 넘기기').disabled).toBe(true);
+
+  // 2건 선택 → 확인 단계 → 실행
+  await act(async () => { itemChecks[0]!.click(); itemChecks[2]!.click(); });
+  await settle();
+  expect(button('선택 넘기기 (2)').disabled).toBe(false);
+
+  await act(async () => button('선택 넘기기 (2)').click());
+  await settle();
+  // 확인 전에는 아직 읽기처리를 보내지 않는다.
+  expect(sendMessage.mock.calls.some(([m]) => m.type === 'MARK_DOCUMENTS_READ')).toBe(false);
+  expect(document.querySelector('.inbox-bulk-confirm')!.textContent).toContain('2건');
+
+  await act(async () => button('2건 넘기기').click());
+  await settle();
+
+  expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({
+    type: 'MARK_DOCUMENTS_READ',
+    tabId: 3,
+    titles: ['단순 공람 안내 1', '단순 공람 안내 3'],
+  }));
+  const byKey = new Map(useInbox.getState().docs.map(item => [item.key, item]));
+  expect(byKey.get('k1')!.dismissedAt).toBeUndefined();
+  expect(byKey.get('n1')!.dismissedAt).toBeTypeOf('number');
+  expect(byKey.get('n2')!.dismissedAt).toBeUndefined();
+  expect(byKey.get('n3')!.dismissedAt).toBeTypeOf('number');
+});
+
+it('단순 공람 "전체 넘기기"는 확인 후 단순 공람 전체를 한 번에 넘기고, 취소하면 실행하지 않는다', async () => {
+  const sendMessage = vi.fn(async (message: { type: string; titles?: string[] }) =>
+    message.type === 'MARK_DOCUMENTS_READ'
+      ? { type: 'DOCUMENTS_MARKED_READ', marked: message.titles, unconfirmed: [], missing: [], dialogs: [] }
+      : { type: 'ACTIVE_TAB', tab: null });
+  vi.stubGlobal('chrome', {
+    runtime: { sendMessage, openOptionsPage: vi.fn() },
+    storage: { local: { get: vi.fn(async () => ({})), set: vi.fn(async () => undefined) } },
+  });
+
+  await act(() => root.render(createElement(InboxPanel, { tab, settings: DEFAULT_SETTINGS, onOpenSchedule: vi.fn() })));
+  await settle();
+  await act(async () => {
+    useInbox.setState({
+      docs: [
+        doc(),
+        noticeDoc('n1', '공지 A'),
+        noticeDoc('n2', '공지 B'),
+      ],
+      loaded: true,
+    });
+  });
+  await settle();
+
+  await act(async () => button('전체 넘기기 (2)').click());
+  await settle();
+  await act(async () => button('취소').click());
+  await settle();
+  expect(sendMessage.mock.calls.some(([m]) => m.type === 'MARK_DOCUMENTS_READ')).toBe(false);
+
+  await act(async () => button('전체 넘기기 (2)').click());
+  await settle();
+  await act(async () => button('2건 넘기기').click());
+  await settle();
+
+  expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({
+    type: 'MARK_DOCUMENTS_READ',
+    tabId: 3,
+    titles: ['공지 A', '공지 B'],
+  }));
+  const byKey = new Map(useInbox.getState().docs.map(item => [item.key, item]));
+  expect(byKey.get('k1')!.dismissedAt).toBeUndefined();
+  expect(byKey.get('n1')!.dismissedAt).toBeTypeOf('number');
+  expect(byKey.get('n2')!.dismissedAt).toBeTypeOf('number');
 });

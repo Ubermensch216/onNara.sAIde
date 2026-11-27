@@ -93,13 +93,15 @@ interface InboxState {
   focus: InboxFocus | null;
   /** 지금 일정으로 옮기는 중인 문서. 한 번에 하나다. */
   draft: TaskDraftSession | null;
-  /** 넘기면서 열람 처리하는 중인 문서. 작업 탭을 쓰므로 한 번에 하나다. */
+  /** 넘기면서 열람 처리하는 중인 문서. 단일이면 문서 키, 일괄이면 'bulk'다. */
   dismissing: string | null;
+  /** 현재 넘기기 처리 중인 문서 키 목록(단일·일괄 공통). */
+  dismissingKeys: string[];
 }
 
 export const useInbox = create<InboxState>(() => ({
   docs: [], briefing: null, lastRun: null, location: null, loaded: false, running: false, error: null, focus: null,
-  draft: null, dismissing: null,
+  draft: null, dismissing: null, dismissingKeys: [],
 }));
 
 /** 아직 손대지 않은 문서. 탭 배지의 숫자이자 화면의 본문이다. */
@@ -290,6 +292,10 @@ async function applyReadPolicy(
 
 /** 다른 페이지의 문서는 작업 탭에 목록을 복원한 뒤 처리하므로 복원 시간까지 허용한다. */
 const MARK_READ_TIMEOUT_MS = 90_000;
+/** 일괄 넘기기는 여러 페이지를 거칠 수 있으므로 제어 한도(180초) 안에서 넉넉히 잡는다. */
+const MARK_READ_BATCH_TIMEOUT_MS = 175_000;
+/** 서비스 워커 요청 가드(guards.ts)의 1회 최대 제목 수와 맞춘다. */
+const MARK_READ_BATCH_SIZE = 50;
 
 async function patchLocal(key: string, patch: Partial<InboxDoc>): Promise<void> {
   await patchInboxDoc(key, patch);
@@ -352,7 +358,7 @@ export async function dismissDoc(doc: InboxDoc, tab: TabSummary | null): Promise
     useInbox.setState({ error: { code: 'UNKNOWN', message: t('inbox.dismiss.noTab') } });
     return false;
   }
-  useInbox.setState({ dismissing: doc.key, error: null });
+  useInbox.setState({ dismissing: doc.key, dismissingKeys: [doc.key], error: null });
   try {
     const reply = await sendToSW({ type: 'MARK_DOCUMENTS_READ', tabId: tab.tabId, titles: [doc.title] }, undefined, MARK_READ_TIMEOUT_MS);
     if (reply.type === 'ERROR') {
@@ -371,7 +377,105 @@ export async function dismissDoc(doc: InboxDoc, tab: TabSummary | null): Promise
     useInbox.setState({ error: { code: 'UNKNOWN', message: error instanceof Error ? error.message : String(error) } });
     return false;
   } finally {
-    useInbox.setState({ dismissing: null });
+    useInbox.setState({ dismissing: null, dismissingKeys: [] });
+  }
+}
+
+export interface DismissBatchResult {
+  marked: number;
+  failed: number;
+  total: number;
+}
+
+/**
+ * 여러 문서(단순 공람 전체 또는 선택 건)를 한 번에 넘긴다.
+ *
+ * ★ 1회 요청 상한(50건)을 넘으면 나눠 보내며, 열람으로 확인된 문서만 즉시 카드를 치운다.
+ *   확인하지 못한 문서는 카드를 남겨 다시 시도할 수 있게 한다.
+ */
+export async function dismissDocs(docs: InboxDoc[], tab: TabSummary | null): Promise<DismissBatchResult> {
+  const seen = new Set<string>();
+  const targets = docs.filter(doc => !doc.dismissedAt && !seen.has(doc.key) && Boolean(seen.add(doc.key)));
+  if (!targets.length) return { marked: 0, failed: 0, total: 0 };
+  if (useInbox.getState().dismissing) return { marked: 0, failed: targets.length, total: targets.length };
+  if (!tab || isRestrictedUrl(tab.url)) {
+    useInbox.setState({ error: { code: 'UNKNOWN', message: t('inbox.dismiss.noTab') } });
+    return { marked: 0, failed: targets.length, total: targets.length };
+  }
+
+  const remainingKeys = new Set(targets.map(doc => doc.key));
+  useInbox.setState({ dismissing: 'bulk', dismissingKeys: [...remainingKeys], error: null });
+  let markedCount = 0;
+  let lastDialog: string | undefined;
+  let reportedError: AppError | null = null;
+  try {
+    for (let offset = 0; offset < targets.length; offset += MARK_READ_BATCH_SIZE) {
+      const chunk = targets.slice(offset, offset + MARK_READ_BATCH_SIZE);
+      const titles = [...new Set(chunk.map(doc => doc.title))];
+      const reply = await sendToSW(
+        { type: 'MARK_DOCUMENTS_READ', tabId: tab.tabId, titles },
+        undefined,
+        MARK_READ_BATCH_TIMEOUT_MS,
+      );
+      if (reply.type === 'ERROR') {
+        reportedError = reply.error;
+        break;
+      }
+      if (reply.type !== 'DOCUMENTS_MARKED_READ') {
+        reportedError = { code: 'UNKNOWN', message: t('inbox.dismiss.failed') };
+        break;
+      }
+      const said = reply.dialogs.filter(Boolean).at(-1);
+      if (said) lastDialog = said;
+      const markedTitles = new Set(reply.marked);
+      const now = Date.now();
+      let chunkMarked = 0;
+      for (const doc of chunk) {
+        if (!markedTitles.has(doc.title)) continue;
+        await patchLocal(doc.key, { readState: 'read', markedReadAt: now, dismissedAt: now });
+        remainingKeys.delete(doc.key);
+        markedCount++;
+        chunkMarked++;
+      }
+      useInbox.setState({ dismissingKeys: [...remainingKeys] });
+      if (chunkMarked === 0) break;
+    }
+
+    const failedCount = targets.length - markedCount;
+    if (reportedError) {
+      useInbox.setState({
+        error: markedCount > 0
+          ? {
+              code: reportedError.code,
+              message: t('inbox.dismiss.partial', { done: markedCount, failed: failedCount }),
+              hint: reportedError.hint ? `${reportedError.message} ${reportedError.hint}` : reportedError.message,
+              ...(reportedError.origins ? { origins: reportedError.origins } : {}),
+            }
+          : reportedError,
+      });
+    } else if (failedCount > 0) {
+      useInbox.setState({
+        error: {
+          code: 'UNKNOWN',
+          message: markedCount > 0
+            ? t('inbox.dismiss.partial', { done: markedCount, failed: failedCount })
+            : t('inbox.dismiss.failed'),
+          ...(lastDialog ? { hint: lastDialog } : {}),
+        },
+      });
+    }
+    return { marked: markedCount, failed: failedCount, total: targets.length };
+  } catch (error) {
+    const failedCount = targets.length - markedCount;
+    const detail = error instanceof Error ? error.message : String(error);
+    useInbox.setState({
+      error: markedCount > 0
+        ? { code: 'UNKNOWN', message: t('inbox.dismiss.partial', { done: markedCount, failed: failedCount }), hint: detail }
+        : { code: 'UNKNOWN', message: detail },
+    });
+    return { marked: markedCount, failed: failedCount, total: targets.length };
+  } finally {
+    useInbox.setState({ dismissing: null, dismissingKeys: [] });
   }
 }
 
