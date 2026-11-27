@@ -1,5 +1,5 @@
 /**
- * 사용자가 올린 파일에서 뽑은 글자 (기안 코파일럿 · 내 참고자료).
+ * 사용자가 올린 파일에서 뽑은 글자 (기안 코파일럿 · 내 참고자료 · 온나라 첨부).
  *
  * ★ 글자만 이어 붙이지 않고 **덩어리(Block)** 로 남긴다.
  *   공문 원문은 "1. → 가. → (1)" 개조식과 표가 뼈대다. 한 줄로 이어 붙이면 모델이
@@ -7,7 +7,17 @@
  *   덩어리에는 쪽·표·행 위치도 붙여, 분석 결과의 근거가 원문 어디에 있는지 보여 준다.
  */
 
-export type FileFormat = 'pdf' | 'hwpx' | 'docx' | 'xlsx' | 'text';
+export type FileFormat =
+  | 'pdf'
+  | 'hwpx'
+  | 'hwp'
+  | 'hwpml'
+  | 'docx'
+  | 'xlsx'
+  | 'xls'
+  | 'pptx'
+  | 'odt'
+  | 'text';
 
 export type BlockKind = 'heading' | 'para' | 'list' | 'table-row';
 
@@ -16,7 +26,7 @@ export interface Block {
   text: string;
   /** 개조식 단계(1. = 1, 가. = 2, (1) = 3 …). 제목·일반 문단은 없다. */
   level?: number;
-  /** PDF 쪽 번호(1부터). */
+  /** PDF·PPTX 쪽/슬라이드 번호(1부터). */
   page?: number;
   /** 문서 안 표 순번(1부터). 엑셀은 시트 순번. */
   table?: number;
@@ -31,9 +41,9 @@ export interface ExtractedFile {
   /** 모델과 사람이 읽는 전체 글자. 덩어리를 순서대로 이은 것이다. */
   text: string;
   blocks: Block[];
-  /** PDF 전체 쪽수. */
+  /** PDF·PPTX 전체 쪽수/슬라이드 수. */
   pages?: number;
-  /** 잘림·스캔 PDF 의심 등 사용자에게 알려야 할 사항. */
+  /** 잘림·스캔 PDF 의심·손상 복구 등 사용자에게 알려야 할 사항. */
   warnings: string[];
 }
 

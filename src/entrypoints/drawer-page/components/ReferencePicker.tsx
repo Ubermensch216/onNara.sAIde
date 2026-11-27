@@ -23,10 +23,14 @@ export const onnaraKey = (doc: RelatedDocInfo) => `onnara:${doc.title}`;
 export const uploadKey = (ref: UserRef) => `upload:${ref.id}`;
 
 const SUPPORTED_FORMATS: { ext: string; icon: MaterialIconName; iconClass: string }[] = [
+  { ext: 'HWP', icon: 'description', iconClass: 'text-sky-600' },
   { ext: 'HWPX', icon: 'description', iconClass: 'text-blue-600' },
   { ext: 'PDF', icon: 'pictureAsPdf', iconClass: 'text-rose-600' },
+  { ext: 'ODT', icon: 'description', iconClass: 'text-teal-600' },
   { ext: 'DOCX', icon: 'description', iconClass: 'text-indigo-600' },
   { ext: 'XLSX', icon: 'tableChart', iconClass: 'text-emerald-600' },
+  { ext: 'XLS', icon: 'tableChart', iconClass: 'text-green-600' },
+  { ext: 'PPTX', icon: 'description', iconClass: 'text-amber-600' },
   { ext: 'TXT', icon: 'textSnippet', iconClass: 'text-slate-500' },
 ];
 

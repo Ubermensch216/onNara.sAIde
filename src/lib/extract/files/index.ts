@@ -1,19 +1,25 @@
 /**
- * 사용자가 올린 파일 → 구조를 살린 글자 (기안 코파일럿 · 내 참고자료).
+ * 사용자가 올린 파일 및 온나라 첨부 → 구조를 살린 글자 (기안 코파일럿 · 내 참고자료 · 온나라 첨부).
  *
- * ★ 형식은 확장자만 믿지 않고 파일 머리(매직 바이트)로 다시 확인한다.
- *   `.hwp`를 이름만 `.hwpx`로 바꾼 파일, 이름 없는 드래그 파일이 흔하다.
+ * ★ 형식은 확장자만 믿지 않고 파일 머리(매직 바이트)와 내부 구조(ZIP 엔트리 · OLE2 스트림)로 확인한다.
+ *   확장자가 없거나 잘못 붙은 파일(`.hwp`를 `.hwpx`로 이름만 바꾼 파일 등)도 자동 판별해 읽는다.
  *
- * ★ 구형 한글(.hwp, OLE 복합 문서)은 1차에서 읽지 않는다. 바이너리 레코드 파서는 크고
- *   표·각주를 빠뜨리기 쉽다. 대신 한글에서 HWPX나 PDF로 저장해 올리도록 안내한다.
+ * ★ 지원 포맷(순수 브라우저 TS, 추가 외부 의존성 0):
+ *   PDF · HWP(5.x 일반·배포용) · HWPX · HWPML · ODT · DOCX · XLSX · XLS(BIFF8) · PPTX · TXT/MD/CSV
  */
 
 import { PDF_MAX_BYTES, PDF_MAX_PAGES, isPdfBytes, type PdfTextResult } from '../pdf-text';
 import { blocksToText, linesToBlocks } from './blocks';
+import { detectOle2Format } from './cfb';
 import { extractDocx } from './docx';
-import { extractHwpx } from './hwpx';
+import { extractHwp5 } from './hwp5';
+import { extractHwpml, isHwpmlBytes } from './hwpml';
+import { extractHwpxDetailed } from './hwpx';
+import { extractOdtText } from './odt';
+import { extractPptx } from './pptx';
+import { extractXls } from './xls';
 import { extractXlsx } from './xlsx';
-import { isZipBytes } from './zip';
+import { detectZipFormat, isZipBytes } from './zip';
 import { FileExtractError, type Block, type ExtractedFile, type FileFormat } from './types';
 
 export * from './types';
@@ -26,10 +32,10 @@ export const UPLOAD_MAX_CHARS = 200_000;
 const SCANNED_CHARS_PER_PAGE = 30;
 
 /** 파일 선택 창의 accept 값. */
-export const UPLOAD_ACCEPT = '.pdf,.hwpx,.docx,.xlsx,.txt,.md,.csv';
-export const UPLOAD_FORMATS_LABEL = 'PDF · HWPX · DOCX · XLSX · TXT';
+export const UPLOAD_ACCEPT = '.pdf,.hwpx,.hwp,.hml,.odt,.docx,.xlsx,.xls,.pptx,.txt,.md,.csv';
+export const UPLOAD_FORMATS_LABEL = 'PDF · HWP · HWPX · ODT · DOCX · XLSX · XLS · PPTX · TXT';
 
-const HWP_GUIDE = "구형 한글(.hwp) 파일은 바로 읽을 수 없습니다. 한글에서 [파일 → 다른 이름으로 저장]으로 'HWPX' 또는 'PDF' 형식을 골라 저장한 뒤 올려 주세요.";
+const HWP3_PREFIX = new TextEncoder().encode('HWP Document File V3.00');
 
 export interface ExtractOptions {
   /** PDF 글자 추출기. 드로어는 백그라운드(오프스크린 pdf.js)에 맡긴다. */
@@ -40,22 +46,47 @@ function extensionOf(name: string): string {
   return name.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1] ?? '';
 }
 
-function isOleBytes(bytes: Uint8Array): boolean {
-  return bytes.length >= 8 && bytes[0] === 0xd0 && bytes[1] === 0xcf && bytes[2] === 0x11 && bytes[3] === 0xe0;
+function isOleMagic(bytes: Uint8Array): boolean {
+  return bytes.length >= 4 && bytes[0] === 0xd0 && bytes[1] === 0xcf && bytes[2] === 0x11 && bytes[3] === 0xe0;
+}
+
+function isHwp3Bytes(bytes: Uint8Array): boolean {
+  if (bytes.byteLength < HWP3_PREFIX.length) return false;
+  for (let i = 0; i < HWP3_PREFIX.length; i++) {
+    if (bytes[i] !== HWP3_PREFIX[i]) return false;
+  }
+  return true;
 }
 
 /** 형식을 정한다. 읽을 수 없는 형식이면 이유와 함께 던진다. */
 export function detectFormat(name: string, bytes: Uint8Array): FileFormat {
   const ext = extensionOf(name);
-  if (ext === 'hwp' || (isOleBytes(bytes) && (ext === 'hwpx' || ext === ''))) throw new FileExtractError(HWP_GUIDE);
   if (isPdfBytes(bytes)) return 'pdf';
-  if (isOleBytes(bytes)) throw new FileExtractError('구형 오피스 형식(.doc/.xls/.ppt)은 읽을 수 없습니다. DOCX·XLSX 또는 PDF로 저장해 올려 주세요.');
+  if (isHwp3Bytes(bytes)) {
+    throw new FileExtractError('구형 한글 3.x(.hwp) 형식은 지원하지 않습니다. 한글에서 HWPX 또는 PDF로 저장해 올려 주세요.');
+  }
+  if (isHwpmlBytes(bytes)) return 'hwpml';
+
   if (isZipBytes(bytes)) {
+    // 확장자보다 ZIP 내부 엔트리 구조를 우선 확인한다
+    const zipKind = detectZipFormat(bytes);
+    if (zipKind) return zipKind;
     if (ext === 'hwpx') return 'hwpx';
     if (ext === 'docx') return 'docx';
     if (ext === 'xlsx') return 'xlsx';
+    if (ext === 'pptx') return 'pptx';
+    if (ext === 'odt' || ext === 'ott') return 'odt';
     throw new FileExtractError(`'.${ext || '?'}' 압축 형식은 지원하지 않습니다. ${UPLOAD_FORMATS_LABEL} 파일을 올려 주세요.`);
   }
+
+  if (isOleMagic(bytes)) {
+    const oleKind = detectOle2Format(bytes);
+    if (oleKind) return oleKind;
+    if (ext === 'hwp') return 'hwp';
+    if (ext === 'xls') return 'xls';
+    throw new FileExtractError('구형 오피스 형식(.doc/.ppt)은 읽을 수 없습니다. DOCX·PPTX 또는 PDF로 저장해 올려 주세요.');
+  }
+
   if (['txt', 'md', 'csv'].includes(ext)) return 'text';
   if (['png', 'jpg', 'jpeg', 'gif', 'bmp', 'tif', 'tiff', 'webp'].includes(ext)) {
     throw new FileExtractError('이미지 파일의 글자는 읽을 수 없습니다(OCR 미지원). 글자가 들어 있는 PDF나 HWPX로 올려 주세요.');
@@ -66,7 +97,7 @@ export function detectFormat(name: string, bytes: Uint8Array): FileFormat {
 /** 텍스트 파일은 UTF-8을 먼저 보고, 깨지면 EUC-KR(CP949)로 다시 읽는다. 옛 행정 자료에 흔하다. */
 export function decodeText(bytes: Uint8Array): string {
   try {
-    return new TextDecoder('utf-8', { fatal: true }).decode(bytes).replace(/^﻿/, '');
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes).replace(/^\uFEFF/, '');
   } catch {
     return new TextDecoder('euc-kr').decode(bytes);
   }
@@ -74,7 +105,29 @@ export function decodeText(bytes: Uint8Array): string {
 
 function pdfBlocks(result: PdfTextResult): Block[] {
   const pages = result.pageTexts ?? [result.text];
-  return pages.flatMap((text, index) => linesToBlocks(text, result.pageTexts ? { page: index + 1 } : {}));
+  const out: Block[] = [];
+  let tableCounter = 0;
+
+  pages.forEach((text, index) => {
+    const page = result.pageTexts ? index + 1 : undefined;
+    let inTable = false;
+    let rowNo = 0;
+    for (const block of linesToBlocks(text, page !== undefined ? { page } : {})) {
+      if (block.text.includes(' | ')) {
+        if (!inTable) {
+          inTable = true;
+          tableCounter += 1;
+          rowNo = 0;
+        }
+        rowNo += 1;
+        out.push({ kind: 'table-row', text: block.text, table: tableCounter, row: rowNo, ...(page !== undefined ? { page } : {}) });
+      } else {
+        inTable = false;
+        out.push(block);
+      }
+    }
+  });
+  return out;
 }
 
 export async function extractFileBytes(name: string, bytes: Uint8Array, options: ExtractOptions = {}): Promise<ExtractedFile> {
@@ -93,18 +146,38 @@ export async function extractFileBytes(name: string, bytes: Uint8Array, options:
     blocks = pdfBlocks(result);
     const readPages = Math.max(1, Math.min(result.pages, PDF_MAX_PAGES));
     if (result.pages > PDF_MAX_PAGES) warnings.push(`전체 ${result.pages}쪽 중 앞 ${PDF_MAX_PAGES}쪽만 읽었습니다.`);
+    if (result.qualityWarning) warnings.push(result.qualityWarning);
     if (result.text.replace(/\s/g, '').length / readPages < SCANNED_CHARS_PER_PAGE) {
       if (!result.text.trim()) throw new FileExtractError('PDF에서 글자를 찾지 못했습니다. 스캔한 이미지로 만든 PDF는 읽을 수 없습니다(OCR 미지원).');
       warnings.push('쪽마다 글자가 매우 적습니다. 스캔 이미지가 섞인 PDF라면 그 쪽의 내용은 빠졌습니다.');
     }
   } else if (format === 'hwpx') {
-    blocks = extractHwpx(bytes);
+    const result = extractHwpxDetailed(bytes);
+    blocks = result.blocks;
+    warnings.push(...result.warnings);
+  } else if (format === 'hwp') {
+    const result = extractHwp5(bytes);
+    blocks = result.blocks;
+    warnings.push(...result.warnings);
+  } else if (format === 'hwpml') {
+    blocks = extractHwpml(bytes);
   } else if (format === 'docx') {
     blocks = extractDocx(bytes);
   } else if (format === 'xlsx') {
     const result = extractXlsx(bytes);
     blocks = result.blocks;
     warnings.push(...result.warnings);
+  } else if (format === 'xls') {
+    const result = extractXls(bytes);
+    blocks = result.blocks;
+    warnings.push(...result.warnings);
+  } else if (format === 'pptx') {
+    const result = extractPptx(bytes);
+    blocks = result.blocks;
+    pages = result.pages;
+    warnings.push(...result.warnings);
+  } else if (format === 'odt') {
+    blocks = extractOdtText(bytes);
   } else {
     blocks = linesToBlocks(decodeText(bytes));
   }

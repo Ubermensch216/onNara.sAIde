@@ -1,7 +1,8 @@
 import { resolve } from 'node:path';
-import { expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { base64ToBytes, bytesToBase64, extractPdfText, formatPdfSection, isPdfBytes, type GetPdfDocument } from './pdf-text';
+import { assessPdfQuality, cleanPdfChars, collapseEvenSpacing, extractPageLines, finalizePdfPages } from './pdf-layout';
 
 const CMAPS = `${resolve('node_modules/pdfjs-dist/cmaps')}/`;
 
@@ -65,4 +66,64 @@ it('PDF가 아니거나 글자가 없으면 이유를 남겨 모델이 내용을
 it('메시지 전송용 base64 변환은 큰 파일도 바이트를 그대로 되돌린다', () => {
   const bytes = new Uint8Array(200_000).map((_, index) => index % 256);
   expect(base64ToBytes(bytesToBase64(bytes))).toEqual(bytes);
+});
+
+describe('PDF 레이아웃 및 한컴 텍스트 정제 (kordoc 벤치마킹)', () => {
+  const item = (str: string, x: number, y: number, width = str.length * 9, fontSize = 10) => ({
+    str,
+    transform: [fontSize, 0, 0, fontSize, x, y],
+    width,
+    height: fontSize,
+  });
+
+  it('한컴 PDF 깨짐 문자(아래아·홀로 초성·U+F000)와 균등배분을 복원한다', () => {
+    expect(cleanPdfChars('추진\u119E계획 \u110B 항목\uF000')).toBe('추진ㆍ계획 ㅇ 항목');
+    expect(collapseEvenSpacing('홍 보 담 당 관 안내')).toBe('홍보담당관 안내');
+    expect(collapseEvenSpacing('중동 사태 대응 및 2026년 월 일')).toBe('중동 사태 대응 및 2026년 월 일');
+  });
+
+  it('2단 편집 문서에서 좌단을 먼저 읽고 우단을 이어서 읽는다(XY-Cut)', () => {
+    const items = [
+      // 좌단 (x=50..240)
+      item('좌단 첫 번째 문단 본문입니다.', 50, 700, 180),
+      item('좌단 두 번째 줄 계속됩니다.', 50, 684, 180),
+      item('좌단 세 번째 줄 마무리입니다.', 50, 668, 180),
+      // 우단 (x=310..500)
+      item('우단 첫 번째 문단 본문입니다.', 310, 700, 180),
+      item('우단 두 번째 줄 계속됩니다.', 310, 684, 180),
+      item('우단 세 번째 줄 마무리입니다.', 310, 668, 180),
+      // 숨긴 텍스트(0pt)
+      item('숨김텍스트', 50, 500, 50, 0),
+    ];
+    const lines = extractPageLines(items, 595, 842);
+    const joined = lines.join('\n');
+    expect(joined).not.toContain('숨김텍스트');
+    expect(joined.indexOf('좌단 세 번째')).toBeLessThan(joined.indexOf('우단 첫 번째'));
+  });
+
+  it('좌표가 정렬된 표 영역은 파이프(` | `) 행으로 복원한다', () => {
+    const items = [
+      item('구분', 50, 700, 30), item('예산액', 200, 700, 40), item('비고', 350, 700, 30),
+      item('인건비', 50, 680, 40), item('500만원', 200, 680, 50), item('확정', 350, 680, 30),
+    ];
+    const lines = extractPageLines(items, 595, 842);
+    expect(lines).toEqual(['구분 | 예산액 | 비고', '인건비 | 500만원 | 확정']);
+  });
+
+  it('반복 머리글·쪽번호를 제거하고 어절 중간 한글 줄바꿈을 이어 붙인다', () => {
+    const pages = [
+      ['○○시청 2026년 업무보고', '공상공무원은 국가유공자로 예우받으며 관련 공상공무', '원에 대한 지원을 확대한다.', '- 1 -'],
+      ['○○시청 2026년 업무보고', '두 번째 쪽 본문 내용입니다.', '- 2 -'],
+      ['○○시청 2026년 업무보고', '세 번째 쪽 본문 내용입니다.', '- 3 -'],
+    ];
+    const finalized = finalizePdfPages(pages);
+    expect(finalized[0]).not.toContain('○○시청');
+    expect(finalized[0]).toContain('공상공무원에 대한 지원을 확대한다.');
+    expect(finalized[1]).toBe('두 번째 쪽 본문 내용입니다.');
+  });
+
+  it('ToUnicode가 깨진 PUA/대체문자 과다 페이지를 감지한다', () => {
+    const summary = assessPdfQuality(['\uFFFD'.repeat(15) + '정상글자열자']);
+    expect(summary.suspectedGarbled).toBe(true);
+  });
 });

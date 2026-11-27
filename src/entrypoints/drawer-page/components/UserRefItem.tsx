@@ -9,7 +9,18 @@ import {
 } from '@/lib/onnara/reference-analysis';
 import type { AnalyzingState } from '../hooks/useUserReferences';
 
-const FORMAT_LABEL: Record<UserRef['format'], string> = { pdf: 'PDF', hwpx: 'HWPX', docx: 'DOCX', xlsx: 'XLSX', text: 'TXT' };
+const FORMAT_LABEL: Record<UserRef['format'], string> = {
+  pdf: 'PDF',
+  hwpx: 'HWPX',
+  hwp: 'HWP',
+  hwpml: 'HML',
+  odt: 'ODT',
+  docx: 'DOCX',
+  xlsx: 'XLSX',
+  xls: 'XLS',
+  pptx: 'PPTX',
+  text: 'TXT',
+};
 const ROLE_LABEL: Record<RefRole, string> = { fact: '내용 근거', example: '작성 예시' };
 
 function Verified({ ok, supplemented }: { ok: boolean; supplemented?: boolean }) {

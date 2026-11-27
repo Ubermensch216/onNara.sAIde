@@ -68,7 +68,19 @@ function parentMessageOrigin(): string | null {
 }
 
 function formatLabel(ref: UserRef): string {
-  return { pdf: 'PDF', hwpx: 'HWPX', docx: 'DOCX', xlsx: 'XLSX', text: 'TXT' }[ref.format];
+  const labels: Record<UserRef['format'], string> = {
+    pdf: 'PDF',
+    hwpx: 'HWPX',
+    hwp: 'HWP',
+    hwpml: 'HML',
+    odt: 'ODT',
+    docx: 'DOCX',
+    xlsx: 'XLSX',
+    xls: 'XLS',
+    pptx: 'PPTX',
+    text: 'TXT',
+  };
+  return labels[ref.format];
 }
 
 export function DrawerApp() {

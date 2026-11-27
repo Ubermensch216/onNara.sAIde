@@ -11,7 +11,12 @@
  *
  * ★ 한글 PDF 중에는 글꼴을 넣지 않고 표준 한글 CMap(UniKS-UCS2-H 등)만 가리키는 파일이 있다.
  *   CMap이 없으면 그런 파일에서는 글자를 하나도 못 뽑으므로 한국어 CMap을 함께 배포한다(wxt.config.ts).
+ *
+ * ★ kordoc 벤치마킹: 좌표 기반 줄 정렬·XY-Cut 2단 읽기 순서·표 행 복원·한컴 PDF 문자 정제·
+ *   균등배분 복원·한글 줄바꿈 병합·반복 머리글/바닥글 제거·ToUnicode 깨짐 진단을 적용한다.
  */
+
+import { assessPdfQuality, extractPageLines, finalizePdfPages, type PdfRawTextItem } from './pdf-layout';
 
 /** 이 크기를 넘는 PDF는 받지 않는다. 메시지로 넘길 때 base64로 1.34배가 된다. */
 export const PDF_MAX_BYTES = 15 * 1024 * 1024;
@@ -30,14 +35,22 @@ export interface PdfTextResult {
   pages: number;
   /** 쪽별 글자. 올린 파일 분석에서 근거 위치(쪽)를 표시하는 데 쓴다. */
   pageTexts?: string[];
+  /** ToUnicode 누락 등으로 글자가 깨져 있을 때의 진단 사유. */
+  qualityWarning?: string;
   error?: string;
 }
 
-interface TextItemLike { str?: string; hasEOL?: boolean }
+interface PdfPageLike {
+  getTextContent(): Promise<{ items: PdfRawTextItem[] }>;
+  getViewport?(params: { scale: number }): { width: number; height: number };
+  cleanup(): unknown;
+}
+
 interface PdfDocumentLike {
   numPages: number;
-  getPage(n: number): Promise<{ getTextContent(): Promise<{ items: TextItemLike[] }>; cleanup(): unknown }>;
+  getPage(n: number): Promise<PdfPageLike>;
 }
+
 /** pdf.js의 getDocument. 오프스크린 문서는 브라우저 빌드를, 테스트는 Node에서 같은 함수를 넘긴다. */
 export type GetPdfDocument = (params: Record<string, unknown>) => { promise: Promise<PdfDocumentLike>; destroy(): Promise<void> };
 
@@ -58,15 +71,30 @@ export async function extractPdfText(getDocument: GetPdfDocument, data: Uint8Arr
   });
   try {
     const doc = await task.promise;
-    const pages: string[] = [];
+    const rawPageLines: string[][] = [];
+    const rawForQuality: string[] = [];
+
     for (let n = 1; n <= Math.min(doc.numPages, PDF_MAX_PAGES); n++) {
       const page = await doc.getPage(n);
+      const viewport = page.getViewport?.({ scale: 1 });
       const content = await page.getTextContent();
-      pages.push(joinTextItems(content.items));
+      rawForQuality.push(content.items.map(it => it.str ?? '').join(''));
+      rawPageLines.push(extractPageLines(content.items, viewport?.width, viewport?.height));
       page.cleanup();
     }
-    const pageTexts = pages.map(normalizeText);
-    return { text: pageTexts.filter(Boolean).join('\n\n'), pages: doc.numPages, pageTexts };
+
+    const quality = assessPdfQuality(rawForQuality);
+    const pageTexts = finalizePdfPages(rawPageLines).map(normalizeText);
+    const qualityWarning = quality.suspectedGarbled
+      ? 'PDF의 글꼴 인코딩(ToUnicode) 정보가 손상되어 일부 글자가 빠지거나 깨졌을 수 있습니다.'
+      : undefined;
+
+    return {
+      text: pageTexts.filter(Boolean).join('\n\n'),
+      pages: doc.numPages,
+      pageTexts,
+      ...(qualityWarning ? { qualityWarning } : {}),
+    };
   } catch (error) {
     return { text: '', pages: 0, error: describePdfError(error) };
   } finally {
@@ -74,12 +102,8 @@ export async function extractPdfText(getDocument: GetPdfDocument, data: Uint8Arr
   }
 }
 
-function joinTextItems(items: TextItemLike[]): string {
-  return items.map(item => `${item.str ?? ''}${item.hasEOL ? '\n' : ''}`).join('');
-}
-
 function normalizeText(text: string): string {
-  return text.replace(/[ \t ]+/g, ' ').replace(/ *\n */g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  return text.replace(/[ \t\u00a0]+/g, ' ').replace(/ *\n */g, '\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
 function describePdfError(error: unknown): string {
@@ -117,7 +141,8 @@ export function formatPdfSection(result: PdfTextResult): string {
   if (result.error) return `[본문 PDF를 읽지 못했습니다: ${result.error}]`;
   if (!result.text) return `[본문 PDF ${result.pages}쪽에서 글자를 찾지 못했습니다. 스캔한 이미지로 만든 PDF일 수 있습니다.]`;
   const more = result.pages > PDF_MAX_PAGES ? ` · 앞 ${PDF_MAX_PAGES}쪽만 읽음` : '';
-  return `[본문 PDF · ${result.pages}쪽${more}]\n${result.text}`;
+  const warn = result.qualityWarning ? `\n(주의: ${result.qualityWarning})` : '';
+  return `[본문 PDF · ${result.pages}쪽${more}]${warn}\n${result.text}`;
 }
 
 /* ── 메시지 전송용 base64 ── */
