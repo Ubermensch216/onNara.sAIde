@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { createChatSession } from './store';
+import { createChatSession, documentBatchInstruction, normalizeSummaryOutput, SUMMARY_PROMPT_VERSION } from './store';
 import { createChatSessions } from './sessions';
 import * as storage from '@/lib/storage/db';
 import * as stream from '@/lib/ollama/stream';
@@ -1095,4 +1095,73 @@ it('내 지식을 켜지 않으면 검색하지 않는다', async () => {
   expect(finalAssistant.content).toContain('본문 요약:');
   expect(finalAssistant.content).toContain('첨부 자료 요약:');
   expect(finalAssistant.content).toContain('[붙임1_세부계획.hwpx]');
+});
+
+
+it('요약 지시문은 첨부 포함 여부와 관계없이 본문 개조식 규칙을 1회만 넣고 내용: 라벨을 금지한다', () => {
+  expect(SUMMARY_PROMPT_VERSION).toBeGreaterThanOrEqual(5);
+  for (const includeAttachments of [false, true]) {
+    const prompt = documentBatchInstruction('화재예방 협조 요청', '요약해줘', false, includeAttachments);
+    const ruleMatches = prompt.match(/각 줄 앞에 "내용:" 같은 군더더기 이름표는 붙이지 않는다/g) ?? [];
+    expect(ruleMatches).toHaveLength(1);
+    expect(prompt).not.toContain('- 내용:');
+    expect(prompt).toContain('- 실내 온도 18℃ 이하 유지, 점심시간 소등');
+  }
+});
+
+it('normalizeSummaryOutput은 목록 줄 앞의 반복되는 내용: 라벨만 제거하고 구체적 메타 라벨은 보존한다', () => {
+  const raw = [
+    '문서 제목: 시장 지시사항 제14호 알림',
+    '본문 요약:',
+    '■ 요지: 동절기 화재 예방 및 취약계층 보호 강화 협조 요청',
+    '- 내용: 동절기 화재 예방 및 취약계층 보호 만전',
+    '• 내용: 전기화재 위험 노후주택 집중 예찰',
+    '- **내용**: 12월 중순 점검회의 개최 예정',
+    '- **내용:** 시설별 추진실적 관리 협조',
+    '- 주요 내용: 홍보 강화',
+    '- 대상: 전 부서',
+    '- 기한: 2026. 12. 15.',
+    '- 내용:',
+  ].join('\n');
+
+  expect(normalizeSummaryOutput(raw)).toBe([
+    '문서 제목: 시장 지시사항 제14호 알림',
+    '본문 요약:',
+    '■ 요지: 동절기 화재 예방 및 취약계층 보호 강화 협조 요청',
+    '- 동절기 화재 예방 및 취약계층 보호 만전',
+    '• 전기화재 위험 노후주택 집중 예찰',
+    '- 12월 중순 점검회의 개최 예정',
+    '- 시설별 추진실적 관리 협조',
+    '- 홍보 강화',
+    '- 대상: 전 부서',
+    '- 기한: 2026. 12. 15.',
+    '- 내용:',
+  ].join('\n'));
+});
+
+it('/요약 실행 시 모델이 습관적으로 붙인 - 내용: 접두어를 정리해 표시하고 저장한다', async () => {
+  const common = { url: 'https://onnara.test/main', title: '받은문서', text: '목록', charCount: 100,
+    truncated: false, keptRatio: 1, estimatedTokens: 30, method: 'innerText' as const, extractedAt: Date.now() };
+  vi.stubGlobal('chrome', { runtime: { sendMessage: vi.fn(async (message: { type: string; title?: string }) => {
+    if (message.type === 'EXTRACT_PAGE') return { type: 'PAGE_EXTRACTED', payload: { ...common, structuredData: {
+      kind: 'onnara-document-list', listName: '받은문서', columns: [], rows: [{ title: '지시사항 알림' }],
+      selectedTitles: ['지시사항 알림'],
+    } } };
+    if (message.type === 'READ_DOCUMENT') {
+      return { type: 'DOCUMENT_READ', requestedTitle: message.title, payload: { ...common, title: message.title, text: '동절기 화재 예방 지시' } };
+    }
+    return { type: 'ACTIVE_TAB', tab: null };
+  }) } });
+  vi.spyOn(stream, 'streamChat').mockImplementation(async (_endpoint, _request, handlers) => {
+    handlers.onToken?.('지시사항 알림\n■ 요지: 화재 예방 강화 요청\n- 내용: 취약계층 보호 만전\n- 기한: 2026. 12. 15.');
+    return null;
+  });
+
+  await useChat.getState().openForTab(3, common.url);
+  await useChat.getState().runCommand('/요약', 'summary', '', DEFAULT_SETTINGS);
+
+  const finalAssistant = useChat.getState().messages.at(-1)!;
+  expect(finalAssistant.content).toContain('- 취약계층 보호 만전');
+  expect(finalAssistant.content).not.toContain('- 내용:');
+  expect(finalAssistant.content).toContain('- 기한: 2026. 12. 15.');
 });

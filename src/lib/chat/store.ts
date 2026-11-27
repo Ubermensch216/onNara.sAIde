@@ -1081,8 +1081,11 @@ async function runDocumentBatch(set: Set, get: Get, options: {
       ? await runWorkPlan(batchSet, get, settings, title, page, referenceOf(title), rowOf(title), includeAttachments)
       : await runGeneration(batchSet, instructionOnly(get, documentBatchInstruction(title, instruction, false, includeAttachments)), { ...settings, thinkMode: 'off' });
     if (!outcome) return;
-    if (command === 'summary' && includeAttachments) {
-      const formatted = formatSeparatedSummary(outcome.content, title, page.text);
+    if (command === 'summary') {
+      let formatted = normalizeSummaryOutput(outcome.content);
+      if (includeAttachments) {
+        formatted = formatSeparatedSummary(formatted, title, page.text);
+      }
       if (formatted !== outcome.content) {
         outcome.content = formatted;
         const lastAssistant = [...get().messages].reverse().find(m => m.role === 'assistant');
@@ -1238,16 +1241,17 @@ async function readDocumentsTogether(
  *
  * - 3 (2026-11-04): 옮겨적기 방지. 판본 2 이하의 결과는 원문 분량의 90% 안팎이었다.
  * - 4 (2026-11-04): 개조식. 판본 3은 분량은 줄었으나 "~습니다" 서술문이라 핵심이 묻혔다.
+ * - 5 (2026-11-27): "내용:" 중복 라벨 제거. 일반 항목은 라벨 없이 개조식 불릿으로 적고, 대상·기한·제출·조치 등 구체적 메타만 각 1회씩 선택 표기.
  */
-export const SUMMARY_PROMPT_VERSION = 4;
+export const SUMMARY_PROMPT_VERSION = 5;
 
 /**
  * 여러 문서를 한 건씩 요약할 때 모델에 보내는 요청.
  *
  * ★ 칸을 강제하지 않는다. 틀을 주면 작은 모델은 본문을 읽기보다 칸을 채우려 하고,
  *   알림·보고·회의록처럼 틀에 맞지 않는 문서마다 "명시되어 있지 않습니다"만 늘어놓는다.
- *   그래서 이름표(배경·내용·할 일·대상·기한·제출)는 **고를 수 있는 목록**으로만 주고,
- *   본문에 없는 이름표는 줄째 빼게 한다.
+ *   일반 항목은 "내용:" 같은 포괄 이름표 없이 개조식으로 바로 적게 하고,
+ *   구체적 메타(대상·기한·제출·조치)만 본문에 있을 때 각 1회씩 선택 표기한다.
  * ★ 개조식을 문체 규칙과 예시로 함께 묶는다. "짧게 줄여라"만으로는 gemma4:e2b가
  *   "~습니다" 서술문 4~5줄을 쓴다. 실측(2026-11-04, gemma4:e2b):
  *   - 466자 수요조사 공문: 판본 3 307자(66%, 서술문) → 판본 4 171자(37%, 명사형 종결)
@@ -1255,6 +1259,8 @@ export const SUMMARY_PROMPT_VERSION = 4;
  * ★ 예시는 요약할 공문과 동떨어진 주제로 둔다. 비슷한 주제면 작은 모델이 예시 내용을 섞는다.
  */
 export function documentBatchInstruction(title: string, request: string, attachmentsHandled = false, includeAttachments = false): string {
+  const bodyItemsRule =
+    '이어서 핵심 사항을 "- ..." 개조식 줄 2~5개로 적는다. 각 줄 앞에 "내용:" 같은 군더더기 이름표는 붙이지 않는다. 대상·기한·제출·조치처럼 구체적 속성이 본문에 실제로 있을 때만 해당 이름표를 각 1회씩("- 기한: ...") 붙이고, 없으면 생략한다.';
   return [
     `첨부된 페이지 내용은 문서 '${title}'의 상세 화면이다. 이 문서 한 건을 개조식으로 짧게 요약하라.`,
     '원문을 옮겨 적지 말고, 한눈에 핵심이 보이게 줄여라.',
@@ -1265,15 +1271,15 @@ export function documentBatchInstruction(title: string, request: string, attachm
       ? [
           '둘째 줄: 본문 요약:',
           '셋째 줄: ■ 요지: 이 문서 본문이 무엇을 하라는(알리는) 것인지 한 줄',
-          ...(includeAttachments ? [] : ['이어서 "- 이름표: 내용" 꼴의 줄 2~5개. 이름표는 배경·내용·할 일·대상·기한·제출 중 본문에 실제로 있는 것만 골라 쓴다. 없는 이름표는 줄째 생략한다.']),
+          bodyItemsRule,
           '그다음 빈 줄 뒤에: 첨부 자료 요약:',
           '이어서 첨부문서([첨부문서: 파일명]) 내용을 바탕으로 "- [파일명] 핵심 요지 및 주요 내용" 꼴로 개조식 요약한다. 첨부문서가 없으면 "- 첨부 자료 없음" 한 줄만 적는다.',
         ]
       : [
           '둘째 줄: ■ 요지: 이 문서가 무엇을 하라는(알리는) 것인지 한 줄',
-          ...(includeAttachments ? [] : ['이어서 "- 이름표: 내용" 꼴의 줄 2~5개. 이름표는 배경·내용·할 일·대상·기한·제출 중 본문에 실제로 있는 것만 골라 쓴다. 없는 이름표는 줄째 생략한다.']),
+          bodyItemsRule,
         ]),
-    ...(includeAttachments ? [] : ['이어서 "- 이름표: 내용" 꼴의 줄 2~5개. 이름표는 배경·내용·할 일·대상·기한·제출 중 본문에 실제로 있는 것만 골라 쓴다. 없는 이름표는 줄째 생략한다.']),
+
     '',
     '[문체]',
     '- 개조식으로 쓴다. 문장으로 풀지 말고 "~ 제출", "~ 요청", "~ 일원화"처럼 명사로 끝낸다.',
@@ -1287,7 +1293,7 @@ export function documentBatchInstruction(title: string, request: string, attachm
     '2025년 청사 에너지 절약 추진 계획 알림',
     ...(includeAttachments ? ['본문 요약:'] : []),
     '■ 요지: 동절기 청사 에너지 절약 지침 준수 요청',
-    '- 내용: 실내 온도 18℃ 이하, 점심시간 소등',
+    '- 실내 온도 18℃ 이하 유지, 점심시간 소등',
     '- 대상: 전 부서',
     '- 기한: 2025. 12. 1. ~ 2026. 2. 28.',
     ...(includeAttachments
@@ -1327,6 +1333,23 @@ export function documentCompareInstruction(request: string, includeAttachments =
     '첨부 자료 요약: (또는 첨부 자료 분석:)',
     '- 각 문서에 첨부된 파일([첨부문서: 파일명])별 핵심 내용과 비교·분석 결과 (첨부파일이 없는 문서는 "첨부 자료 없음"으로 표시)',
   ].join('\n');
+}
+
+/**
+ * 요약 출력에서 경량 모델이 습관적으로 붙이는 군더더기 라벨(`- 내용: ...`, `- **내용**: ...` 등)을 제거한다.
+ * 콜론 뒤에 실제 항목 텍스트가 있는 목록 줄만 정리하고, 대상·기한·제출·조치 등 구체적 메타 라벨은 보존한다.
+ */
+export function normalizeSummaryOutput(content: string): string {
+  if (!content) return content;
+  return content
+    .split('\n')
+    .map(line =>
+      line.replace(
+        /^(\s*(?:[-*•]|\d+[.)])\s+)(?:\*\*)?(?:주요\s*)?내용(?:\*\*)?\s*:\s*(?:\*\*)?\s*(?=\S)/u,
+        '$1',
+      ),
+    )
+    .join('\n');
 }
 
 /**
